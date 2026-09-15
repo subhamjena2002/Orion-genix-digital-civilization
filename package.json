@@ -9,9 +9,12 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@playcanvas/react": "^0.11.5",
     "next": "16.3.4",
+    "playcanvas": "^2.22.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "sync-ammo": "^0.1.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -20,6 +23,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.4",
+    "gltf-pipeline": "^4.3.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
