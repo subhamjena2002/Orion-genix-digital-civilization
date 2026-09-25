@@ -42,3 +42,6 @@ next-env.d.ts
 
 # Large source assets kept out of the build (see reference-assets/README.md)
 /reference-assets/*.glb
+
+# Local Cloudflare state from `wrangler dev`
+.wrangler/

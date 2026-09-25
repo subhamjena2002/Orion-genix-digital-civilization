@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3000
+    },
+    {
+      "name": "orion-prod-cloudflare",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["-y", "wrangler@4", "dev", "--port", "8787"],
+      "port": 8787
     }
   ]
 }

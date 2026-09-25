@@ -10,6 +10,9 @@
 const useDebugEngine = process.env.ORION_ENGINE_DEBUG === "1";
 
 const nextConfig: NextConfig = {
+  // The game is one client-side page with no server features, so it ships as plain files in
+  // out/ — deployed by Cloudflare as static assets (wrangler.jsonc), not as a server Worker.
+  output: "export",
   reactStrictMode: false,
   turbopack: useDebugEngine
     ? undefined
