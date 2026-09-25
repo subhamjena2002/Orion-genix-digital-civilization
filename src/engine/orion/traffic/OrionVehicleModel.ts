@@ -2,7 +2,7 @@ import { BLEND_NORMAL, BoundingBox, Color, Entity, Mat4, MeshInstance, Quat, Scr
 
 import { cameraLens, distanceFromCamera, readPlayerPose } from "../player/PlayerPose";
 import { LOD_PROFILES, projectedPixels, selectLod } from "../rendering/lod/LodPolicy";
-import { isMergeable, mergeMeshInstances } from "../rendering/MeshMerge";
+import { buildMesh, compactGeometry, isMergeable, mergeGeometry, mergeMeshInstances } from "../rendering/MeshMerge";
 import { DOOR_NODE, DRIVER_SIDE, GLASS_NODE, NOT_SIDE_GLASS, SEAT_LATERAL } from "./Carjack";
 import type { OrionVehicle } from "./OrionVehicle";
 import { createLodEntities, groupByMaterial, requestVehicleLods, type LodEntities } from "./VehicleLod";
@@ -29,6 +29,16 @@ const BODY_SMOOTHING = 5;
 const FLASH_SECONDS = 0.28;
 /** A wheel node whose pivot is further than this from its mesh centre gets re-pivoted. */
 const PIVOT_TOLERANCE = 0.02;
+/**
+ * A "wheel" whose bottom sits this far (m) above the lowest tyre isn't on the road: it's the
+ * steering wheel in the cabin, which the name pattern also matches.
+ */
+const OFF_GROUND = 0.3;
+/**
+ * Wider than this many times its height, a wheel mesh is a whole axle — both tyres modelled as
+ * one part. Turned as one piece, the pair swung round the middle of the car when steering.
+ */
+const AXLE_WIDTH_RATIO = 1.5;
 
 interface Wheel {
 	pivot: Entity;
@@ -69,6 +79,8 @@ let batchGroupCount = 0;
  * (with its own paint and lamp materials).
  */
 const mergedBodies = new Map<string, { signature: string; meshes: Mesh[] }>();
+/** Axles split into single wheels, per model file and side; shared by every car of that model. */
+const splitWheels = new Map<string, Mesh>();
 
 interface BatchHandle {
 	meshInstance: MeshInstance;
@@ -526,7 +538,16 @@ export class OrionVehicleModel extends Script {
 
 		const inverseModel = new Quat().copy(this.entity.getRotation()).invert();
 		const toModel = new Mat4().copy(this.entity.getWorldTransform()).invert();
-		for (const wheel of chosen) {
+		const onCar = chosen.map((wheel) => ({ wheel, box: localBounds(this.entity, collectMeshInstances(wheel)) }));
+		const ground = Math.min(...onCar.map(({ box }) => box.center.y - box.halfExtents.y));
+		const wheels: Entity[] = [];
+		for (const { wheel, box } of onCar) {
+			if (box.center.y - box.halfExtents.y > ground + OFF_GROUND || /steer/i.test(wheel.name)) continue;
+			if (box.halfExtents.x > box.halfExtents.y * AXLE_WIDTH_RATIO) wheels.push(...this.splitAxle(wheel, box));
+			else wheels.push(wheel);
+		}
+
+		for (const wheel of wheels) {
 			const instances = collectMeshInstances(wheel);
 			const bounds = worldBounds(instances);
 			const parent = wheel.parent as Entity | null;
@@ -549,6 +570,72 @@ export class OrionVehicleModel extends Script {
 			const front = toModel.transformPoint(bounds.center).z > 0;
 			this.wheels.push({ pivot, radius: Math.max(bounds.halfExtents.y, 0.05), rest, front });
 		}
+	}
+
+	/**
+	 * Cuts an axle modelled as one mesh (both tyres in a single part) into a left and a right
+	 * wheel, each a node of its own centred on its tyre, so each can steer about its own centre.
+	 * The original is switched off. Returns the new wheels, or the axle itself if it can't be cut
+	 * (then it still rolls correctly; it just doesn't steer as a pair).
+	 */
+	private splitAxle(axle: Entity, box: BoundingBox): Entity[] {
+		const parent = axle.parent as Entity | null;
+		const spec = this.spec;
+		const instances = collectMeshInstances(axle).filter((instance) => instance.visible && instance.material);
+		if (!parent || !spec || instances.length === 0 || !instances.every(isMergeable)) return [axle];
+
+		// Triangles are sorted to a side by where they sit across the car, in the car's own frame.
+		const modelFrame = this.entity.getWorldTransform();
+		const groups = [...groupByMaterialAndFormat(instances).values()];
+		const point = new Vec3();
+		const sides = [-1, 1].map((side) => ({ side, triangles: groups.map(() => [] as number[]), min: new Vec3(Infinity, Infinity, Infinity), max: new Vec3(-Infinity, -Infinity, -Infinity) }));
+		groups.forEach((group, groupIndex) => {
+			const geometry = mergeGeometry(group, modelFrame);
+			const positions = geometry.streams.find((stream) => stream.semantic === "POSITION");
+			if (!positions) return;
+			const stride = positions.components;
+			for (let i = 0; i < geometry.indices.length; i += 3) {
+				let x = 0;
+				for (let k = 0; k < 3; k++) x += positions.data[geometry.indices[i + k] * stride];
+				const target = sides[x / 3 < box.center.x ? 0 : 1];
+				for (let k = 0; k < 3; k++) {
+					const vertex = geometry.indices[i + k] * stride;
+					point.set(positions.data[vertex], positions.data[vertex + 1], positions.data[vertex + 2]);
+					target.min.min(point);
+					target.max.max(point);
+				}
+				target.triangles[groupIndex].push(geometry.indices[i], geometry.indices[i + 1], geometry.indices[i + 2]);
+			}
+		});
+		if (sides.some((side) => side.triangles.every((list) => list.length === 0))) return [axle];
+
+		const wheels: Entity[] = [];
+		for (const { side, triangles, min, max } of sides) {
+			const wheel = new Entity(`${axle.name}-${side < 0 ? "left" : "right"}`);
+			parent.addChild(wheel);
+			// Centred on its own tyre, carrying the parent's orientation like a re-pivoted wheel.
+			wheel.setPosition(modelFrame.transformPoint(new Vec3().add2(min, max).mulScalar(0.5)));
+			wheel.setRotation(parent.getRotation());
+			const frame = wheel.getWorldTransform();
+			const meshInstances: MeshInstance[] = [];
+			groups.forEach((group, groupIndex) => {
+				if (triangles[groupIndex].length === 0) return;
+				const key = `${spec.file}|${axle.name}|${side}|${groupIndex}`;
+				let mesh = splitWheels.get(key);
+				if (!mesh) {
+					// Same instances in the same order, so the triangle numbering matches the sort above.
+					const geometry = compactGeometry(mergeGeometry(group, frame), Uint32Array.from(triangles[groupIndex]));
+					mesh = buildMesh(this.app.graphicsDevice, geometry);
+					mesh.incRefCount();
+					splitWheels.set(key, mesh);
+				}
+				meshInstances.push(new MeshInstance(mesh, group[0].material));
+			});
+			wheel.addComponent("render", { meshInstances, castShadows: true, receiveShadows: true });
+			wheels.push(wheel);
+		}
+		for (const render of axle.findComponents("render") as RenderComponent[]) render.enabled = false;
+		return wheels;
 	}
 
 	private addLightBar(instances: MeshInstance[]) {
@@ -662,6 +749,18 @@ function hideUnwanted(model: Entity, instances: MeshInstance[], spec: VehicleMod
 	}
 	for (const instance of hidden) instance.visible = false;
 	return instances.filter((instance) => !hidden.has(instance));
+}
+
+/** Instances that can be merged together: the same material and the same vertex layout. */
+function groupByMaterialAndFormat(instances: readonly MeshInstance[]): Map<string, MeshInstance[]> {
+	const groups = new Map<string, MeshInstance[]>();
+	for (const instance of instances) {
+		const key = `${instance.material.id}|${instance.mesh.vertexBuffer.format.batchingHash}`;
+		const group = groups.get(key);
+		if (group) group.push(instance);
+		else groups.set(key, [instance]);
+	}
+	return groups;
 }
 
 function collectMeshInstances(root: Entity): MeshInstance[] {

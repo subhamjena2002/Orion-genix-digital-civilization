@@ -45,3 +45,4 @@ next-env.d.ts
 
 # Local Cloudflare state from `wrangler dev`
 .wrangler/
+/reference-assets/audio/

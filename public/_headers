@@ -1,0 +1,7 @@
+# Cloudflare response headers for the static site.
+
+# The service worker must always be re-checked, so a new version reaches players on their
+# next visit instead of whenever their browser's copy expires.
+/sw.js
+  Cache-Control: no-cache
+  Content-Type: application/javascript; charset=utf-8
