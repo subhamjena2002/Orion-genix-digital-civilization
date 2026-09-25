@@ -1,5 +1,6 @@
 import { audioBus, AUDIBLE_DISTANCE, type Placement } from "./AudioBus";
 import { engineHarmonicTable, engineState, ENGINE_VOICES, firingFrequency } from "./EngineVoices";
+import { ENGINE_PROCESSOR_NAME, loadEngineWorklet } from "./EngineWorklet";
 import { drivableCars } from "../traffic/Carjack";
 import type { OrionVehicle } from "../traffic/OrionVehicle";
 
@@ -10,9 +11,10 @@ import type { OrionVehicle } from "../traffic/OrionVehicle";
  * ones further off are inaudible under the ones in front of you anyway. Voices are handed
  * between cars as they come and go, fading rather than cutting so the swap isn't a click.
  *
- * Each voice is one oscillator carrying the whole harmonic stack (a PeriodicWave built from the
- * engine's harmonics, which is far cheaper than an oscillator per harmonic), a noise source for
- * combustion and induction, and an optional turbo. See EngineVoices for the character.
+ * Each voice is a pulse-by-pulse engine source running on the audio thread (EngineWorklet), a
+ * noise source for induction, and an optional turbo. Where AudioWorklet isn't available (an
+ * http:// page on a local network, or an old browser) the source falls back to one oscillator
+ * carrying the harmonic stack. See EngineVoices for each engine's character.
  */
 
 /** How many engines are audible at once, the player's own car included. */
@@ -20,7 +22,8 @@ const MAX_VOICES = 6;
 /** Seconds to fade a voice in or out when it changes car. */
 const SWAP_SECONDS = 0.12;
 /** Smoothing time constants: pitch tracks quickly, level and tone more slowly. */
-const PITCH_SMOOTHING = 0.03;
+/** Pitch follows the revs closely, but not so closely that tiny speed changes make it warble. */
+const PITCH_SMOOTHING = 0.05;
 const TONE_SMOOTHING = 0.06;
 /**
  * Sitting in a car, you hear that car — everything else is outside a closed cabin.
@@ -37,21 +40,27 @@ const CABIN_DUCK = 0.32;
 const CABIN_MUFFLE = 1400;
 /** Road and wind noise in the player's own car, at this road speed and above. */
 const ROAD_NOISE_FULL_SPEED = 30;
-const ROAD_NOISE_LEVEL = 0.16;
+const ROAD_NOISE_LEVEL = 0.12;
+/** Other traffic idles quietly: a street of idling cars was a constant drone under everything. */
+const TRAFFIC_IDLE_SHARE = 0.35;
+/** Steady induction hiss under the pulses, relative to each engine's noise level. */
+const INDUCTION_LEVEL = 0.4;
 
 interface Voice {
 	car: OrionVehicle | null;
 	style: string;
 	gear: number;
-	oscillator: OscillatorNode;
+	/** The engine source: the pulse worklet, or the fallback oscillator. */
+	source: AudioWorkletNode | OscillatorNode;
 	tone: BiquadFilterNode;
 	/** The exhaust's own resonance, so the engine has a body rather than being a bare stack. */
 	body: BiquadFilterNode;
 	noise: AudioBufferSourceNode;
 	noiseBand: BiquadFilterNode;
 	noiseGain: GainNode;
-	turbo: OscillatorNode | null;
-	turboGain: GainNode | null;
+	/** Turbo whistle: air through a narrow band, not a pure tone (which was piercing). */
+	turbo: BiquadFilterNode;
+	turboGain: GainNode;
 	output: GainNode;
 	panner: StereoPannerNode;
 }
@@ -61,6 +70,9 @@ class EngineAudio {
 	private readonly waves = new Map<string, PeriodicWave>();
 	private readonly place: Placement = { gain: 0, pan: 0, muffle: 20000, distance: 0 };
 	private roadNoise: { source: AudioBufferSourceNode; band: BiquadFilterNode; gain: GainNode } | null = null;
+	/** Whether the pulse source loaded; null until it has settled either way. */
+	private worklet: boolean | null = null;
+	private loadingWorklet = false;
 
 	/** Called once a frame, after the listener has been moved. */
 	public update(dt: number): void {
@@ -69,6 +81,16 @@ class EngineAudio {
 		const context = bus.ensure();
 		const master = bus.master;
 		if (!context || !master) return;
+		if (this.worklet === null) {
+			// Voices wait for the pulse source, so none are built on the fallback by mistake.
+			if (!this.loadingWorklet) {
+				this.loadingWorklet = true;
+				void loadEngineWorklet(context).then((loaded) => {
+					this.worklet = loaded;
+				});
+			}
+			return;
+		}
 
 		const wanted = this.chooseCars();
 		this.assignVoices(context, master, wanted);
@@ -118,7 +140,7 @@ class EngineAudio {
 		voice.gear = 0;
 		if (voice.style !== style) {
 			voice.style = style;
-			voice.oscillator.setPeriodicWave(this.waveFor(context, style));
+			this.voiceSource(context, voice.source, style);
 		}
 		const now = context.currentTime;
 		voice.output.gain.cancelScheduledValues(now);
@@ -139,9 +161,15 @@ class EngineAudio {
 		voice.gear = state.gear;
 
 		const own = car.driver === "player";
-		// Half the firing frequency: the waveform carries the firing orders on its even harmonics
-		// and the half-orders on the odd ones (see engineHarmonicTable).
-		voice.oscillator.frequency.setTargetAtTime(Math.max(8, firingFrequency(voicing, state.rpm) / 2), now, PITCH_SMOOTHING);
+		const firing = firingFrequency(voicing, state.rpm);
+		if (voice.source instanceof OscillatorNode) {
+			// Half the firing frequency: the waveform carries the firing orders on its even
+			// harmonics and the half-orders on the odd ones (see engineHarmonicTable).
+			voice.source.frequency.setTargetAtTime(Math.max(8, firing / 2), now, PITCH_SMOOTHING);
+		} else {
+			voice.source.parameters.get("firing")?.setTargetAtTime(firing, now, PITCH_SMOOTHING);
+			voice.source.parameters.get("load")?.setTargetAtTime(state.load, now, TONE_SMOOTHING);
+		}
 		const revs = (state.rpm - voicing.idleRpm) / Math.max(1, voicing.redlineRpm - voicing.idleRpm);
 		const open = voicing.brightness[0] + (voicing.brightness[1] - voicing.brightness[0]) * Math.max(revs, state.load * 0.6);
 		// Other traffic is heard through the cabin when the player is in a car.
@@ -150,17 +178,16 @@ class EngineAudio {
 		voice.body.frequency.setTargetAtTime(voicing.resonanceHz, now, TONE_SMOOTHING);
 
 		voice.noiseBand.frequency.setTargetAtTime(voicing.noiseCentre * (0.8 + revs * 0.6), now, TONE_SMOOTHING);
-		voice.noiseGain.gain.setTargetAtTime(voicing.noiseLevel * (0.45 + state.load * 0.55), now, TONE_SMOOTHING);
+		voice.noiseGain.gain.setTargetAtTime(voicing.noiseLevel * INDUCTION_LEVEL * (0.45 + state.load * 0.55), now, TONE_SMOOTHING);
 
-		if (voice.turbo && voice.turboGain) {
-			const boost = Math.max(0, revs - 0.25) * state.load;
-			voice.turbo.frequency.setTargetAtTime(voicing.turboHz * (0.6 + revs * 0.4), now, TONE_SMOOTHING);
-			voice.turboGain.gain.setTargetAtTime(voicing.turboHz > 0 ? boost * 0.05 : 0, now, TONE_SMOOTHING);
-		}
+		const boost = Math.max(0, revs - 0.25) * state.load;
+		if (voicing.turboHz > 0) voice.turbo.frequency.setTargetAtTime(voicing.turboHz * (0.6 + revs * 0.4), now, TONE_SMOOTHING);
+		voice.turboGain.gain.setTargetAtTime(voicing.turboHz > 0 ? Math.max(0.0001, boost * 0.35) : 0.0001, now, TONE_SMOOTHING);
 
 		// Its own car is heard from inside it, so distance doesn't apply; everything else ducks.
 		const distanceGain = own ? OWN_CAR_GAIN : placed.gain * (playerDriving ? CABIN_DUCK : 1);
-		const level = voicing.level * distanceGain * (0.5 + state.load * 0.5) * damageRattle(car);
+		const idle = own ? 0.5 : TRAFFIC_IDLE_SHARE;
+		const level = voicing.level * distanceGain * (idle + state.load * (1 - idle)) * damageRattle(car);
 		voice.output.gain.setTargetAtTime(Math.max(0.0001, level), now, SWAP_SECONDS);
 		voice.panner.pan.setTargetAtTime(own ? 0 : placed.pan, now, TONE_SMOOTHING);
 	}
@@ -172,8 +199,9 @@ class EngineAudio {
 			if (!source) return;
 			const band = context.createBiquadFilter();
 			band.type = "bandpass";
-			band.frequency.value = 600;
-			band.Q.value = 0.5;
+			// Tyre roar is low; the old band reached 1.8 kHz and was heard as hiss.
+			band.frequency.value = 180;
+			band.Q.value = 0.6;
 			const gain = context.createGain();
 			gain.gain.value = 0.0001;
 			source.connect(band).connect(gain).connect(master);
@@ -182,7 +210,7 @@ class EngineAudio {
 		const now = context.currentTime;
 		const speed = own ? own.currentSpeed : 0;
 		const fraction = Math.min(1, speed / ROAD_NOISE_FULL_SPEED);
-		this.roadNoise.band.frequency.setTargetAtTime(400 + fraction * 1400, now, TONE_SMOOTHING);
+		this.roadNoise.band.frequency.setTargetAtTime(140 + fraction * 380, now, TONE_SMOOTHING);
 		this.roadNoise.gain.gain.setTargetAtTime(Math.max(0.0001, fraction * ROAD_NOISE_LEVEL), now, TONE_SMOOTHING);
 	}
 
@@ -202,11 +230,15 @@ class EngineAudio {
 		body.gain.value = 7;
 		tone.connect(body).connect(output).connect(panner).connect(master);
 
-		const oscillator = context.createOscillator();
-		oscillator.setPeriodicWave(this.waveFor(context, "sedan"));
-		oscillator.frequency.value = 60;
-		oscillator.connect(tone);
-		oscillator.start();
+		const source = this.worklet
+			? new AudioWorkletNode(context, ENGINE_PROCESSOR_NAME, { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] })
+			: context.createOscillator();
+		this.voiceSource(context, source, "sedan");
+		source.connect(tone);
+		if (source instanceof OscillatorNode) {
+			source.frequency.value = 60;
+			source.start();
+		}
 
 		const noiseBand = context.createBiquadFilter();
 		noiseBand.type = "bandpass";
@@ -217,24 +249,35 @@ class EngineAudio {
 		const noise = audioBus().startNoise(context);
 		noise?.connect(noiseBand).connect(noiseGain).connect(tone);
 
-		// One turbo per voice, silent unless the car it's playing has one.
+		// One turbo per voice, silent unless the car it's playing has one: the same noise through
+		// a narrow band, which whistles like air rather than beeping like a tone generator.
+		const turbo = context.createBiquadFilter();
+		turbo.type = "bandpass";
+		turbo.frequency.value = 3000;
+		turbo.Q.value = 9;
 		const turboGain = context.createGain();
 		turboGain.gain.value = 0.0001;
-		const turbo = context.createOscillator();
-		turbo.type = "triangle";
-		turbo.frequency.value = 3000;
-		turbo.connect(turboGain).connect(output);
-		turbo.start();
+		noise?.connect(turbo).connect(turboGain).connect(output);
 
 		return {
 			car: null, style: "sedan", gear: 0,
-			oscillator, tone, body,
+			source, tone, body,
 			noise: noise as AudioBufferSourceNode, noiseBand, noiseGain,
 			turbo, turboGain, output, panner,
 		};
 	}
 
-	/** The harmonic stack of one engine, as a single waveform. Built once per style. */
+	/** Sets a voice's source up for an engine style. */
+	private voiceSource(context: AudioContext, source: AudioWorkletNode | OscillatorNode, style: string) {
+		if (source instanceof OscillatorNode) {
+			source.setPeriodicWave(this.waveFor(context, style));
+			return;
+		}
+		const voicing = ENGINE_VOICES[style as keyof typeof ENGINE_VOICES] ?? ENGINE_VOICES.sedan;
+		source.port.postMessage(voicing.pulse);
+	}
+
+	/** The harmonic stack of one engine, as a single waveform (the fallback source). Built once per style. */
 	private waveFor(context: AudioContext, style: string): PeriodicWave {
 		const cached = this.waves.get(style);
 		if (cached) return cached;

@@ -18,8 +18,8 @@ const HALF_VOLUME_DISTANCE = 18;
 const MASTER_LEVEL = 0.55;
 /** Seconds between attempts to resume a context the browser suspended. */
 const RESUME_INTERVAL = 1;
-/** Length of the shared white-noise loop, in seconds. */
-const NOISE_SECONDS = 2;
+/** Length of the shared white-noise loop, in seconds: long enough that its repeat isn't heard. */
+const NOISE_SECONDS = 5;
 
 export interface Placement {
 	/** Gain from distance alone, 0..1. */
@@ -61,10 +61,14 @@ class AudioBus {
 		master.gain.value = MASTER_LEVEL;
 		this.masterGain = master;
 		// Traffic, gunfire and an explosion at once would otherwise clip; this rides the peaks.
+		// Gently: it used to sit at -18 dB, 6:1, which squashed the engines flat all the time and
+		// audibly pumped them down on every shot. Now it only acts on the loud moments.
 		const compressor = context.createDynamicsCompressor();
-		compressor.threshold.value = -18;
-		compressor.knee.value = 12;
-		compressor.ratio.value = 6;
+		compressor.threshold.value = -10;
+		compressor.knee.value = 18;
+		compressor.ratio.value = 3;
+		compressor.attack.value = 0.008;
+		compressor.release.value = 0.3;
 		master.connect(compressor).connect(context.destination);
 
 		const length = Math.floor(context.sampleRate * NOISE_SECONDS);

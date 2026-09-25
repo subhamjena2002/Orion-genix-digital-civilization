@@ -1,4 +1,5 @@
 import type { VehicleStyle } from "../traffic/Vehicles";
+import type { EnginePulseVoicing } from "./EngineWorklet";
 
 /**
  * What each kind of engine sounds like, and how it revs.
@@ -49,6 +50,11 @@ export interface EngineVoice {
 	gearTops: readonly number[];
 	/** Turbo whistle at full boost (Hz); 0 for none. */
 	turboHz: number;
+	/**
+	 * How its firings vary (see EngineWorklet): the pulse-by-pulse source that replaced the
+	 * fixed waveform. `harmonics` and `halfOrder` remain as the fallback where it can't run.
+	 */
+	pulse: EnginePulseVoicing;
 }
 
 /**
@@ -65,10 +71,11 @@ const V12: EngineVoice = {
 	noiseLevel: 0.1,
 	noiseCentre: 2600,
 	noiseQ: 0.8,
-	brightness: [1400, 7200],
+	brightness: [1100, 4200],
 	level: 0.62,
 	gearTops: [11, 19, 28, 38, 48, 58],
 	turboHz: 0,
+	pulse: { pattern: [1, 0.97, 0.99, 0.96, 1, 0.98, 0.97, 1, 0.96, 0.99, 0.98, 0.97], roughness: 0.05, jitter: 0.004, noise: 0.22, noiseDecay: 0.0015, pulseHz: 420 },
 };
 
 /**
@@ -86,10 +93,11 @@ const DIESEL_SIX: EngineVoice = {
 	noiseLevel: 0.42,
 	noiseCentre: 900,
 	noiseQ: 0.55,
-	brightness: [650, 2400],
+	brightness: [600, 2000],
 	level: 0.85,
 	gearTops: [5, 8.5, 13, 18, 24, 31],
 	turboHz: 3200,
+	pulse: { pattern: [1, 0.8, 0.93, 0.75, 0.97, 0.82], roughness: 0.2, jitter: 0.02, noise: 0.9, noiseDecay: 0.006, pulseHz: 170 },
 };
 
 /** A coarse four-cylinder on a raised chassis: throaty, plenty of induction noise. */
@@ -103,10 +111,11 @@ const UTILITY_FOUR: EngineVoice = {
 	noiseLevel: 0.28,
 	noiseCentre: 1500,
 	noiseQ: 0.7,
-	brightness: [900, 3800],
+	brightness: [800, 3000],
 	level: 0.7,
 	gearTops: [7, 12, 18, 25, 33],
 	turboHz: 0,
+	pulse: { pattern: [1, 0.82, 0.94, 0.78], roughness: 0.16, jitter: 0.015, noise: 0.55, noiseDecay: 0.004, pulseHz: 200 },
 };
 
 /** An ordinary road car: nothing distinctive, which is the point. */
@@ -120,10 +129,11 @@ const ROAD_FOUR: EngineVoice = {
 	noiseLevel: 0.2,
 	noiseCentre: 1800,
 	noiseQ: 0.8,
-	brightness: [1100, 5000],
+	brightness: [900, 3400],
 	level: 0.55,
 	gearTops: [8, 14, 21, 29, 38],
 	turboHz: 0,
+	pulse: { pattern: [1, 0.9, 0.96, 0.88], roughness: 0.1, jitter: 0.008, noise: 0.35, noiseDecay: 0.003, pulseHz: 240 },
 };
 
 /** A three-wheeler's single cylinder: buzzy, loud for its size, nearly all noise and rasp. */
@@ -137,10 +147,11 @@ const AUTO_SINGLE: EngineVoice = {
 	noiseLevel: 0.34,
 	noiseCentre: 2200,
 	noiseQ: 0.6,
-	brightness: [1600, 5200],
+	brightness: [1300, 3800],
 	level: 0.5,
 	gearTops: [6, 11, 17, 24],
 	turboHz: 0,
+	pulse: { pattern: [1], roughness: 0.25, jitter: 0.03, noise: 0.7, noiseDecay: 0.005, pulseHz: 140 },
 };
 
 export const ENGINE_VOICES: Readonly<Record<VehicleStyle, EngineVoice>> = {

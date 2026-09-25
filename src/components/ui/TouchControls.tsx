@@ -107,7 +107,7 @@ export function TouchControls() {
 						<span className="orion-touch-caption">Brake</span>
 					</HoldButton>
 					<HoldButton button="handbrake" label="Handbrake" className="orion-touch-handbrake">
-						<span className="orion-touch-caption">Handbrake</span>
+						<HandbrakeIcon />
 					</HoldButton>
 					<TapButton label="Get out" className={`orion-touch-exit${burning ? " is-urgent" : ""}`} onTap={() => pressTouch("interact")}>
 						<ExitIcon />
@@ -382,6 +382,17 @@ function PedalIcon() {
 			<rect x="7" y="3.5" width="10" height="17" rx="2.5" />
 			<path d="M9.5 8h5M9.5 12h5M9.5 16h5" />
 		</Icon>
+	);
+}
+
+/** The dashboard parking-brake symbol: a P in a circle between two brackets. */
+function HandbrakeIcon() {
+	return (
+		<svg className="orion-touch-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+			<circle cx="12" cy="12" r="6.2" />
+			<path d="M10.4 15V9h2.1a1.8 1.8 0 0 1 0 3.6h-2.1" />
+			<path d="M4.6 6.8a8.8 8.8 0 0 0 0 10.4M19.4 6.8a8.8 8.8 0 0 1 0 10.4" />
+		</svg>
 	);
 }
 

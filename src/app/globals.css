@@ -1195,3 +1195,8 @@ body {
     animation: none;
   }
 }
+
+.orion-touch-handbrake .orion-touch-icon {
+  width: auto;
+  height: 76%;
+}

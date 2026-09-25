@@ -61,7 +61,7 @@ const VARIATION = 0.12;
 
 const SYNTHS: Readonly<Record<SoundId, readonly Layer[]>> = {
 	pistol: [
-		{ kind: "noise", decay: 0.012, level: 0.85, cutoff: 11000, highpass: 2600 },
+		{ kind: "noise", decay: 0.012, level: 0.55, cutoff: 8000, highpass: 2400 },
 		{ kind: "noise", decay: 0.12, level: 0.8, cutoff: 4200, cutoffTo: 700 },
 		{ kind: "tone", decay: 0.1, level: 0.55, from: 190, to: 52 },
 		{ kind: "noise", at: 0.022, decay: 0.42, level: 0.16, cutoff: 2200, cutoffTo: 500, attack: 0.03 },
@@ -69,14 +69,14 @@ const SYNTHS: Readonly<Record<SoundId, readonly Layer[]>> = {
 		{ kind: "noise", at: 0.05, decay: 0.03, level: 0.12, cutoff: 7000, highpass: 2200 },
 	],
 	rifle: [
-		{ kind: "noise", decay: 0.009, level: 1, cutoff: 14000, highpass: 3800 },
+		{ kind: "noise", decay: 0.009, level: 0.6, cutoff: 9000, highpass: 3200 },
 		{ kind: "noise", decay: 0.1, level: 0.85, cutoff: 5600, cutoffTo: 900 },
 		{ kind: "tone", decay: 0.09, level: 0.5, from: 170, to: 46 },
 		{ kind: "noise", at: 0.026, decay: 0.55, level: 0.2, cutoff: 2600, cutoffTo: 420, attack: 0.035 },
 		{ kind: "noise", at: 0.04, decay: 0.025, level: 0.1, cutoff: 8000, highpass: 2800 },
 	],
 	shotgun: [
-		{ kind: "noise", decay: 0.02, level: 0.7, cutoff: 8000, highpass: 1800 },
+		{ kind: "noise", decay: 0.02, level: 0.5, cutoff: 6500, highpass: 1600 },
 		{ kind: "noise", decay: 0.3, level: 1, cutoff: 2600, cutoffTo: 420 },
 		{ kind: "tone", decay: 0.28, level: 0.9, from: 120, to: 34 },
 		{ kind: "noise", at: 0.03, decay: 0.8, level: 0.26, cutoff: 1600, cutoffTo: 300, attack: 0.05 },
@@ -89,7 +89,7 @@ const SYNTHS: Readonly<Record<SoundId, readonly Layer[]>> = {
 		{ kind: "tone", decay: 0.25, level: 0.6, from: 95, to: 38 },
 	],
 	explosion: [
-		{ kind: "noise", decay: 0.05, level: 0.9, cutoff: 9000, highpass: 1200 },
+		{ kind: "noise", decay: 0.05, level: 0.6, cutoff: 7000, highpass: 1200 },
 		{ kind: "noise", decay: 1.1, level: 1, cutoff: 1100, cutoffTo: 200 },
 		{ kind: "tone", decay: 1.2, level: 1, from: 74, to: 22 },
 		{ kind: "noise", at: 0.06, decay: 2, level: 0.34, cutoff: 900, cutoffTo: 180, attack: 0.09 },
@@ -103,8 +103,8 @@ const SYNTHS: Readonly<Record<SoundId, readonly Layer[]>> = {
 	],
 	swing: [{ kind: "noise", decay: 0.14, level: 0.16, cutoff: 1400, cutoffTo: 2800, highpass: 500, attack: 0.05 }],
 	slash: [
-		{ kind: "noise", decay: 0.18, level: 0.22, cutoff: 6000, cutoffTo: 9500, highpass: 1800, attack: 0.03 },
-		{ kind: "noise", at: 0.09, decay: 0.12, level: 0.1, cutoff: 9000, highpass: 4000 },
+		{ kind: "noise", decay: 0.18, level: 0.18, cutoff: 5000, cutoffTo: 7000, highpass: 1600, attack: 0.03 },
+		{ kind: "noise", at: 0.09, decay: 0.12, level: 0.07, cutoff: 7500, highpass: 3500 },
 	],
 	empty: [{ kind: "noise", decay: 0.02, level: 0.28, cutoff: 7000, highpass: 2500, q: 2 }],
 	reload: [
@@ -122,7 +122,7 @@ const SYNTHS: Readonly<Record<SoundId, readonly Layer[]>> = {
 		{ kind: "noise", decay: 0.05, level: 0.8, cutoff: 5000, highpass: 300 },
 		{ kind: "tone", decay: 0.13, level: 0.6, from: 145, to: 42 },
 		{ kind: "noise", at: 0.02, decay: 0.35, level: 0.3, cutoff: 3200, cutoffTo: 800, q: 2.2 },
-		{ kind: "noise", at: 0.05, decay: 0.5, level: 0.12, cutoff: 12000, highpass: 5000 },
+		{ kind: "noise", at: 0.05, decay: 0.5, level: 0.08, cutoff: 8000, highpass: 4000 },
 	],
 };
 
@@ -149,7 +149,8 @@ class CombatAudio {
 		panner.pan.value = placed.pan;
 		const air = context.createBiquadFilter();
 		air.type = "lowpass";
-		air.frequency.value = placed.muffle;
+		// Capped even up close: the top octave of synthesised noise is pure fizz.
+		air.frequency.value = Math.min(placed.muffle, 12000);
 		output.connect(air).connect(panner).connect(master);
 
 		const file = this.fileFor(context, id);
