@@ -8,6 +8,7 @@ import { PlayerCombat, type CombatContext, type CombatInput } from "../combat/Pl
 import { playerRig } from "./PlayerRig";
 import { bloodMaterial } from "../characters/Knockdown";
 import { engineAudio } from "../audio/EngineAudio";
+import { addTouchLook, readTouchHeld, takeTouchEdges, takeTouchLook } from "../input/TouchInput";
 import { findCarNear, shardMaterial } from "../traffic/Carjack";
 import { prewarmBurntBodies } from "../traffic/CarMeshes";
 import { crashEffects } from "../traffic/CrashEffects";
@@ -68,6 +69,11 @@ const RESPAWN_CLEAR_RADIUS = 60;
 const CLICK_SLOP = 6;
 /** How quickly the character turns to face the aim while shooting or swinging. */
 const AIM_TURN_RESPONSE = 20;
+/** Touch stick: pushed this far it walks at full pace, and at the rim it runs. */
+const STICK_FULL_WALK = 0.6;
+const STICK_RUN = 0.9;
+/** Browsers follow a tap with a click this long afterwards, at most. */
+const TOUCH_CLICK_WINDOW_MS = 800;
 const HURT_SHAKE = 0.004;
 
 /** Swings thrown at the driver on the ground, and how far into each one the fist connects. */
@@ -115,6 +121,13 @@ export class OrionThirdPersonController extends Script {
 	private readonly combatInput: CombatInput = { attackHeld: false, attackPressed: false, reloadPressed: false, slotPressed: null, wheel: 0 };
 	private readonly combatContext: CombatContext = { x: 0, y: 0, z: 0, yaw: 0, cameraX: 0, cameraY: 0, cameraZ: 0, aimX: 0, aimY: 0, aimZ: 1, active: false };
 	private dragDistance = 0;
+	/** The left button is down with the pointer locked (a touch fire button counts separately). */
+	private mouseAttackHeld = false;
+	/** The finger dragging the view on the game itself (not on a control), if any. */
+	private lookPointer: number | null = null;
+	private lookLastX = 0;
+	private lookLastY = 0;
+	private lastTouchAt = -Infinity;
 	private wastedTimer = 0;
 	private mouseX = 0;
 	private mouseY = 0;
@@ -199,7 +212,7 @@ export class OrionThirdPersonController extends Script {
 	private readonly pointerDown = (event: MouseEvent) => {
 		if (event.button !== 0) return;
 		if (this.isPointerLocked()) {
-			this.combatInput.attackHeld = true;
+			this.mouseAttackHeld = true;
 			this.combatInput.attackPressed = true;
 			return;
 		}
@@ -209,13 +222,43 @@ export class OrionThirdPersonController extends Script {
 	private readonly pointerUp = (event: MouseEvent) => {
 		if (event.button !== 0) return;
 		if (this.dragging && this.dragDistance < CLICK_SLOP) this.combatInput.attackPressed = true;
-		this.combatInput.attackHeld = false;
+		this.mouseAttackHeld = false;
 		this.dragging = false;
 	};
 	private readonly canvasClick = () => {
-		if (this.isPointerLocked()) return;
+		// A tap is followed by a click; pointer lock means nothing on a touch screen.
+		if (this.isPointerLocked() || performance.now() - this.lastTouchAt < TOUCH_CLICK_WINDOW_MS) return;
 		// Best-effort: if the browser refuses, drag-to-look still works.
 		Promise.resolve(this.app.graphicsDevice.canvas.requestPointerLock()).catch(() => undefined);
+	};
+
+	/**
+	 * A finger dragged across the game (anywhere that isn't an on-screen control) turns the
+	 * camera. The touch start is cancelled so the browser doesn't also turn it into mouse events:
+	 * a tap would otherwise arrive as a click, and a click is an attack.
+	 */
+	private readonly touchDown = (event: PointerEvent) => {
+		if (event.pointerType !== "touch") return;
+		this.lastTouchAt = performance.now();
+		event.preventDefault();
+		if (this.lookPointer !== null) return;
+		this.lookPointer = event.pointerId;
+		this.lookLastX = event.clientX;
+		this.lookLastY = event.clientY;
+		try {
+			this.app.graphicsDevice.canvas.setPointerCapture(event.pointerId);
+		} catch {
+			// Still works while the finger stays over the game.
+		}
+	};
+	private readonly touchMove = (event: PointerEvent) => {
+		if (event.pointerId !== this.lookPointer) return;
+		addTouchLook(event.clientX - this.lookLastX, event.clientY - this.lookLastY);
+		this.lookLastX = event.clientX;
+		this.lookLastY = event.clientY;
+	};
+	private readonly touchUp = (event: PointerEvent) => {
+		if (event.pointerId === this.lookPointer) this.lookPointer = null;
 	};
 
 	public initialize() {
@@ -231,6 +274,10 @@ export class OrionThirdPersonController extends Script {
 		window.addEventListener("keydown", this.keyDown);
 		window.addEventListener("keyup", this.keyUp);
 		canvas.addEventListener("wheel", this.wheel, { passive: false });
+		canvas.addEventListener("pointerdown", this.touchDown);
+		canvas.addEventListener("pointermove", this.touchMove);
+		canvas.addEventListener("pointerup", this.touchUp);
+		canvas.addEventListener("pointercancel", this.touchUp);
 		this.spawnPoint.copy(this.entity.getPosition());
 		this.combat = new PlayerCombat(this.app, this.entity);
 		this.combat.onDeath = () => this.die();
@@ -256,6 +303,18 @@ export class OrionThirdPersonController extends Script {
 				this.prewarmProps = [];
 			}
 		}
+
+		// Touch look arrives in degrees; folding it into the mouse deltas keeps one look path
+		// (and lets a touch drag hold off the driving camera's recentring, as the mouse does).
+		const touchLook = takeTouchLook();
+		this.mouseX += touchLook.x / this.mouseSensitivity;
+		this.mouseY += touchLook.y / this.mouseSensitivity;
+		const touch = takeTouchEdges();
+		if (touch.interact) this.interactPressed = true;
+		if (touch.fire) this.combatInput.attackPressed = true;
+		if (touch.reload) this.combatInput.reloadPressed = true;
+		if (touch.slot !== null) this.combatInput.slotPressed = touch.slot;
+		if (touch.cycle !== 0 && this.mode === "onFoot") this.combatInput.wheel += touch.cycle;
 
 		this.yaw -= this.mouseX * this.mouseSensitivity;
 		this.pitch = Math.max(-12, Math.min(68, this.pitch - this.mouseY * this.mouseSensitivity));
@@ -293,8 +352,19 @@ export class OrionThirdPersonController extends Script {
 
 		// Movement is camera-relative (as in most third-person games): the stick/keys pick a
 		// direction on screen, and the character turns to face wherever that lands.
-		const axisX = Number(this.keys.has("KeyD") || this.keys.has("ArrowRight")) - Number(this.keys.has("KeyA") || this.keys.has("ArrowLeft"));
-		const axisZ = Number(this.keys.has("KeyW") || this.keys.has("ArrowUp")) - Number(this.keys.has("KeyS") || this.keys.has("ArrowDown"));
+		let axisX = Number(this.keys.has("KeyD") || this.keys.has("ArrowRight")) - Number(this.keys.has("KeyA") || this.keys.has("ArrowLeft"));
+		let axisZ = Number(this.keys.has("KeyW") || this.keys.has("ArrowUp")) - Number(this.keys.has("KeyS") || this.keys.has("ArrowDown"));
+		let running = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
+		let gait = 1;
+		const stick = readTouchHeld();
+		const stickLength = Math.hypot(stick.moveX, stick.moveY);
+		if (axisX === 0 && axisZ === 0 && stickLength > 0) {
+			// Short of the rim the stick walks, at a pace set by how far it's pushed; at the rim it runs.
+			axisX = stick.moveX;
+			axisZ = stick.moveY;
+			running = stickLength >= STICK_RUN;
+			gait = Math.min(1, stickLength / STICK_FULL_WALK);
+		}
 		const axisLength = Math.hypot(axisX, axisZ);
 		const normalizedX = axisLength > 0 ? axisX / axisLength : 0;
 		const normalizedZ = axisLength > 0 ? axisZ / axisLength : 0;
@@ -303,7 +373,7 @@ export class OrionThirdPersonController extends Script {
 		// Right-handed, Y-up: facing +Z means right is -X, so this is -cross(forward, up).
 		// The unnegated form sends D to screen-left.
 		this.right.set(-Math.cos(radians), 0, Math.sin(radians));
-		const speed = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight") ? this.runSpeed : this.walkSpeed;
+		const speed = running ? this.runSpeed : this.walkSpeed * gait;
 		this.desiredVelocity.set(
 			this.forward.x * normalizedZ * speed + this.right.x * normalizedX * speed,
 			0,
@@ -319,7 +389,7 @@ export class OrionThirdPersonController extends Script {
 		const blend = 1 - Math.exp(-response * dt);
 		this.currentVelocity.x += (this.desiredVelocity.x - this.currentVelocity.x) * blend;
 		this.currentVelocity.z += (this.desiredVelocity.z - this.currentVelocity.z) * blend;
-		if (this.keys.has("Space") && this.isGrounded()) {
+		if ((this.keys.has("Space") || stick.jump) && this.isGrounded()) {
 			this.currentVelocity.y = this.jumpForce / this.entity.rigidbody.mass;
 		}
 
@@ -500,9 +570,13 @@ export class OrionThirdPersonController extends Script {
 		const car = this.car;
 		if (!car) return;
 		const pressed = (...codes: string[]) => codes.some((code) => this.keys.has(code));
-		const throttle = Number(pressed("KeyW", "ArrowUp")) - Number(pressed("KeyS", "ArrowDown"));
-		const steer = Number(pressed("KeyA", "ArrowLeft")) - Number(pressed("KeyD", "ArrowRight"));
-		car.setDriveInput(throttle, steer, pressed("Space"));
+		let throttle = Number(pressed("KeyW", "ArrowUp")) - Number(pressed("KeyS", "ArrowDown"));
+		let steer = Number(pressed("KeyA", "ArrowLeft")) - Number(pressed("KeyD", "ArrowRight"));
+		const touch = readTouchHeld();
+		if (throttle === 0) throttle = Number(touch.gas) - Number(touch.brake);
+		// The arrows steer, like A and D (a right turn is negative steer).
+		if (steer === 0) steer = Number(touch.steerLeft) - Number(touch.steerRight);
+		car.setDriveInput(throttle, steer, pressed("Space") || touch.handbrake);
 	}
 
 	/**
@@ -660,6 +734,7 @@ export class OrionThirdPersonController extends Script {
 		// Before the camera has placed itself there's no aim yet.
 		if (context.aimX === 0 && context.aimY === 0 && context.aimZ === 0) context.aimZ = 1;
 		context.active = active;
+		input.attackHeld = this.mouseAttackHeld || readTouchHeld().fire;
 		const output = combat.update(dt, input, context);
 		input.attackPressed = false;
 		input.reloadPressed = false;
@@ -817,6 +892,10 @@ export class OrionThirdPersonController extends Script {
 		window.removeEventListener("keydown", this.keyDown);
 		window.removeEventListener("keyup", this.keyUp);
 		canvas.removeEventListener("wheel", this.wheel);
+		canvas.removeEventListener("pointerdown", this.touchDown);
+		canvas.removeEventListener("pointermove", this.touchMove);
+		canvas.removeEventListener("pointerup", this.touchUp);
+		canvas.removeEventListener("pointercancel", this.touchUp);
 		this.keys.clear();
 		this.combat?.destroy();
 		this.combat = null;

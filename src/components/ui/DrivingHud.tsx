@@ -10,16 +10,16 @@ const DIAL_MAX_KMH = 320;
  * Bottom-centre controls strip, which changes with what the player is doing, plus a
  * speedometer while driving.
  */
-export function DrivingHud() {
+export function DrivingHud({ touch }: Readonly<{ touch: boolean }>) {
 	const { inVehicle, vehicleSpeed, nearCar, vehicleIntegrity, vehicleBurning } = usePlayerPose(80);
 	const kmh = Math.round(vehicleSpeed * KMH_PER_MS);
 	const condition = Math.max(0, Math.round(vehicleIntegrity));
 
 	return (
-		<div className="absolute bottom-5 left-1/2 flex -translate-x-1/2 flex-col items-center gap-3 sm:bottom-8">
+		<div className="orion-hud-drive absolute bottom-5 left-1/2 flex -translate-x-1/2 flex-col items-center gap-3 sm:bottom-8">
 			{inVehicle && vehicleBurning ? (
 				<div className="orion-control-hint orion-alert" role="alert">
-					Engine on fire — press <span className="orion-key">F</span> to get out
+					{touch ? <>Engine on fire — tap Exit</> : <>Engine on fire — press <span className="orion-key">F</span> to get out</>}
 				</div>
 			) : null}
 			{inVehicle ? (
@@ -41,12 +41,13 @@ export function DrivingHud() {
 					</div>
 				</div>
 			) : null}
-			{!inVehicle && nearCar ? (
+			{/* On a touch screen the controls themselves say all this (a "Take car" button appears). */}
+			{!touch && !inVehicle && nearCar ? (
 				<div className="orion-control-hint orion-control-hint-prompt" role="status">
 					<HintKey keys={["F"]} label="Take car" />
 				</div>
 			) : null}
-			<div className="hidden sm:block">
+			<div className={touch ? "hidden" : "hidden sm:block"}>
 				<div className="orion-control-hint">
 					{inVehicle ? (
 						<>

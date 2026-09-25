@@ -9,8 +9,11 @@ import { ORION_DISTRICTS } from "@/engine/orion/world/WorldModel";
 import { landBounds, landPath, ORION_LAND } from "@/engine/orion/world/StateOutline";
 import { POLICE_STATION } from "@/engine/orion/police/Police";
 import { usePlayerPose } from "@/components/world/usePlayerPose";
+import { useTouchDevice } from "./useTouchDevice";
 
 const MINIMAP_SIZE = 190;
+/** Smaller on touch screens, where it shares a landscape phone's height with the controls. */
+const TOUCH_MINIMAP_SIZE = 124;
 /** How many world units the corner minimap shows across its full width. */
 const MINIMAP_SPAN = 420;
 
@@ -48,6 +51,7 @@ function shortDistrictName(name: string): string {
 
 export function WorldMap() {
 	const [expanded, setExpanded] = useState(false);
+	const touch = useTouchDevice();
 	const pose = usePlayerPose(120);
 	const stateBounds = useMemo(() => getStateBounds(), []);
 	const coastPaths = useMemo(() => ORION_LAND.map((land) => ({ ...land, d: landPath(land.points) })), []);
@@ -74,12 +78,13 @@ export function WorldMap() {
 	// The expanded map letterboxes ("meet"), so the pixel scale follows whichever axis is tighter.
 	const worldPerPixel = expanded
 		? Math.max((view.maxX - view.minX) / EXPANDED_WIDTH_PX, (view.maxZ - view.minZ) / 560)
-		: (view.maxX - view.minX) / MINIMAP_SIZE;
+		: (view.maxX - view.minX) / (touch ? TOUCH_MINIMAP_SIZE : MINIMAP_SIZE);
 	const px = (value: number) => value * worldPerPixel;
 
 	return (
 		<div className={expanded ? "orion-map-expanded pointer-events-auto" : "orion-map-corner pointer-events-auto"}>
-			<div className="orion-map-frame">
+			{/* Tapping the corner map opens it, on a touch screen: the footer button is a small target. */}
+			<div className="orion-map-frame" onClick={touch && !expanded ? () => setExpanded(true) : undefined}>
 				<svg
 					viewBox={viewBox}
 					width="100%"
@@ -246,7 +251,7 @@ export function WorldMap() {
 			<div className="orion-map-footer">
 				<span className="orion-kicker">{expanded ? "Orion State" : "North District"}</span>
 				<button type="button" onClick={() => setExpanded((open) => !open)} className="orion-map-toggle orion-focus">
-					{expanded ? "Close · Esc" : "Expand · M"}
+					{touch ? (expanded ? "Close" : "Expand") : expanded ? "Close · Esc" : "Expand · M"}
 				</button>
 			</div>
 		</div>

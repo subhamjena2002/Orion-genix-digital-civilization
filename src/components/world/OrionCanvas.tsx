@@ -150,7 +150,7 @@ export default function OrionCanvas() {
   const selectedProperty = properties.find((property) => property.id === selectedPropertyId) ?? null;
 
   return (
-    <main className="relative h-screen w-screen overflow-hidden bg-[#162128]">
+    <main className="orion-game relative h-dvh w-screen overflow-hidden bg-[#162128]">
       <Application
         fillMode="FILL_WINDOW"
         resolutionMode="AUTO"

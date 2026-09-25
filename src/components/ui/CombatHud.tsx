@@ -3,13 +3,14 @@
 import { useEffect, useState } from "react";
 
 import { readCombatHud, type CombatHudState } from "@/engine/orion/combat/CombatHud";
+import { selectTouchSlot } from "@/engine/orion/input/TouchInput";
 import { RESERVED_SLOTS } from "@/engine/orion/combat/WeaponData";
 import { usePlayerPose } from "@/components/world/usePlayerPose";
 
 const SLOT_KEYS = [1, 2, 3, 4, 5, 6, 7];
 
 /** Samples the combat state on a timer, re-rendering only when something shown changed. */
-function useCombatHud(intervalMs: number): CombatHudState {
+export function useCombatHud(intervalMs: number): CombatHudState {
 	const [state, setState] = useState<CombatHudState>(() => ({ ...readCombatHud() }));
 	useEffect(() => {
 		const id = window.setInterval(() => {
@@ -52,21 +53,26 @@ export function CombatHud() {
 				</div>
 			) : null}
 
-			<div className="absolute right-5 top-5 flex flex-col items-end gap-2 sm:right-8 sm:top-8">
+			<div className="orion-hud-combat absolute right-5 top-5 flex flex-col items-end gap-2 sm:right-8 sm:top-8">
 				{!inVehicle ? (
 					<div className="orion-weapon-panel" role="status" aria-label={`${combat.weaponName}${usesAmmo ? `, ${combat.magazine} of ${combat.magazineSize}, ${combat.reserve} spare` : ""}`}>
 						<div className="orion-weapon-slots" aria-hidden="true">
 							{SLOT_KEYS.map((slot) => {
 								const weapon = combat.slots.find((candidate) => candidate.slot === slot);
 								const reserved = RESERVED_SLOTS.includes(slot);
+								// Tappable, for touch screens (the keyboard uses the number keys).
 								return (
-									<span
+									<button
+										type="button"
 										key={slot}
+										tabIndex={-1}
+										disabled={!weapon}
 										title={weapon?.name ?? (reserved ? "Reserved" : "Empty")}
-										className={`orion-weapon-slot${slot === combat.slot ? " is-active" : ""}${weapon ? "" : " is-empty"}`}
+										onClick={() => selectTouchSlot(slot)}
+										className={`orion-weapon-slot pointer-events-auto${slot === combat.slot ? " is-active" : ""}${weapon ? "" : " is-empty"}`}
 									>
 										{slot}
-									</span>
+									</button>
 								);
 							})}
 						</div>

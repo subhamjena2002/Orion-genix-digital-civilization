@@ -6,7 +6,10 @@ import type { PropertyRecord } from "@/engine/orion/properties/Properties";
 import { CombatHud } from "./CombatHud";
 import { DrivingHud } from "./DrivingHud";
 import { DrowningOverlay } from "./DrowningOverlay";
+import { LandscapeMode } from "./LandscapeMode";
 import { SelectionPanel } from "./SelectionPanel";
+import { TouchControls } from "./TouchControls";
+import { useTouchDevice } from "./useTouchDevice";
 import { WorldContext } from "./WorldContext";
 import { WorldHeader } from "./WorldHeader";
 import { WorldMap } from "./WorldMap";
@@ -25,6 +28,7 @@ export function OrionHUD({
 	onClear,
 }: Readonly<OrionHUDProps>) {
 	const [offerNotice, setOfferNotice] = useState(false);
+	const touch = useTouchDevice();
 
 	useEffect(() => {
 		function handleKeyDown(event: KeyboardEvent) {
@@ -44,14 +48,17 @@ export function OrionHUD({
 	}
 
 	return (
-		<div id="world" className="pointer-events-none absolute inset-0 z-10 flex flex-col text-[#f1ede2]">
+		<div id="world" data-input={touch ? "touch" : "mouse"} className="pointer-events-none absolute inset-0 z-10 flex flex-col text-[#f1ede2]">
 			<DrowningOverlay />
 			<WorldHeader />
 
 			<div className="relative flex-1 p-5 sm:p-8">
-				<div className="absolute bottom-5 left-5 flex flex-col gap-3 sm:bottom-8 sm:left-8">
+				{/* Under everything else in the HUD, so a panel or the open map sits over the buttons. */}
+				{touch ? <TouchControls /> : null}
+
+				<div className="orion-hud-map absolute bottom-5 left-5 flex flex-col gap-3 sm:bottom-8 sm:left-8">
 					<WorldMap />
-					<WorldContext />
+					{touch ? null : <WorldContext />}
 				</div>
 
 				{property ? (
@@ -66,8 +73,9 @@ export function OrionHUD({
 					</div>
 				) : null}
 
-				<DrivingHud />
+				<DrivingHud touch={touch} />
 				<CombatHud />
+				{touch ? <LandscapeMode /> : null}
 			</div>
 		</div>
 	);
