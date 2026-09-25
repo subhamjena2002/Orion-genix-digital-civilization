@@ -9,18 +9,20 @@ export interface EnvironmentProfile {
 	sunIntensity: number;
 	fillIntensity: number;
 	streetLightIntensity: number;
+	skyboxIntensity: number;
 }
 
 export const ORION_ENVIRONMENT_PROFILES: Readonly<Record<TimeOfDay, EnvironmentProfile>> = {
 	day: {
 		id: "day",
 		clearColor: "#9aa8a6",
-		exposure: 1,
+		exposure: 0.82,
 		fogColor: "#9aa8a6",
 		fogDensity: 0.002,
-		sunIntensity: 2.1,
-		fillIntensity: 0.35,
+		sunIntensity: 1.05,
+		fillIntensity: 0.22,
 		streetLightIntensity: 0,
+		skyboxIntensity: 0.55,
 	},
 	night: {
 		id: "night",
@@ -31,6 +33,7 @@ export const ORION_ENVIRONMENT_PROFILES: Readonly<Record<TimeOfDay, EnvironmentP
 		sunIntensity: 0.25,
 		fillIntensity: 0.18,
 		streetLightIntensity: 2,
+		skyboxIntensity: 0.2,
 	},
 };
 

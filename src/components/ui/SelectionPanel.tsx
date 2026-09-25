@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import type { PropertyRecord } from "@/engine/orion/properties/Properties";
 import { HistoryPanel } from "./HistoryPanel";
@@ -27,37 +27,39 @@ export function SelectionPanel({
 		<section className="orion-selection-panel pointer-events-auto">
 			<div className="flex items-start justify-between gap-5">
 				<div>
-					<p className="font-mono text-[9px] uppercase tracking-[0.22em] text-[#d7b77a]">Property / {property.id}</p>
-					<h2 className="mt-2 text-[17px] font-medium uppercase tracking-[0.08em] text-[#f1ede2]">{property.metadata.displayName}</h2>
-					<p className="mt-1 text-[11px] text-white/42">{property.metadata.category}</p>
+					<span className="orion-id-badge">{property.id}</span>
+					<h2 className="mt-2.5 text-[16px] font-semibold tracking-[0.01em] text-[var(--oi-text-primary)]">{property.metadata.displayName}</h2>
+					<p className="mt-1 text-[11.5px] text-[var(--oi-text-tertiary)]">{property.metadata.category}</p>
 				</div>
-				<button type="button" onClick={onClear} className="orion-focus text-[10px] uppercase tracking-[0.14em] text-white/40 transition-colors hover:text-white" aria-label="Close property details">
-					Close
+				<button type="button" onClick={onClear} className="orion-icon-button orion-focus" aria-label="Close property details">
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+						<path d="M6 6l12 12M18 6L6 18" />
+					</svg>
 				</button>
 			</div>
 
-			<div className="orion-panel-rule mt-5 pt-4">
-				<div className="flex items-center justify-between gap-4">
-					<Detail label={isOwned ? "Owned by" : "Status"} value={isOwned ? formatOwner(property.ownerId) : "Available"} accent={!isOwned} />
-					<div className="text-right">
-						<p className="font-mono text-[9px] uppercase tracking-[0.16em] text-white/38">Value</p>
-						<p className="mt-1 text-[17px] font-medium tracking-[0.01em] text-[#f1ede2]">{property.value.toLocaleString("en-US")} <span className="text-[9px] font-normal tracking-[0.12em] text-[#d7b77a]">ORION</span></p>
-					</div>
-				</div>
+			<div className="orion-panel-rule orion-stat-grid mt-5 pt-4">
+				<Stat label={isOwned ? "Owned by" : "Status"} value={isOwned ? formatOwner(property.ownerId) : "Available"} accent={!isOwned} />
+				<Stat
+					label="Estimated value"
+					value={<>{property.value.toLocaleString("en-US")} <span className="text-[10px] font-semibold tracking-[0.1em] text-[var(--oi-accent)]">ORION</span></>}
+				/>
+				<Stat label="District" value="North / Sector 01" />
+				<Stat label="Listing" value={property.saleStatus === "not-listed" ? "Not listed" : "On market"} />
 			</div>
 
-			<div className="mt-5 flex items-center gap-4">
+			<div className="mt-5 flex items-center gap-3">
 				<button
 					type="button"
 					onClick={() => isOwned ? onOffer(property.id) : onAcquire(property.id)}
-					className="orion-action orion-focus"
+					className="orion-action-primary orion-focus"
 				>
 					<span>{isOwned ? "Make an Offer" : "Acquire Property"}</span><span className="orion-action-arrow" aria-hidden="true">→</span>
 				</button>
 				<button
 					type="button"
 					onClick={() => setHistoryOpen((open) => !open)}
-					className="orion-focus text-[10px] uppercase tracking-[0.12em] text-white/45 transition-colors hover:text-white/85"
+					className="orion-action-secondary orion-focus"
 					aria-expanded={historyOpen}
 				>
 					History · {String(property.lineage.length).padStart(2, "0")}
@@ -69,12 +71,12 @@ export function SelectionPanel({
 	);
 }
 
-function Detail({ label, value, accent = false }: Readonly<{ label: string; value: string; accent?: boolean }>) {
+function Stat({ label, value, accent = false }: Readonly<{ label: string; value: ReactNode; accent?: boolean }>) {
 	return (
 		<div>
-			<p className="font-mono text-[9px] uppercase tracking-[0.16em] text-white/38">{label}</p>
-			<p className={`mt-1 flex items-center gap-2 text-[13px] ${accent ? "text-[#d7b77a]" : "text-white/88"}`}>
-				{accent ? <span className="h-1.5 w-1.5 rounded-full bg-[#d7b77a]" aria-hidden="true" /> : null}
+			<p className="orion-stat-label">{label}</p>
+			<p className="orion-stat-value flex items-center">
+				{accent ? <span className="orion-badge-dot" aria-hidden="true" /> : null}
 				{value}
 			</p>
 		</div>

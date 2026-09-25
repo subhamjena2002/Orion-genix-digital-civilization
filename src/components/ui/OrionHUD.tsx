@@ -3,9 +3,13 @@
 import { useEffect, useState } from "react";
 
 import type { PropertyRecord } from "@/engine/orion/properties/Properties";
+import { CombatHud } from "./CombatHud";
+import { DrivingHud } from "./DrivingHud";
+import { DrowningOverlay } from "./DrowningOverlay";
 import { SelectionPanel } from "./SelectionPanel";
 import { WorldContext } from "./WorldContext";
 import { WorldHeader } from "./WorldHeader";
+import { WorldMap } from "./WorldMap";
 
 interface OrionHUDProps {
 	property: PropertyRecord | null;
@@ -40,26 +44,30 @@ export function OrionHUD({
 	}
 
 	return (
-		<div id="world" className="pointer-events-none absolute inset-0 z-10 p-5 text-[#f1ede2] sm:p-8">
+		<div id="world" className="pointer-events-none absolute inset-0 z-10 flex flex-col text-[#f1ede2]">
+			<DrowningOverlay />
 			<WorldHeader />
 
-			<div className="absolute bottom-5 left-5 sm:bottom-8 sm:left-8">
-				<WorldContext />
-			</div>
-
-			{property ? (
-				<div className="absolute bottom-5 right-5 flex max-w-[calc(100%-2.5rem)] flex-col items-end sm:bottom-8 sm:right-8">
-					<SelectionPanel property={property} onAcquire={onAcquire} onOffer={handleOffer} onClear={onClear} />
-					{offerNotice ? (
-						<div role="status" className="orion-notice pointer-events-auto mt-3 border border-white/10 bg-[#10191e]/80 px-3 py-2 text-[11px] text-white/75 backdrop-blur-md">
-							Offer submitted to the Orion market.
-						</div>
-					) : null}
+			<div className="relative flex-1 p-5 sm:p-8">
+				<div className="absolute bottom-5 left-5 flex flex-col gap-3 sm:bottom-8 sm:left-8">
+					<WorldMap />
+					<WorldContext />
 				</div>
-			) : null}
 
-			<div className="absolute bottom-5 right-5 hidden font-mono text-[9px] uppercase tracking-[0.16em] text-white/35 sm:block sm:bottom-8 sm:right-8">
-				W A S D&nbsp;&nbsp; Move&nbsp;&nbsp; · &nbsp;&nbsp;Shift&nbsp;&nbsp; Run&nbsp;&nbsp; · &nbsp;&nbsp;Mouse&nbsp;&nbsp; Look
+				{property ? (
+					<div className="absolute bottom-5 right-5 flex max-w-[calc(100%-2.5rem)] flex-col items-end sm:bottom-8 sm:right-8">
+						<SelectionPanel property={property} onAcquire={onAcquire} onOffer={handleOffer} onClear={onClear} />
+						{offerNotice ? (
+							<div role="status" className="orion-notice orion-surface pointer-events-auto mt-3 flex items-center gap-2 px-3.5 py-2.5 text-[11.5px] text-[var(--oi-text-secondary)]">
+								<span className="orion-badge-dot" aria-hidden="true" />
+								Offer submitted to the Orion market.
+							</div>
+						) : null}
+					</div>
+				) : null}
+
+				<DrivingHud />
+				<CombatHud />
 			</div>
 		</div>
 	);

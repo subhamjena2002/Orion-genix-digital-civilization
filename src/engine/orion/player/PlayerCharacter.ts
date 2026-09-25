@@ -14,12 +14,12 @@ export interface PlayerCharacterDefinition {
 }
 
 export const ORION_PLAYER_CHARACTER: PlayerCharacterDefinition = {
-	assetPath: null,
+	assetPath: "/models/characters/orion-citizen/orion-citizen.glb",
 	animations: {
-		idle: null,
-		walk: null,
-		run: null,
+		idle: "HumanArmature|Man_Idle",
+		walk: "HumanArmature|Man_Walk",
+		run: "HumanArmature|Man_Run",
 	},
 	scale: [1, 1, 1],
-	offset: [0, 0, 0],
+	offset: [0, -0.65, 0],
 };
