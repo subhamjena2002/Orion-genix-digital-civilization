@@ -39,6 +39,8 @@ const OFF_GROUND = 0.3;
  * one part. Turned as one piece, the pair swung round the middle of the car when steering.
  */
 const AXLE_WIDTH_RATIO = 1.5;
+/** Parts near a wheel that aren't one, whatever their names borrow. */
+const NOT_WHEEL_NODE = /caliper|brake|disc|rotor/i;
 
 interface Wheel {
 	pivot: Entity;
@@ -100,6 +102,8 @@ export class OrionVehicleModel extends Script {
 	public static scriptName = "orionVehicleModel";
 
 	public spec: VehicleModelSpec | null = null;
+	/** The model's hand-measured seat has been passed to the car (see VehicleModelSpec.seat). */
+	private seatGiven = false;
 	public paint = "#ffffff";
 	public police = false;
 	/** Material for the fallback light bar; OrionVehicle flashes it by entity name. */
@@ -145,6 +149,15 @@ export class OrionVehicleModel extends Script {
 
 		const position = this.entity.getPosition();
 		const player = readPlayerPose();
+		// The seat is known from the spec: hand it over at once, not when the car first comes close
+		// (a parked or hidden patrol car kept the default seat, on the wrong side).
+		if (this.spec?.seat && !this.seatGiven) {
+			this.vehicle ??= ((this.entity.parent as Entity | null)?.script?.get("orionVehicle") ?? null) as OrionVehicle | null;
+			if (this.vehicle) {
+				this.vehicle.carjack.setSeat(this.spec.seat);
+				this.seatGiven = true;
+			}
+		}
 		const visible = Math.hypot(position.x - player.x, position.z - player.z) < DETAIL_DISTANCE;
 		if (visible !== this.shown) this.setShown(visible);
 		if (!visible) return;
@@ -180,6 +193,7 @@ export class OrionVehicleModel extends Script {
 		this.measureCabin(visibleInstances);
 		this.prepareMaterials(visibleInstances);
 		this.findWheels(model);
+		if (this.police && this.spec.lightBarNode) this.splitLightBar(model, this.spec.lightBarNode);
 		if (this.police && this.sirenMaterials.length === 0) this.addLightBar(visibleInstances);
 		// Grouped before merging hides the originals: the simplified levels are the whole car.
 		const lodGroups = groupByMaterial(visibleInstances);
@@ -529,7 +543,9 @@ export class OrionVehicleModel extends Script {
 		const chosen: Entity[] = [];
 		model.forEach((node) => {
 			const entity = node as Entity;
-			if (!WHEEL_NODE.test(entity.name)) return;
+			// Calipers hold still while the wheel turns inside them; models often name them after
+			// the tyre material they share, which the pattern alone would take for a wheel.
+			if (!WHEEL_NODE.test(entity.name) || NOT_WHEEL_NODE.test(entity.name)) return;
 			// Take only the outermost match, so a wheel's own tyre/rim children spin with it.
 			if (chosen.some((wheel) => isAncestor(wheel, entity))) return;
 			if (collectMeshInstances(entity).length === 0) return;
@@ -543,7 +559,7 @@ export class OrionVehicleModel extends Script {
 		const wheels: Entity[] = [];
 		for (const { wheel, box } of onCar) {
 			if (box.center.y - box.halfExtents.y > ground + OFF_GROUND || /steer/i.test(wheel.name)) continue;
-			if (box.halfExtents.x > box.halfExtents.y * AXLE_WIDTH_RATIO) wheels.push(...this.splitAxle(wheel, box));
+			if (box.halfExtents.x > box.halfExtents.y * AXLE_WIDTH_RATIO) wheels.push(...this.splitAcross(wheel, box));
 			else wheels.push(wheel);
 		}
 
@@ -573,12 +589,37 @@ export class OrionVehicleModel extends Script {
 	}
 
 	/**
-	 * Cuts an axle modelled as one mesh (both tyres in a single part) into a left and a right
-	 * wheel, each a node of its own centred on its tyre, so each can steer about its own centre.
-	 * The original is switched off. Returns the new wheels, or the axle itself if it can't be cut
-	 * (then it still rolls correctly; it just doesn't steer as a pair).
+	 * The model's own roof light bar, cut into a left and a right half with materials of their
+	 * own — red on the left, blue on the right — so they flash (updateLights) without lighting up
+	 * the headlamps and tail-lamps that share the bar's texture.
 	 */
-	private splitAxle(axle: Entity, box: BoundingBox): Entity[] {
+	private splitLightBar(model: Entity, pattern: RegExp) {
+		let bar: Entity | null = null;
+		model.forEach((node) => {
+			if (!bar && pattern.test(node.name) && collectMeshInstances(node as Entity).length > 0) bar = node as Entity;
+		});
+		if (!bar) return;
+		const halves = this.splitAcross(bar, localBounds(this.entity, collectMeshInstances(bar)));
+		if (halves.length !== 2) return;
+		halves.forEach((half, side) => {
+			for (const instance of half.render?.meshInstances ?? []) {
+				const siren = (instance.material as StandardMaterial).clone();
+				siren.name = side === 0 ? "siren-red" : "siren-blue";
+				siren.update();
+				instance.material = siren;
+				this.sirenMaterials.push(siren);
+			}
+		});
+	}
+
+	/**
+	 * Cuts a part modelled as one mesh across both sides of the car into a left and a right node,
+	 * each centred on its own half. An axle (both tyres in a single part) becomes two wheels that
+	 * each steer about their own centre; a light bar becomes two halves that flash separately.
+	 * The original is switched off. Returns the halves, or the part itself if it can't be cut
+	 * (an axle then still rolls correctly; it just doesn't steer as a pair).
+	 */
+	private splitAcross(axle: Entity, box: BoundingBox): Entity[] {
 		const parent = axle.parent as Entity | null;
 		const spec = this.spec;
 		const instances = collectMeshInstances(axle).filter((instance) => instance.visible && instance.material);
@@ -694,12 +735,14 @@ export class OrionVehicleModel extends Script {
 		}
 
 		if (!this.police || this.sirenMaterials.length === 0) return;
-		this.flashTimer += dt;
+		// Only on a chase or with the player at the wheel; a parked patrol car's lights are off.
+		const flashing = this.vehicle?.lightsFlashing ?? false;
+		if (flashing) this.flashTimer += dt;
 		const redPhase = Math.floor(this.flashTimer / FLASH_SECONDS) % 2 === 0;
 		this.sirenMaterials.forEach((material, index) => {
 			const name = (material.name ?? "").toLowerCase();
 			const isBlue = name.includes("blue") || (!name.includes("red") && index % 2 === 1);
-			const on = isBlue ? !redPhase : redPhase;
+			const on = flashing && (isBlue ? !redPhase : redPhase);
 			const emissive = on ? (isBlue ? SIREN_BLUE : SIREN_RED) : SIREN_OFF;
 			if (material.emissive.equals(emissive)) return;
 			material.emissive = emissive;

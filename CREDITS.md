@@ -14,11 +14,13 @@ so. An unverified licence is not a licence.
 | `public/models/vehicles/truck.glb` | **unknown** | **unknown** | ⚠️ Supplied as a file with no source page. Nobody has confirmed who made it or on what terms. It must not be redistributed until that is answered — if it can't be, replace the model. |
 | `public/models/vehicles/military-wagon.glb` | Axel Roman (DeathCoreBoy1) | CC-BY-4.0 *(unconfirmed)* | ⚠️ Taken from the Sketchfab page below; confirm against the download dialog. Credit required. |
 | `public/models/characters/player-casual.glb` | ijiklvn | CC-BY-4.0 | ⚠️ Credit required and not yet shown in game. |
+| `public/models/vehicles/phoenix-93-interceptor.glb` ("Phoenix '93 Interceptor – Low poly model") | Daniel Zhabotinsky | CC-BY-4.0 *(from the file's own metadata)* | ⚠️ Credit required and not yet shown in game. Fictional marque; its badge sheet and plates are hidden in game. |
 
 Sources:
 
 - military-wagon — <https://sketchfab.com/3d-models/dcb-k-133byat-unbranded-1a37570f3bbf4c31b6c8c1f89fdf3724>
 - player-casual — <https://sketchfab.com/3d-models/casual-male-char-rigged-9034a1acc95e494592441a057d319953>
+- phoenix-93-interceptor — <https://sketchfab.com/3d-models/phoenix-93-interceptor-low-poly-model-ac4a91cb1b184ebd82c598c1bc54ba3d>
 
 ## Clear to use
 

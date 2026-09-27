@@ -23,11 +23,26 @@ export class WeaponInventory {
 	private reloadLeft = 0;
 	private cooldownLeft = 0;
 
+	private readonly startIndex: number;
+
 	public constructor(definitions: readonly WeaponDefinition[], startWith = definitions[0]?.id) {
 		this.carried = [...definitions]
 			.sort((a, b) => a.slot - b.slot)
 			.map((definition) => ({ definition, magazine: definition.magazineSize, reserve: definition.startingAmmo }));
 		this.index = Math.max(0, this.carried.findIndex((weapon) => weapon.definition.id === startWith));
+		this.startIndex = this.index;
+	}
+
+	/** As at the start of a game: every magazine full, the starting spares, the first weapon out. */
+	public restock(): void {
+		for (const weapon of this.carried) {
+			weapon.magazine = weapon.definition.magazineSize;
+			weapon.reserve = weapon.definition.startingAmmo;
+		}
+		this.index = this.startIndex;
+		this.equipLeft = 0;
+		this.reloadLeft = 0;
+		this.cooldownLeft = 0;
 	}
 
 	public get current(): CarriedWeapon {

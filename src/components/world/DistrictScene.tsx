@@ -15,6 +15,8 @@ import { ORION_GROUND_TEXTURES } from "@/engine/orion/assets/AssetPaths";
 import { IntersectionShowcase, SHOWCASE_POSITION } from "./IntersectionShowcase";
 import { Ocean } from "./Ocean";
 import { Pedestrians } from "./Pedestrians";
+import { Highways } from "./Highways";
+import { Mountains } from "./Mountains";
 import { StateTerrain } from "./StateTerrain";
 import { StreetFurniture } from "./StreetFurniture";
 import { Vehicles } from "./Vehicles";
@@ -33,6 +35,12 @@ const TERRAIN_TEXTURE_UNIT = 22;
  */
 const { surfaceY: ROAD_SURFACE_Y, thickness: ROAD_THICKNESS, axisEpsilon: ROAD_AXIS_EPSILON, pavementWidth: PAVEMENT_WIDTH, pavementLift: PAVEMENT_LIFT } = ROAD_GEOMETRY;
 
+/**
+ * The terrain plane (see StateTerrain). Buildings, plots and trees stand on it; placed at y = 0
+ * they floated 0.65 m over the grass with daylight under their plinths.
+ */
+const GROUND_Y = -0.65;
+
 const BUILDING_RENDER_RADIUS = 170;
 /** A mounted building stays until it's this far away, so boundaries don't thrash. */
 const BUILDING_UNMOUNT_RADIUS = 215;
@@ -45,7 +53,7 @@ const CULLABLE_BUILDINGS = ORION_BUILDING_MAP.filter((placement) => !POLICE_STAT
 const buildingPosition = (placement: BuildingPlacement): readonly [number, number] => [placement.position[0], placement.position[2]];
 const SHOWCASE_ITEMS = [SHOWCASE_POSITION] as const;
 const showcasePosition = (position: typeof SHOWCASE_POSITION): readonly [number, number] => [position[0], position[2]];
-const STREET_TREES: readonly [number, number, number][] = [[-14, 0, -10.5], [14, 0, -10.5], [-14, 0, 10.5], [14, 0, 10.5]];
+const STREET_TREES: readonly [number, number, number][] = [[-14, GROUND_Y, -10.5], [14, GROUND_Y, -10.5], [-14, GROUND_Y, 10.5], [14, GROUND_Y, 10.5]];
 
 /** Builds StandardMaterial props for a real PBR ground surface, falling back to flat color while it streams in. */
 function pbrGroundMaterialProps(
@@ -113,6 +121,8 @@ export function DistrictScene({ properties, onSelectProperty }: Readonly<Distric
 		<>
 			<Ocean />
 			<StateTerrain material={terrain} textureUnit={TERRAIN_TEXTURE_UNIT} />
+			<Mountains grassDiffuse={grassDiffuse} grassNormal={grassNormal} rockDiffuse={asphaltDiffuse} rockNormal={asphaltNormal} />
+			<Highways asphaltDiffuse={asphaltDiffuse} asphaltNormal={asphaltNormal} grassDiffuse={grassDiffuse} grassNormal={grassNormal} />
 
 			{visibleRoads.map((segment) => (
 				<RoadVisual
@@ -209,13 +219,20 @@ const RoadVisual = memo(function RoadVisual({ segment, asphaltDiffuse, asphaltNo
 	const length = Math.hypot(segment.end[0] - segment.start[0], segment.end[2] - segment.start[2]);
 	const y = ROAD_SURFACE_Y + (runsNorthSouth ? 0 : ROAD_AXIS_EPSILON);
 
+	// A box's top face maps the texture's U along world X and V along Z, so the repeat counts
+	// follow the axes, not the road: a north-south road runs along Z. Written as (length, width)
+	// for every road, the north-south ones had the asphalt squashed across the carriageway and
+	// stretched along it (streaks), and the paving crammed so tight it averaged to flat tan.
+	const tiling = (unit: number, across: number): [number, number] => (
+		runsNorthSouth ? [across / unit, length / unit] : [length / unit, across / unit]
+	);
 	const surface = useMaterial(pbrGroundMaterialProps(
 		ORION_MATERIALS.asphalt.baseColor, asphaltDiffuse, asphaltNormal,
-		[length / ASPHALT_TEXTURE_UNIT, segment.width / ASPHALT_TEXTURE_UNIT], 0.1,
+		tiling(ASPHALT_TEXTURE_UNIT, segment.width), 0.1,
 	));
 	const kerb = useMaterial(pbrGroundMaterialProps(
 		ORION_MATERIALS.concrete.baseColor, pavementDiffuse, pavementNormal,
-		[length / CONCRETE_TEXTURE_UNIT, PAVEMENT_WIDTH / CONCRETE_TEXTURE_UNIT], 0.15,
+		tiling(CONCRETE_TEXTURE_UNIT, PAVEMENT_WIDTH), 0.15,
 	));
 
 	const along = (value: number): [number, number, number] => (
@@ -271,7 +288,7 @@ const Parcel = memo(function Parcel({ propertyId, x, z, material, line, ready, o
 }>) {
 	const select = useCallback(() => onSelect(propertyId), [onSelect, propertyId]);
 	return (
-		<Entity name="parcel" position={[x, -0.25, z]} onClick={select}>
+		<Entity name="parcel" position={[x, GROUND_Y + PARCEL_SIZE[1] / 2, z]} onClick={select}>
 			<Entity name="parcel-surface" scale={PARCEL_SIZE}>
 				<Render type="box" material={material} receiveShadows castShadows={false} />
 				{/* Primitive colliders ignore entity scale, so the size is always passed explicitly. */}
@@ -317,7 +334,7 @@ const BuildingVisual = memo(function BuildingVisual({ placement, material, roof,
 		: [0, 0.9, depth / 2 + 0.08] as [number, number, number];
 
 	return (
-		<Entity name={placement.id} position={[x, 0, z]} rotation={placement.rotation}>
+		<Entity name={placement.id} position={[x, GROUND_Y, z]} rotation={placement.rotation}>
 			<Entity name="building-body" position={[0, placement.height / 2, 0]} scale={[width, placement.height, depth]}>
 				<Render type="box" material={material} castShadows receiveShadows />
 				<Collision type="box" halfExtents={[width / 2, placement.height / 2, depth / 2]} />
@@ -358,7 +375,7 @@ const HeroBuildingVisual = memo(function HeroBuildingVisual({ placement, materia
 	const renderedHeight = nativeHeight * scale;
 
 	return (
-		<Entity name={placement.id} position={[x, 0, z]} rotation={placement.rotation}>
+		<Entity name={placement.id} position={[x, GROUND_Y, z]} rotation={placement.rotation}>
 			<Entity name="building-model" scale={[scale, scale, scale]}>
 				<Container asset={asset} />
 			</Entity>

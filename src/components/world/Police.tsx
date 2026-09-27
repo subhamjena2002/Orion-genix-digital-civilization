@@ -6,10 +6,11 @@ import { useApp, useMaterial, useModel } from "@playcanvas/react/hooks";
 import { ADDRESS_CLAMP_TO_EDGE, Texture, type Entity as PlayCanvasEntity, type Material } from "playcanvas";
 import { memo, useEffect, useMemo, useState } from "react";
 
+import { OrionFootOfficer } from "@/engine/orion/police/OrionFootOfficer";
 import { OrionPoliceOfficer } from "@/engine/orion/police/OrionPoliceOfficer";
 import { OFFICER_POSTS, PARKED_PATROL_CARS, POLICE_STATION, POLICE_UNIFORM, type OfficerPost } from "@/engine/orion/police/Police";
 import { PAVEMENT_TOP_Y } from "@/engine/orion/roads/RoadNetwork";
-import { ParkedVehicle } from "./Vehicles";
+import { ParkedVehicle, PursuitUnits } from "./Vehicles";
 
 type Vec3 = [number, number, number];
 
@@ -27,9 +28,52 @@ export const Police = memo(function Police() {
 		<>
 			<PoliceStation />
 			{OFFICER_POSTS.map((post) => <Officer key={post.id} post={post} />)}
+			<PursuitUnits />
+			{FOOT_OFFICERS.map((officer) => <FootOfficer key={officer.id} path={officer.path} seed={officer.seed} />)}
 		</>
 	);
 });
+
+/**
+ * Officers who get out of the patrol cars to fight on foot (see OrionFootOfficer): two for each
+ * of the five cars. Only this character rig carries aiming and firing animations, so it's the
+ * one they use.
+ */
+const FOOT_OFFICERS = Array.from({ length: 10 }, (_, index) => ({
+	id: `foot-officer-${index + 1}`,
+	path: index % 2 === 0 ? "/models/characters/orion-citizen/citizen-woman-a.glb" : "/models/characters/orion-citizen/citizen-woman-b.glb",
+	seed: 300 + index,
+}));
+/** Out of the world until a car needs a crew. */
+const STOWED: Vec3 = [0, -400, 0];
+
+function FootOfficer({ path, seed }: Readonly<{ path: string; seed: number }>) {
+	const { asset } = useModel(path);
+	const [cap, setCap] = useState<PlayCanvasEntity | null>(null);
+	const capMaterial = useMaterial({ diffuse: POLICE_UNIFORM.cap, gloss: 0.2 });
+	const bandMaterial = useMaterial({ diffuse: POLICE_UNIFORM.capBand, gloss: 0.3 });
+	const peakMaterial = useMaterial({ diffuse: "#1a1a1a", gloss: 0.6 });
+	if (!asset) return null;
+	return (
+		<Entity name="foot-officer" position={STOWED}>
+			<Entity name="officer-model">
+				<Container asset={asset} />
+			</Entity>
+			<Entity ref={setCap} name="police-cap">
+				<Entity position={[0, 0.02, 0]} scale={[0.25, 0.07, 0.27]}>
+					<Render type="cylinder" material={capMaterial} />
+				</Entity>
+				<Entity position={[0, -0.03, 0]} scale={[0.23, 0.04, 0.25]}>
+					<Render type="cylinder" material={bandMaterial} />
+				</Entity>
+				<Entity position={[0, -0.05, 0.13]} scale={[0.2, 0.015, 0.1]}>
+					<Render type="box" material={peakMaterial} />
+				</Entity>
+			</Entity>
+			{cap ? <Script script={OrionFootOfficer} asset={asset} seed={seed} cap={cap} /> : null}
+		</Entity>
+	);
+}
 
 function Officer({ post }: Readonly<{ post: OfficerPost }>) {
 	const spec = OFFICER_MODELS[post.model];
@@ -59,7 +103,10 @@ function Officer({ post }: Readonly<{ post: OfficerPost }>) {
 				</Entity>
 			</Entity>
 			{/* Mounted once the cap exists, so the script can drive it from its first frame. */}
-			{cap ? <Script script={OrionPoliceOfficer} asset={asset} yaw={post.yaw} seed={post.seed} cap={cap} /> : null}
+			{/* The women's rig marks the head's end above the hair, so its cap comes down from there. On
+			    the men's rig it's 3 cm under the crown: +0.01 brings the band ~7 cm below the top of
+			    the skull, round the head above the brow, rather than perched on top of it. */}
+			{cap ? <Script script={OrionPoliceOfficer} asset={asset} yaw={post.yaw} seed={post.seed} cap={cap} capLift={post.model === "woman" ? -0.1 : 0.01} /> : null}
 		</Entity>
 	);
 }

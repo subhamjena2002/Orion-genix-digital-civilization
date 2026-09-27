@@ -1,13 +1,17 @@
 import { Entity, Script, Vec3 } from "playcanvas";
 
+import { modelsToPrewarm, prewarmModels } from "../rendering/ModelPrewarm";
+import { resetWorld } from "../world/WorldReset";
 import { ORION_OCEAN } from "../world/Ocean";
 import { combatAudio } from "../combat/CombatAudio";
 import { damageablesNear } from "../combat/CombatWorld";
-import { setWasted } from "../combat/CombatHud";
+import { setBusted, setWasted } from "../combat/CombatHud";
 import { PlayerCombat, type CombatContext, type CombatInput } from "../combat/PlayerCombat";
 import { playerRig } from "./PlayerRig";
 import { bloodMaterial } from "../characters/Knockdown";
 import { engineAudio } from "../audio/EngineAudio";
+import { policeSirens } from "../audio/PoliceSirens";
+import { clearWanted, reportCrime, takeBusted, updateWanted } from "../police/Wanted";
 import { addTouchLook, readTouchHeld, takeTouchEdges, takeTouchLook } from "../input/TouchInput";
 import { findCarNear, shardMaterial } from "../traffic/Carjack";
 import { prewarmBurntBodies } from "../traffic/CarMeshes";
@@ -175,6 +179,7 @@ export class OrionThirdPersonController extends Script {
 	private nearCar = false;
 	private prewarmProps: Entity[] = [];
 	private prewarmTimer = 0;
+	private cancelModelPrewarm: (() => void) | null = null;
 
 	private isPointerLocked() {
 		return document.pointerLockElement === this.app.graphicsDevice.canvas;
@@ -326,6 +331,10 @@ export class OrionThirdPersonController extends Script {
 			this.updateWasted(dt);
 			return;
 		}
+		if (takeBusted() && this.mode === "onFoot") {
+			this.bust();
+			return;
+		}
 
 		const interact = this.interactPressed;
 		this.interactPressed = false;
@@ -459,6 +468,9 @@ export class OrionThirdPersonController extends Script {
 			this.prewarmProps.push(prop);
 		}
 		this.prewarmTimer = PREWARM_SECONDS;
+		// And every building, vehicle and train model, so a first drive into a new district
+		// doesn't stop to load and compile them.
+		this.cancelModelPrewarm = prewarmModels(this.app, this.camera, modelsToPrewarm());
 	}
 
 	/** The capsule is switched off while in a car, so the body can be placed directly. */
@@ -471,6 +483,8 @@ export class OrionThirdPersonController extends Script {
 		const position = this.entity.getPosition();
 		const car = findCarNear(position.x, position.z, CARJACK_REACH);
 		if (!car) return;
+		// Anyone can take a police car; the police take a dim view of it.
+		if (car.police) reportCrime("policeCarStolen", position.x, position.z);
 		this.car = car;
 		car.driver = "held";
 		this.mode = "carjack";
@@ -595,6 +609,9 @@ export class OrionThirdPersonController extends Script {
 		// Traffic is mixed here rather than per car: only the nearest few engines are audible, and
 		// which those are can only be decided once the listener has moved for this frame.
 		engineAudio().update(this.lastDelta);
+		// After the patrol cars have moved: who can see the player, and the sirens of those chasing.
+		updateWanted(this.lastDelta);
+		policeSirens().update();
 		// Smoke and flames face the camera, so they're updated once everything else has moved.
 		const camera = this.cameraPosition;
 		const effects = crashEffects(this.app);
@@ -622,6 +639,8 @@ export class OrionThirdPersonController extends Script {
 
 		const seat = car.carjack.seatPoint(this.carPoint);
 		this.entity.setPosition(seat.x, seat.y + CAPSULE_HALF_HEIGHT, seat.z);
+		// A low cabin seats a smaller figure, so head and feet both stay inside (see DriverSeat).
+		this.setSeatedScale(car.carjack.seatScale);
 		this.characterYaw = car.heading;
 		this.applyFacing();
 		writePlayerAction("Sitting");
@@ -671,8 +690,15 @@ export class OrionThirdPersonController extends Script {
 		this.leaveCar(car);
 	}
 
+	private setSeatedScale(scale: number) {
+		this.visual ??= this.entity.findByName(PLAYER_VISUAL_NAME) as Entity | null;
+		const visual = this.visual;
+		if (visual && Math.abs(visual.getLocalScale().x - scale) > 1e-4) visual.setLocalScale(scale, scale, scale);
+	}
+
 	/** Puts the player back on their feet beside the car. */
 	private leaveCar(car: OrionVehicle) {
+		this.setSeatedScale(1);
 		// A burnt-out shell is nobody's car any more, so it can be cleared away like any wreck.
 		if (car.burnedOut) car.driver = "wrecked";
 		const door = car.carjack.doorPoint(this.carPoint);
@@ -748,8 +774,22 @@ export class OrionThirdPersonController extends Script {
 
 	private die() {
 		this.wastedTimer = WASTED_SECONDS;
+		clearWanted();
 		setWasted(true);
 		writePlayerAction("Death");
+		this.currentVelocity.set(0, 0, 0);
+		if (this.entity.rigidbody) this.entity.rigidbody.linearVelocity = this.currentVelocity;
+	}
+
+	/**
+	 * Arrested: caught standing still beside a patrol car at low stars. The same pause and return
+	 * as dying, without the death — the slate is wiped clean.
+	 */
+	private bust() {
+		this.wastedTimer = WASTED_SECONDS;
+		clearWanted();
+		setBusted(true);
+		writePlayerAction("");
 		this.currentVelocity.set(0, 0, 0);
 		if (this.entity.rigidbody) this.entity.rigidbody.linearVelocity = this.currentVelocity;
 	}
@@ -761,8 +801,8 @@ export class OrionThirdPersonController extends Script {
 		if (this.wastedTimer > 0) return;
 		this.wastedTimer = 0;
 		this.respawn();
-		this.combat?.reset();
 		setWasted(false);
+		setBusted(false);
 		writePlayerAction("");
 	}
 
@@ -775,6 +815,13 @@ export class OrionThirdPersonController extends Script {
 
 	private respawn() {
 		this.drownTimer = 0;
+		// Out of any car first: dying at the wheel otherwise put the player straight back in it.
+		const car = this.car;
+		if (car) {
+			car.setDriveInput(0, 0, true);
+			if (car.driver === "player" || car.driver === "held") car.driver = "parked";
+			this.leaveCar(car);
+		}
 		// The death clip holds its last frame, and the idle clip that follows doesn't animate every
 		// bone it moved: without this the player stood up still folded over.
 		playerRig()?.resetPose();
@@ -787,6 +834,11 @@ export class OrionThirdPersonController extends Script {
 			this.entity.rigidbody.linearVelocity = this.currentVelocity;
 			this.entity.rigidbody.angularVelocity = this.currentVelocity;
 		}
+		// Then the street starts over, as in a fresh game, around where the player now stands.
+		this.combat?.reset();
+		clearWanted();
+		writePlayerPose(this.spawnPoint.x, this.spawnPoint.y, this.spawnPoint.z, this.characterYaw, 0, 0);
+		resetWorld();
 	}
 
 	private applyFacing() {
@@ -882,6 +934,7 @@ export class OrionThirdPersonController extends Script {
 	}
 
 	public destroy() {
+		this.cancelModelPrewarm?.();
 		for (const prop of this.prewarmProps) prop.destroy();
 		this.prewarmProps = [];
 		const canvas = this.app.graphicsDevice.canvas;

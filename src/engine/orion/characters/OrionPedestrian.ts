@@ -1,8 +1,10 @@
-import { AnimTrack, Asset, Color, Entity, Script, StandardMaterial } from "playcanvas";
+import { AnimTrack, Asset, Color, Entity, Script, StandardMaterial, type GraphNode } from "playcanvas";
 
+import { onWorldReset } from "../world/WorldReset";
 import { combatAudio } from "../combat/CombatAudio";
 import { applyDamage, damageableMoved, damageablesNear, registerDamageable, unregisterDamageable, type Listener } from "../combat/CombatWorld";
 import { Health, makeDamageEvent, nextCombatId, type DamageEvent, type DamageSourceRef } from "../combat/Damage";
+import { bodyZone, dropsOnLegHit, zoneDamage, type BodyZone } from "../combat/HitZones";
 import { MeleeAttack } from "../combat/MeleeAttack";
 import { inCameraView, needsPosing, readPlayerPose } from "../player/PlayerPose";
 import { mergeCharacterMaterials } from "../rendering/CharacterMerge";
@@ -13,7 +15,9 @@ import { crashEffects } from "../traffic/CrashEffects";
 import { registerTrafficAgent, unregisterTrafficAgent, type TrafficAgent } from "../traffic/TrafficAgents";
 import { redRemaining, signalGroup } from "../traffic/TrafficSignals";
 import { Knockdown } from "./Knockdown";
+import { RestPose } from "./RestPose";
 import { NpcBrain, paceFor, runsThisFrame, updateInterval, type NpcState } from "./NpcBrain";
+import { reportCrime } from "../police/Wanted";
 import type { PedestrianPalette } from "./Pedestrians";
 
 /** Beyond this the pedestrian is recycled to a junction near the player. */
@@ -66,6 +70,33 @@ const PUNCH_DAMAGE = 7;
 const THROW_IMPULSE = 3.5;
 /** Leaning back from a blow, degrees, easing out over the stagger. */
 const STAGGER_LEAN = 14;
+
+/*
+ * Shot in the leg. The leg goes: they buckle onto it (tipping towards the wounded side and
+ * sinking), fall, and lie there bleeding — alive, until they're finished off or, left alone,
+ * struggle up and limp away. None of the character packs has a crawl or a kneel, so the fall is
+ * the death clip held on its last frame, and the limp is done by hand on top of the walk.
+ */
+/** How long the leg takes to give way before they go down. */
+const BUCKLE_SECONDS = 0.35;
+/** Tip towards the wounded side as it gives, degrees, and how far the body sinks (m). */
+const BUCKLE_ROLL = 16;
+const BUCKLE_DIP = 0.18;
+/** Lying wounded before trying to get up. */
+const DOWN_SECONDS = 14;
+/** Getting back up (a blend from lying to standing; there's no stand-up clip). */
+const RISE_SECONDS = 1.2;
+/** A limp: this share of normal pace, a roll onto the good leg each stride, a dip on the bad one. */
+const LIMP_PACE = 0.38;
+const LIMP_ROLL = 7;
+const LIMP_DIP = 0.05;
+/** Ground covered per full stride (both legs), in metres. */
+const LIMP_STRIDE = 1.2;
+/** Where a shot can still find someone lying on the ground: a low, wide capsule at their hips. */
+const DOWNED_RADIUS = 0.6;
+const DOWNED_HEIGHT = 0.45;
+/** Blood left behind by someone who got up is cleaned away after this long. */
+const STAIN_SECONDS = 25;
 
 /** Animation state for each brain state; clips a model lacks fall back sensibly. */
 function clipFor(state: NpcState): "Walk" | "Idle" | "Run" | "Punch" | "Hit" {
@@ -138,6 +169,20 @@ export class OrionPedestrian extends Script {
 	private posY = 0;
 	private posZ = 0;
 	private waitingAtCrossing = false;
+	/** Shot in the leg: going down, down, or getting back up. */
+	private wound: "none" | "buckling" | "down" | "rising" = "none";
+	/** For starting the clips over after the death clip (see RestPose). */
+	private restPose: RestPose | null = null;
+	private animations: readonly Asset[] | undefined;
+	private woundTimer = 0;
+	/** Which way they tip when the leg goes: +1 right, -1 left (the side the bullet hit). */
+	private woundSide = 1;
+	/** Walking on a wounded leg, for the rest of this life. */
+	private limping = false;
+	private limpPhase = 0;
+	private hips: GraphNode | null = null;
+	private stain: Entity | null = null;
+	private stainTimer = 0;
 
 	public initialize() {
 		this.random = mulberry32(this.seed);
@@ -162,10 +207,16 @@ export class OrionPedestrian extends Script {
 			takeDamage: (event) => this.takeDamage(event),
 			disturb: (threat) => this.brain.onDisturbance(threat),
 		};
+		// A fresh start: everyone is someone new, unhurt and calm, near where the player comes back.
+		const stopListening = onWorldReset(() => {
+			if (this.ready) this.walkOnAsSomeoneNew();
+		});
 		this.on("destroy", () => {
+			stopListening();
 			if (this.agent) unregisterTrafficAgent(this.agent);
 			if (this.body) unregisterDamageable(this.body);
 			this.knockdown?.destroy();
+			this.stain?.destroy();
 		});
 		this.recycleNearPlayer();
 		this.trySetup();
@@ -176,8 +227,13 @@ export class OrionPedestrian extends Script {
 			this.trySetup();
 			if (!this.ready) return;
 		}
+		this.updateStain(dt);
 		if (this.knockdown?.active) {
 			this.updateKnockedDown(dt);
+			return;
+		}
+		if (this.wound !== "none") {
+			this.updateWounded(dt);
 			return;
 		}
 
@@ -194,7 +250,14 @@ export class OrionPedestrian extends Script {
 		if (threat?.attackable) this.brain.trackThreat(player.x, player.z);
 		const threatDistance = threat ? Math.hypot(threat.x - this.posX, threat.z - this.posZ) : Infinity;
 		const state = this.brain.update(step, threatDistance);
-		this.setClip(clipFor(state));
+		// One place picks the clip each frame. Heading back to the pavement picks its own (it
+		// walks or runs whatever the brain's state), and setting both each frame restarted the
+		// blend between them every frame: frozen at its first frame, legs mid-stride and arms
+		// held out straight.
+		if (!this.offGraph || state === "RUN" || state === "ATTACK" || state === "HIT") {
+			const clip = clipFor(state);
+			this.setClip(this.limping && clip === "Run" ? "Walk" : clip);
+		}
 
 		if (state === "RUN" || state === "ATTACK" || state === "HIT") this.updateOffGraph(step, state);
 		else if (this.offGraph) this.returnToGraph(step);
@@ -268,7 +331,7 @@ export class OrionPedestrian extends Script {
 		}
 		this.avoidOffset += (targetOffset - this.avoidOffset) * (1 - Math.exp(-AVOID_RESPONSE * dt));
 
-		const pace = paceFor(state);
+		const pace = paceFor(state) * (this.limping ? LIMP_PACE : 1);
 		const step = this.speed * pace * (fleeing ? 1 : speedFactor) * dt;
 		// People running for their lives don't wait for the lights.
 		const waiting = pace > 0 && !fleeing && this.mustWaitToCross(baseX, baseZ, dirX, dirZ, step);
@@ -297,7 +360,11 @@ export class OrionPedestrian extends Script {
 		this.moveTo(x, from[1], z, targetHeading, dt);
 		// Slow the stride with the body so the feet don't skate while sidestepping.
 		const anim = this.animRoot?.anim;
-		if (anim && !waiting) anim.speed = fleeing ? Math.max(0.8, (this.speed * pace) / REFERENCE_RUN_SPEED) : this.walkRate(pace * speedFactor);
+		if (anim && !waiting) {
+			anim.speed = this.limping
+				? this.walkRate((this.speed * pace) / REFERENCE_WALK_SPEED)
+				: fleeing ? Math.max(0.8, (this.speed * pace) / REFERENCE_RUN_SPEED) : this.walkRate(pace * speedFactor);
+		}
 		if (this.agent) {
 			this.agent.headingX = dirX;
 			this.agent.headingZ = dirZ;
@@ -320,7 +387,7 @@ export class OrionPedestrian extends Script {
 			const distance = Math.hypot(dx, dz);
 			heading = Math.atan2(dx, dz) * 180 / Math.PI;
 			if (state === "RUN" && distance > 0.9) {
-				const step = Math.min(distance - 0.9, this.speed * paceFor("RUN") * dt);
+				const step = Math.min(distance - 0.9, this.speed * paceFor("RUN") * (this.limping ? LIMP_PACE : 1) * dt);
 				this.freeX += (dx / distance) * step;
 				this.freeZ += (dz / distance) * step;
 			}
@@ -389,21 +456,33 @@ export class OrionPedestrian extends Script {
 		const step = Math.min(distance, this.speed * pace * dt);
 		this.freeX += (dx / distance) * step;
 		this.freeZ += (dz / distance) * step;
-		this.setClip(state === "FLEE" ? "Run" : "Walk");
+		// Someone limping walks back, whatever the hurry.
+		this.setClip(state === "FLEE" && !this.limping ? "Run" : "Walk");
 		this.moveTo(this.freeX, corner[1], this.freeZ, Math.atan2(dx, dz) * 180 / Math.PI, dt);
 	}
 
 	/** Places the body, easing its heading round; skips the transform when nobody would see it. */
 	private moveTo(x: number, y: number, z: number, targetHeading: number, dt: number) {
+		const moved = Math.hypot(x - this.posX, z - this.posZ);
 		this.posX = x;
 		this.posY = y;
 		this.posZ = z;
 		if (this.heading === null) this.heading = targetHeading;
 		const turn = ((targetHeading - this.heading + 540) % 360) - 180;
 		this.heading += turn * (1 - Math.exp(-TURN_RESPONSE * dt));
+		// A limp: each stride the body rolls off the bad leg onto the good one and dips as the
+		// weight comes down on the wounded side.
+		let roll = 0;
+		let dip = 0;
+		if (this.limping && moved < 1) {
+			this.limpPhase = (this.limpPhase + (moved / LIMP_STRIDE) * Math.PI * 2) % (Math.PI * 2);
+			const stride = Math.sin(this.limpPhase);
+			roll = stride * LIMP_ROLL * this.woundSide;
+			dip = Math.max(0, stride) * LIMP_DIP;
+		}
 		if (needsPosing(x, z, this.app.frame, this.agent?.id ?? 0)) {
-			this.entity.setPosition(x, y, z);
-			this.entity.setEulerAngles(-this.staggerLean, this.heading, 0);
+			this.entity.setPosition(x, y - dip, z);
+			this.entity.setEulerAngles(-this.staggerLean, this.heading, roll);
 		}
 		if (this.agent) {
 			this.agent.x = x;
@@ -422,33 +501,183 @@ export class OrionPedestrian extends Script {
 		damageableMoved(body);
 	}
 
+	/**
+	 * Where the hit landed decides what it does: a head shot kills outright, the chest takes the
+	 * most, and a gunshot to the legs puts them on the ground whatever their health (see goDown).
+	 * Someone already down is finished by the next hit.
+	 */
 	private takeDamage(event: DamageEvent) {
 		if (!this.ready || this.knockdown?.active) return;
-		const killed = this.health.damage(event.amount);
 		const source = event.source;
-		this.brain.onDamaged(source ? { id: source.id, x: source.x, z: source.z, attackable: source.kind === "player" } : null, killed);
+		const threat = source ? { id: source.id, x: source.x, z: source.z, attackable: source.kind === "player" } : null;
+		const byPlayer = source?.kind === "player";
+		if (this.wound !== "none") {
+			this.health.damage(this.health.current);
+			this.brain.onDamaged(threat, true);
+			if (byPlayer) reportCrime("murder", event.x, event.z);
+			this.dieWhereLying(event);
+			return;
+		}
+		const zone = bodyZone(event.y, this.posY, BODY_HEIGHT);
+		const killed = this.health.damage(zoneDamage(event.amount, event.type, zone));
+		if (byPlayer) reportCrime(killed ? "murder" : "assault", event.x, event.z);
+		this.brain.onDamaged(threat, killed);
 		if (killed) {
-			this.die(event);
+			this.die(event, zone);
+			return;
+		}
+		if (zone === "legs" && dropsOnLegHit(event.type)) {
+			this.goDown(event);
 			return;
 		}
 		this.staggerLean = STAGGER_LEAN;
 		this.setClip("Hit", true);
 	}
 
-	/** Down: thrown by a big blow or blast, crumpled where they stood by anything else. */
-	private die(event: DamageEvent) {
+	/**
+	 * Down: thrown by a big blow or blast, crumpled where they stood by anything else. A head shot
+	 * drops them straight down — no stagger, no throw.
+	 */
+	private die(event: DamageEvent, zone: BodyZone = "torso") {
 		if (this.agent) {
 			this.agent.alive = false;
 			this.agent.speed = 0;
 		}
-		const impulse = event.impulse >= THROW_IMPULSE ? event.impulse : event.impulse * 0.4;
+		const impulse = zone === "head" ? 0 : event.impulse >= THROW_IMPULSE ? event.impulse : event.impulse * 0.4;
 		this.knockdown?.strike(event.directionX * impulse, event.directionZ * impulse, this.animRoot?.anim, this.heading ?? 0);
 		crashEffects(this.app).impact(event.x, event.y, event.z, -event.directionX, 0.3, -event.directionZ, "flesh");
+	}
+
+	/** Finished off while lying wounded: they die where they are, without falling again. */
+	private dieWhereLying(event: DamageEvent) {
+		this.wound = "none";
+		this.restoreBody();
+		if (this.agent) {
+			this.agent.alive = false;
+			this.agent.speed = 0;
+		}
+		this.knockdown?.dieWhereLying(this.heading ?? 0);
+		crashEffects(this.app).impact(event.x, event.y, event.z, -event.directionX, 0.3, -event.directionZ, "flesh");
+	}
+
+	/** A gunshot takes a leg out: they buckle onto the wounded side, then go down. */
+	private goDown(event: DamageEvent) {
+		this.wound = "buckling";
+		this.woundTimer = 0;
+		// The side the bullet struck, relative to the way they face, is the leg that gives.
+		const heading = ((this.heading ?? 0) * Math.PI) / 180;
+		const lateral = (event.x - this.posX) * -Math.cos(heading) + (event.z - this.posZ) * Math.sin(heading);
+		this.woundSide = lateral >= 0 ? 1 : -1;
+		this.staggerLean = 0;
+		this.punch.cancel();
+		if (this.agent) this.agent.speed = 0;
+		// Off-screen crowds are paused; the fall has to play wherever they were when hit.
+		const anim = this.animRoot?.anim;
+		if (anim) anim.playing = true;
+		this.setClip("Hit", true);
+	}
+
+	/** Every frame while wounded: buckling, lying and bleeding, or getting back up. */
+	private updateWounded(dt: number) {
+		this.woundTimer += dt;
+		const anim = this.animRoot?.anim;
+		let roll = 0;
+		let dip = 0;
+		if (this.wound === "buckling") {
+			const give = Math.min(1, this.woundTimer / BUCKLE_SECONDS);
+			roll = this.woundSide * BUCKLE_ROLL * give;
+			dip = BUCKLE_DIP * give;
+			if (this.woundTimer >= BUCKLE_SECONDS) {
+				this.wound = "down";
+				this.woundTimer = 0;
+				// The death clip is a fall to the ground; held on its last frame it's someone lying hurt.
+				if (anim && this.clips.has("Death")) {
+					anim.speed = 1;
+					anim.baseLayer?.transition("Death", 0.15);
+					this.currentClip = "Death";
+				}
+			}
+		} else if (this.wound === "down") {
+			// The tip onto the bad leg eases out as they hit the ground.
+			const settle = Math.max(0, 1 - this.woundTimer / 0.4);
+			roll = this.woundSide * BUCKLE_ROLL * settle;
+			dip = BUCKLE_DIP * settle;
+			this.knockdown?.bleed(this.posX, this.posY, this.posZ, this.woundTimer);
+			if (this.woundTimer >= DOWN_SECONDS) {
+				this.wound = "rising";
+				this.woundTimer = 0;
+				if (anim) {
+					anim.speed = 1;
+					anim.baseLayer?.transition(this.clips.has("Idle") ? "Idle" : "Walk", RISE_SECONDS);
+					this.currentClip = this.clips.has("Idle") ? "Idle" : "Walk";
+				}
+			}
+		} else if (this.woundTimer >= RISE_SECONDS) {
+			// Up, and off on a limp: their blood stays where they lay.
+			this.wound = "none";
+			this.limping = true;
+			this.limpPhase = 0;
+			this.restoreBody();
+			// Up from the death clip's pose: fresh clips, or it stays on the torso as they limp off.
+			this.restartClips();
+			this.stain?.destroy();
+			this.stain = this.knockdown?.releasePool() ?? null;
+			this.stainTimer = 0;
+			return;
+		}
+		if (needsPosing(this.posX, this.posZ, this.app.frame, this.agent?.id ?? 0)) {
+			this.entity.setPosition(this.posX, this.posY - dip, this.posZ);
+			this.entity.setEulerAngles(0, this.heading ?? 0, roll);
+		}
+		this.publishDownedBody();
+	}
+
+	/**
+	 * Lying down, the standing capsule would miss them: shots are tested against a low, wide one
+	 * wherever their hips actually are.
+	 */
+	private publishDownedBody() {
+		const body = this.body;
+		if (!body) return;
+		if (this.wound === "buckling") {
+			this.publishBody();
+			return;
+		}
+		this.hips ??= this.animRoot?.findByName("Hips") ?? null;
+		const hips = this.hips?.getPosition();
+		body.x = hips ? hips.x : this.posX;
+		body.z = hips ? hips.z : this.posZ;
+		body.y = this.posY;
+		body.radius = DOWNED_RADIUS;
+		body.height = DOWNED_HEIGHT;
+		damageableMoved(body);
+	}
+
+	/** Back to the standing capsule. */
+	private restoreBody() {
+		const body = this.body;
+		if (!body) return;
+		body.radius = BODY_RADIUS;
+		body.height = BODY_HEIGHT;
+		this.publishBody();
+	}
+
+	/** Blood left behind by someone who got up and limped off, cleaned away after a while. */
+	private updateStain(dt: number) {
+		if (!this.stain) return;
+		this.stainTimer += dt;
+		if (this.stainTimer < STAIN_SECONDS) return;
+		this.stain.destroy();
+		this.stain = null;
 	}
 
 	/** Hit by a car (TrafficAgents): always a killing blow, thrown along the car's path. */
 	private struck(velocityX: number, velocityZ: number) {
 		if (!this.ready || !this.knockdown || this.knockdown.active) return;
+		if (this.wound !== "none") {
+			this.wound = "none";
+			this.restoreBody();
+		}
 		this.health.damage(this.health.current);
 		this.brain.onDamaged(null, true);
 		if (this.agent) {
@@ -469,21 +698,43 @@ export class OrionPedestrian extends Script {
 			this.agent.z = position.z;
 		}
 		if (phase !== "gone") return;
+		this.walkOnAsSomeoneNew();
+	}
 
-		// Someone new walks on: back on their feet at a junction away from the player.
-		knockdown.reset();
+	/** Someone new walks on: back on their feet at a junction away from the player. */
+	private walkOnAsSomeoneNew() {
+		const wasDown = Boolean(this.knockdown?.active) || this.wound !== "none" || this.limping;
+		this.knockdown?.reset();
+		this.stain?.destroy();
+		this.stain = null;
 		this.health.reset();
 		this.brain.reset();
 		this.offGraph = false;
 		this.staggerLean = 0;
+		this.wound = "none";
+		this.limping = false;
 		if (this.agent) this.agent.alive = true;
 		this.recycleNearPlayer();
 		this.entity.setEulerAngles(0, 0, 0);
 		this.waitingAtCrossing = false;
-		this.currentClip = "";
+		this.punch.cancel();
 		const anim = this.animRoot?.anim;
 		if (anim) anim.speed = 1;
-		this.setClip("Walk");
+		// Only a body that went through the death clip needs its animation rebuilt.
+		if (wasDown) {
+			this.restartClips();
+		} else {
+			this.currentClip = "";
+			this.setClip("Walk");
+		}
+	}
+
+	/** New clips on a skeleton back at rest, then walking (see RestPose). */
+	private restartClips() {
+		const model = this.animRoot;
+		this.currentClip = "";
+		if (model && this.restPose) this.restPose.restartAnimation(model, (target) => this.assignClips(target, this.animations));
+		else this.setClip("Walk");
 	}
 
 	private walkRate(factor: number): number {
@@ -559,6 +810,8 @@ export class OrionPedestrian extends Script {
 	}
 
 	private recycleNearPlayer() {
+		// Whoever walks on here is someone new, on two good legs.
+		this.limping = false;
 		const player = readPlayerPose();
 		for (let attempt = 0; attempt < RESPAWN_ATTEMPTS; attempt++) {
 			const angle = this.random() * Math.PI * 2;
@@ -590,6 +843,8 @@ export class OrionPedestrian extends Script {
 		fixSkinnedBounds(model);
 		this.applyPalette(model);
 		mergeCharacterMaterials(model, this.app.graphicsDevice);
+		this.restPose = new RestPose(model);
+		this.animations = resource.animations;
 		this.assignClips(model, resource.animations);
 		this.animRoot = model;
 		this.ready = true;
@@ -634,6 +889,9 @@ export class OrionPedestrian extends Script {
 
 				const tinted = meshInstance.material.clone();
 				tinted.diffuse = new Color().fromString(colour);
+				// Cloth, skin and hair aren't metal; one character pack ships them 40% metallic,
+				// which made clothes read as polished gold in sunlight.
+				tinted.metalness = 0;
 				tinted.update();
 				meshInstance.material = tinted;
 			}

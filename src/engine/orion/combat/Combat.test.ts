@@ -237,6 +237,21 @@ describe("WeaponInventory", () => {
 		expect(weapons.current.definition.id).toBe("ar");
 	});
 
+	it("restocks to a fresh game's ammo with the starting weapon out", () => {
+		const weapons = inventory();
+		weapons.selectSlot(4);
+		settle(weapons, 1);
+		const rifle = weapons.current;
+		const full = rifle.magazine;
+		weapons.fire();
+		expect(rifle.magazine).toBe(full - 1);
+		weapons.restock();
+		expect(weapons.current.definition.id).toBe("fists");
+		expect(rifle.magazine).toBe(full);
+		expect(rifle.reserve).toBe(rifle.definition.startingAmmo);
+		expect(weapons.switching).toBe(false);
+	});
+
 	it("can't fire while bringing a weapon up", () => {
 		const weapons = inventory();
 		weapons.selectSlot(3);

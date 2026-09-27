@@ -1,14 +1,22 @@
 import { AnimTrack, Asset, Color, Entity, Script, StandardMaterial, Vec3 } from "playcanvas";
 
+import { onWorldReset } from "../world/WorldReset";
 import { damageableMoved, registerDamageable, unregisterDamageable, type Listener } from "../combat/CombatWorld";
 import { Health, nextCombatId, type DamageEvent } from "../combat/Damage";
+import { bodyZone, zoneDamage } from "../combat/HitZones";
 import { mergeCharacterMaterials } from "../rendering/CharacterMerge";
 import { fixSkinnedBounds } from "../rendering/SkinnedBounds";
 import { applySmoothShading } from "../rendering/SmoothShading";
 import { Knockdown } from "../characters/Knockdown";
+import { RestPose } from "../characters/RestPose";
 import { crashEffects } from "../traffic/CrashEffects";
 import { registerTrafficAgent, unregisterTrafficAgent, type TrafficAgent } from "../traffic/TrafficAgents";
+import { readPlayerPose } from "../player/PlayerPose";
 import { POLICE_UNIFORM } from "./Police";
+import { readWanted, reportCrime, spotted } from "./Wanted";
+
+/** A posted officer reports a wanted player passing within this distance. */
+const LOOKOUT_RANGE = 35;
 
 /** Materials left alone: eyes read wrong recoloured. */
 const UNTINTED = ["eye"];
@@ -40,7 +48,7 @@ export class OrionPoliceOfficer extends Script {
 	public seed = 1;
 	public cap: Entity | null = null;
 	/** Distance from the head bone to where the cap sits, in world units. */
-	public capLift = 0.08;
+	public capLift = 0.01;
 
 	private ready = false;
 	private head: Entity | null = null;
@@ -48,6 +56,9 @@ export class OrionPoliceOfficer extends Script {
 	private time = 0;
 	private model: Entity | null = null;
 	private knockdown: Knockdown | null = null;
+	/** For starting the clips over on the replacement officer (see RestPose). */
+	private restPose: RestPose | null = null;
+	private animations: readonly Asset[] | undefined;
 	private post = new Vec3();
 	private readonly health = new Health(HEALTH);
 	private body: Listener | null = null;
@@ -76,7 +87,12 @@ export class OrionPoliceOfficer extends Script {
 			},
 			takeDamage: (event) => this.takeDamage(event),
 		};
+		// A fresh start: a dead, downed or hurt officer is replaced by a fresh one on the post.
+		const stopListening = onWorldReset(() => {
+			if (this.ready && (this.knockdown?.active || this.health.current < this.health.max)) this.replaceOfficer();
+		});
 		this.on("destroy", () => {
+			stopListening();
 			if (this.agent) unregisterTrafficAgent(this.agent);
 			if (this.body) unregisterDamageable(this.body);
 			this.knockdown?.destroy();
@@ -97,6 +113,12 @@ export class OrionPoliceOfficer extends Script {
 			this.hitTimer -= dt;
 			if (this.hitTimer <= 0) this.model?.anim?.baseLayer?.transition("Idle", 0.2);
 		}
+		// Every officer on a post is a lookout: a wanted player walking or driving past is seen.
+		if (readWanted().stars > 0) {
+			const player = readPlayerPose();
+			const here = this.entity.getPosition();
+			if (Math.hypot(player.x - here.x, player.z - here.z) < LOOKOUT_RANGE) spotted(player.x, player.z);
+		}
 		this.time += dt;
 		const glance = Math.sin((this.time / GLANCE_PERIOD) * Math.PI * 2) * GLANCE_DEGREES;
 		this.entity.setEulerAngles(0, this.yaw + glance, 0);
@@ -110,7 +132,10 @@ export class OrionPoliceOfficer extends Script {
 
 	private takeDamage(event: DamageEvent) {
 		if (!this.ready || !this.knockdown || this.knockdown.active) return;
-		const killed = this.health.damage(event.amount);
+		// Same body zones as anyone else: a head shot kills, a leg shot does less.
+		const zone = bodyZone(event.y, this.entity.getPosition().y, BODY_HEIGHT);
+		const killed = this.health.damage(zoneDamage(event.amount, event.type, zone));
+		if (event.source?.kind === "player") reportCrime(killed ? "copKilled" : "assault", event.x, event.z);
 		if (!killed) {
 			// A flinch, where the clip exists; the officer holds the post.
 			const anim = this.model?.anim;
@@ -121,7 +146,7 @@ export class OrionPoliceOfficer extends Script {
 			return;
 		}
 		if (this.agent) this.agent.alive = false;
-		const impulse = event.impulse >= THROW_IMPULSE ? event.impulse : event.impulse * 0.4;
+		const impulse = zone === "head" ? 0 : event.impulse >= THROW_IMPULSE ? event.impulse : event.impulse * 0.4;
 		this.knockdown.strike(event.directionX * impulse, event.directionZ * impulse, this.model?.anim, this.entity.getEulerAngles().y);
 		crashEffects(this.app).impact(event.x, event.y, event.z, -event.directionX, 0.3, -event.directionZ, "flesh");
 	}
@@ -148,9 +173,12 @@ export class OrionPoliceOfficer extends Script {
 			damageableMoved(this.body);
 		}
 		if (phase !== "gone") return;
+		this.replaceOfficer();
+	}
 
-		// A replacement officer takes the post.
-		knockdown.reset();
+	/** A replacement officer takes the post. */
+	private replaceOfficer() {
+		this.knockdown?.reset();
 		this.health.reset();
 		this.hitTimer = 0;
 		if (this.body) {
@@ -165,11 +193,10 @@ export class OrionPoliceOfficer extends Script {
 			this.agent.x = this.post.x;
 			this.agent.z = this.post.z;
 		}
-		const anim = this.model?.anim;
-		if (anim) {
-			anim.speed = 1;
-			anim.baseLayer?.transition("Idle", 0);
-		}
+		// Fresh clips on a skeleton back at rest: the dead one's pose would otherwise stay on his
+		// torso, leaving the new officer standing on his feet with his body lying flat.
+		const model = this.model;
+		if (model && this.restPose) this.restPose.restartAnimation(model, (target) => this.playIdle(target, this.animations));
 	}
 
 	private followCap(yaw: number) {
@@ -190,6 +217,8 @@ export class OrionPoliceOfficer extends Script {
 		fixSkinnedBounds(model);
 		this.applyUniform(model);
 		mergeCharacterMaterials(model, this.app.graphicsDevice);
+		this.restPose = new RestPose(model);
+		this.animations = resource.animations;
 		this.playIdle(model, resource.animations);
 		this.model = model;
 		this.head = (model.findByName("Head_end") ?? model.findByName("Head")) as Entity | null;
@@ -211,6 +240,8 @@ export class OrionPoliceOfficer extends Script {
 
 				const tinted = meshInstance.material.clone();
 				tinted.diffuse = new Color().fromString(colour);
+				// Cloth and skin, never metal (one character pack ships them 40% metallic).
+				tinted.metalness = 0;
 				tinted.update();
 				meshInstance.material = tinted;
 			}

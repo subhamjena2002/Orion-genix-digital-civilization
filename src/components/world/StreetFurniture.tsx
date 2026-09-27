@@ -6,7 +6,7 @@ import { Color, Entity as PlayCanvasEntity, MeshInstance, StandardMaterial, type
 import { memo, useEffect, useState } from "react";
 
 import { MeshBuilder } from "@/engine/orion/rendering/MeshBuilder";
-import { PAVEMENT_TOP_Y, ROAD_GRID } from "@/engine/orion/roads/RoadNetwork";
+import { PAVEMENT_TOP_Y, ROAD_GRID, roadWidthAt } from "@/engine/orion/roads/RoadNetwork";
 import {
 	crossRoadWidth,
 	HEADINGS,
@@ -178,7 +178,39 @@ function buildRoadMarkings(): MeshBuilder {
 			}
 		});
 	});
+	addEdgeLines(builder);
 	return builder;
+}
+
+/** Edge lines sit this far in from the kerb, and are this wide. */
+const EDGE_LINE_INSET = 0.35;
+const EDGE_LINE_WIDTH = 0.15;
+
+/**
+ * Solid white edge lines along both sides of every street, from one junction's stop line to the
+ * next: stopping at the junctions, as painted lines do, rather than running across them.
+ */
+function addEdgeLines(builder: MeshBuilder): void {
+	const gap = JUNCTION_LAYOUT.stopLine;
+	// North–south streets run along z between the east–west ones, and the other way round.
+	for (const [lines, crossings, northSouth] of [[ROAD_GRID.xs, ROAD_GRID.zs, true], [ROAD_GRID.zs, ROAD_GRID.xs, false]] as const) {
+		for (const line of lines) {
+			const inset = roadWidthAt(line) / 2 - EDGE_LINE_INSET;
+			for (let i = 1; i < crossings.length; i++) {
+				const start = crossings[i - 1] + roadWidthAt(crossings[i - 1]) / 2 + gap;
+				const end = crossings[i] - roadWidthAt(crossings[i]) / 2 - gap;
+				if (end - start < 1) continue;
+				const middle = (start + end) / 2;
+				for (const side of [-1, 1]) {
+					const across = line + side * inset;
+					builder.addBox(
+						northSouth ? [across, MARKING_Y, middle] : [middle, MARKING_Y, across],
+						northSouth ? [EDGE_LINE_WIDTH, MARKING_THICKNESS, end - start] : [end - start, MARKING_THICKNESS, EDGE_LINE_WIDTH],
+					);
+				}
+			}
+		}
+	}
 }
 
 /** One signal pole with a head at eye level and a second on an arm over the lanes. */

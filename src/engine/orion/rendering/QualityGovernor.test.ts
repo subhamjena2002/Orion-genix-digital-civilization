@@ -102,9 +102,10 @@ describe("QUALITY_LEVELS", () => {
 		}
 	});
 
-	it("keeps native resolution until the last resorts", () => {
-		expect(QUALITY_LEVELS[0].renderScale).toBe(1);
-		expect(QUALITY_LEVELS.filter((level) => level.renderScale < 1).length).toBeLessThanOrEqual(2);
-		for (const level of QUALITY_LEVELS) expect(level.renderScale).toBeGreaterThanOrEqual(0.8);
+	it("never renders below native resolution, so the picture stays sharp", () => {
+		for (const level of QUALITY_LEVELS) {
+			expect(level.renderScale).toBe(1);
+			expect(level.sharpness).toBe(0);
+		}
 	});
 });

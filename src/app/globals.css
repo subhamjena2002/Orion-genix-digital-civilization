@@ -1200,3 +1200,73 @@ body {
   width: auto;
   height: 76%;
 }
+
+/* ---------- Wanted level ---------- */
+
+.orion-wanted {
+  display: flex;
+  gap: 0.2rem;
+  border: 1px solid var(--oi-border-subtle);
+  border-radius: 999px;
+  background: rgba(10, 11, 12, 0.55);
+  padding: 0.3rem 0.55rem;
+}
+
+.orion-wanted svg {
+  width: 17px;
+  height: 17px;
+  fill: rgba(255, 255, 255, 0.14);
+  stroke: rgba(255, 255, 255, 0.28);
+  stroke-width: 1;
+}
+
+.orion-wanted svg.is-lit {
+  fill: #f2c14e;
+  stroke: #fff2c4;
+  filter: drop-shadow(0 0 4px rgba(242, 193, 78, 0.55));
+}
+
+/* Out of sight: the police are searching, and the stars flash until they give up. */
+.orion-wanted.is-searching svg.is-lit {
+  animation: orion-wanted-flash 0.9s steps(2, jump-none) infinite;
+}
+
+@keyframes orion-wanted-flash {
+  50% {
+    fill: rgba(255, 255, 255, 0.14);
+    filter: none;
+  }
+}
+
+.orion-busted span {
+  color: #7fb3ff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orion-wanted.is-searching svg.is-lit {
+    animation: none;
+    opacity: 0.55;
+  }
+}
+
+/* Police on the map: flashing red and blue, like their light bars. */
+.orion-map-police {
+  fill: #ff3030;
+  animation: orion-map-police-flash 0.56s steps(2, jump-none) infinite;
+}
+
+@keyframes orion-map-police-flash {
+  50% {
+    fill: #3370ff;
+  }
+}
+
+.orion-map-police-label {
+  color: #ff8080;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orion-map-police {
+    animation: none;
+  }
+}

@@ -25,22 +25,28 @@ export interface QualityLevel {
 	bloom: boolean;
 	/** Contrast-adaptive sharpening applied when upscaling. */
 	sharpness: number;
+	/** Screen-space ambient occlusion (contact shading); the first effect a slow machine loses. */
+	ssao: boolean;
 	shadowResolution: number;
 	/** How many of the nearest fires get a real light. */
 	fireLights: number;
 }
 
 /**
- * Best first. Only used when the player opts into adaptive quality; by default the game stays
- * on "ultra". Steps give up the least visible things first: MSAA and fire lights, then shadow
- * texel density, and only at the bottom does the scene render below native resolution.
+ * Best first (see GraphicsSettings for when the governor steps through them). Steps give up the
+ * least visible things first: MSAA and fire lights, then ambient occlusion and shadow texel
+ * density, and at the bottom bloom and MSAA altogether.
+ *
+ * Every level renders at native resolution. The bottom two used to render at 90% and 80% and
+ * upscale, and since driving is when the frame is heaviest, that's exactly when the whole picture
+ * went soft. Coarser shadows and harder edges are far less noticeable than a blurred screen.
  */
 export const QUALITY_LEVELS: readonly QualityLevel[] = [
-	{ name: "ultra", renderScale: 1, samples: 4, bloom: true, sharpness: 0, shadowResolution: 4096, fireLights: 4 },
-	{ name: "high", renderScale: 1, samples: 2, bloom: true, sharpness: 0, shadowResolution: 4096, fireLights: 4 },
-	{ name: "medium", renderScale: 1, samples: 2, bloom: true, sharpness: 0, shadowResolution: 2048, fireLights: 3 },
-	{ name: "low", renderScale: 0.9, samples: 2, bloom: true, sharpness: 0.2, shadowResolution: 2048, fireLights: 2 },
-	{ name: "minimum", renderScale: 0.8, samples: 1, bloom: true, sharpness: 0.3, shadowResolution: 2048, fireLights: 1 },
+	{ name: "ultra", renderScale: 1, samples: 4, bloom: true, sharpness: 0, ssao: true, shadowResolution: 4096, fireLights: 4 },
+	{ name: "high", renderScale: 1, samples: 2, bloom: true, sharpness: 0, ssao: true, shadowResolution: 4096, fireLights: 4 },
+	{ name: "medium", renderScale: 1, samples: 2, bloom: true, sharpness: 0, ssao: false, shadowResolution: 2048, fireLights: 3 },
+	{ name: "low", renderScale: 1, samples: 2, bloom: true, sharpness: 0, ssao: false, shadowResolution: 1024, fireLights: 2 },
+	{ name: "minimum", renderScale: 1, samples: 1, bloom: false, sharpness: 0, ssao: false, shadowResolution: 1024, fireLights: 1 },
 ];
 
 export interface GovernorOptions {

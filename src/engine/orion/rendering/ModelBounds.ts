@@ -59,13 +59,17 @@ export function addSolidBody(root: Entity, trunkOnly: boolean): () => void {
 		const half = bounds.halfExtents;
 		const holder = new Entity("solid-body");
 		holder.setLocalPosition(bounds.center.x, bounds.center.y, bounds.center.z);
+		// Into the scene first: a static body is placed once, where its entity is when it's
+		// created, and never moves after. Created unparented, every prop's body sat stacked at
+		// the world origin — invisible walls in the middle of the central junction, and nothing
+		// solid where the props actually stand.
+		root.addChild(holder);
 		if (trunkOnly) {
 			holder.addComponent("collision", { type: "cylinder", radius: TRUNK_RADIUS, height: half.y * 2 * scale.y });
 		} else {
 			holder.addComponent("collision", { type: "box", halfExtents: new Vec3(half.x * scale.x, half.y * scale.y, half.z * scale.z) });
 		}
 		holder.addComponent("rigidbody", { type: "static" });
-		root.addChild(holder);
 		collider = holder;
 	};
 	build();

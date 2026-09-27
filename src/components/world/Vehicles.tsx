@@ -81,6 +81,29 @@ export const Vehicles = memo(function Vehicles() {
 	);
 });
 
+/** How many police cars can be out at once: one per wanted star. */
+const PURSUIT_UNITS = 5;
+const PURSUIT_FLEET: readonly VehicleSpawn[] = Array.from({ length: PURSUIT_UNITS }, (_, index) => ({
+	id: `police-unit-${index + 1}`,
+	style: "police",
+	colour: "#f4f4f2",
+	seed: 6007 * (index + 1),
+	speedFactor: 1,
+}));
+
+/**
+ * Police pursuit cars. Always mounted, like the traffic, and kept out of the world until the
+ * wanted level sends them in (see OrionVehicle.updatePursuitSlot).
+ */
+export const PursuitUnits = memo(function PursuitUnits() {
+	const materials = useVehicleMaterials();
+	return (
+		<>
+			{PURSUIT_FLEET.map((vehicle, index) => <VehicleVisual key={vehicle.id} vehicle={vehicle} materials={materials} pursuitSlot={index} />)}
+		</>
+	);
+});
+
 /** Where a parked car lives: x, z, heading (degrees about Y) and the ground height there. */
 export interface VehicleHome {
 	x: number;
@@ -99,7 +122,7 @@ export function ParkedVehicle({ vehicle, home }: Readonly<{ vehicle: VehicleSpaw
 	return <VehicleVisual vehicle={vehicle} materials={materials} home={home} />;
 }
 
-function VehicleVisual({ vehicle, materials, home }: Readonly<{ vehicle: VehicleSpawn; materials: VehicleMaterials; home?: VehicleHome }>) {
+function VehicleVisual({ vehicle, materials, home, pursuitSlot = -1 }: Readonly<{ vehicle: VehicleSpawn; materials: VehicleMaterials; home?: VehicleHome; pursuitSlot?: number }>) {
 	const shape = VEHICLE_SHAPES[vehicle.style];
 	const halfHeight = carHalfHeight(vehicle.style);
 	const modelSpec = pickVehicleModel(vehicle.style, vehicle.seed);
@@ -130,6 +153,7 @@ function VehicleVisual({ vehicle, materials, home }: Readonly<{ vehicle: Vehicle
 				homeZ={home?.z ?? 0}
 				homeYaw={home?.yaw ?? 0}
 				homeGround={home?.ground ?? 0}
+				pursuitSlot={pursuitSlot}
 				brakeOn={materials.brakeOn}
 				brakeOff={materials.brakeOff}
 				flashRedOn={materials.flashRed}

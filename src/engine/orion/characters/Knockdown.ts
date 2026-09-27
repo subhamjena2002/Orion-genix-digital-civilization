@@ -1,5 +1,7 @@
 import { BLEND_NORMAL, Entity, StandardMaterial, Vec3, type AnimComponent, type AppBase } from "playcanvas";
 
+import { pavedHeightAt } from "../roads/RoadNetwork";
+
 /**
  * What happens to a person hit by a car: they're thrown, tumble, land and play their death
  * clip, a blood pool spreads under them, and after a while the body sinks away so the pool
@@ -21,8 +23,45 @@ const SINK_SECONDS = 1.8;
 const SINK_DEPTH = 0.6;
 const POOL_RADIUS = 0.85;
 const POOL_GROW_SECONDS = 4;
+/** A leg wound on someone still alive bleeds slower and less than a killing wound. */
+const WOUND_POOL_RADIUS = 0.45;
+const WOUND_POOL_GROW_SECONDS = 9;
 
 export type KnockdownPhase = "none" | "airborne" | "down" | "gone";
+
+/** How far above and below the body the ground is looked for. */
+const GROUND_PROBE_UP = 1.5;
+const GROUND_PROBE_DOWN = 4;
+
+interface PhysicsRaycast {
+	raycastAll(start: Vec3, end: Vec3): { entity: Entity; point: Vec3; normal: Vec3 }[];
+}
+
+const probeFrom = new Vec3();
+const probeTo = new Vec3();
+
+/**
+ * Top of whatever is under (x, z): road or pavement from the road layout, otherwise the highest
+ * upward-facing surface a short ray finds (grass, a lot, a plinth) — never a car or the player.
+ * Falls back to `fallback` (the height the caller is at now) where there's nothing.
+ *
+ * A body used to land wherever it started out: thrown off a kerb, it came to rest level with the
+ * pavement, floating over the lower grass with its legs hanging down to it.
+ */
+export function groundHeightAt(app: AppBase, x: number, z: number, fallback: number): number {
+	const paved = pavedHeightAt(x, z);
+	if (paved !== null) return paved;
+	const physics = app.systems.rigidbody as unknown as PhysicsRaycast | undefined;
+	if (!physics?.raycastAll) return fallback;
+	probeFrom.set(x, fallback + GROUND_PROBE_UP, z);
+	probeTo.set(x, fallback - GROUND_PROBE_DOWN, z);
+	let best = -Infinity;
+	for (const hit of physics.raycastAll(probeFrom, probeTo)) {
+		if (hit.normal.y < 0.6 || hit.entity.name === "player" || hit.entity.script?.has("orionVehicle")) continue;
+		if (hit.point.y > best) best = hit.point.y;
+	}
+	return best === -Infinity ? fallback : best;
+}
 
 let poolMaterial: StandardMaterial | null = null;
 
@@ -50,6 +89,8 @@ export class Knockdown {
 	private spin = 0;
 	private restTime = 0;
 	private pool: Entity | null = null;
+	/** Current pool radius, so a wound's pool carries on growing (never shrinks) if they die. */
+	private poolRadius = 0;
 	/** Rotation used instead of the death clip when a model has none. */
 	private fallPitch = 0;
 	private hasDeathClip = false;
@@ -64,7 +105,7 @@ export class Knockdown {
 	public strike(carVelocityX: number, carVelocityZ: number, anim: AnimComponent | null | undefined, yaw: number) {
 		const speed = Math.hypot(carVelocityX, carVelocityZ);
 		this.position.copy(this.entity.getPosition());
-		this.groundY = this.position.y;
+		this.groundY = groundHeightAt(this.app, this.position.x, this.position.z, this.position.y);
 		this.yaw = yaw;
 		this.velocity.set(
 			carVelocityX * THROW_TRANSFER + (Math.random() - 0.5) * speed * 0.2,
@@ -77,6 +118,9 @@ export class Knockdown {
 		this.phase = "airborne";
 
 		this.hasDeathClip = Boolean(anim?.baseLayer?.states.includes("Death"));
+		// Crowds pause their animation off-screen and far away. Killed while paused — shot from a
+		// distance, or just as they came into view — the body stood there dead, upright.
+		if (anim) anim.playing = true;
 		if (anim && this.hasDeathClip) {
 			anim.speed = 1;
 			anim.baseLayer?.transition("Death", 0.08);
@@ -102,6 +146,8 @@ export class Knockdown {
 			this.spin *= Math.exp(-2 * dt);
 			if (!this.hasDeathClip) this.fallPitch = Math.min(90, this.fallPitch + 300 * dt);
 
+			// The ground under the body where it is now, not where it was standing.
+			this.groundY = groundHeightAt(this.app, x, z, this.groundY);
 			if (y <= this.groundY) {
 				y = this.groundY;
 				if (this.velocity.y < -1.5) {
@@ -139,6 +185,44 @@ export class Knockdown {
 		return this.phase;
 	}
 
+	/**
+	 * Killed where they already lie (finished off while down with a wound): no throw and no second
+	 * fall — the death clip is already holding them on the ground.
+	 */
+	public dieWhereLying(yaw: number) {
+		this.position.copy(this.entity.getPosition());
+		this.groundY = this.position.y;
+		this.yaw = yaw;
+		this.velocity.set(0, 0, 0);
+		this.spin = 0;
+		this.fallPitch = 0;
+		this.hasDeathClip = true;
+		this.restTime = 0;
+		this.phase = "down";
+		this.spawnPool(this.position.x, this.position.z);
+	}
+
+	/** A wound bleeding while its owner is still alive: a small pool, spreading slowly. */
+	public bleed(x: number, y: number, z: number, seconds: number) {
+		if (!this.pool) {
+			this.groundY = y;
+			this.spawnPool(x, z);
+		}
+		const grow = Math.min(1, seconds / WOUND_POOL_GROW_SECONDS);
+		this.setPoolRadius(WOUND_POOL_RADIUS * Math.sqrt(grow) * 2);
+	}
+
+	/**
+	 * Leaves the current pool where it is, for the caller to clear later: someone who gets up and
+	 * limps off leaves their blood behind rather than taking it with them.
+	 */
+	public releasePool(): Entity | null {
+		const pool = this.pool;
+		this.pool = null;
+		this.poolRadius = 0;
+		return pool;
+	}
+
 	/** Back on their feet (the caller moves them somewhere new). */
 	public reset() {
 		this.phase = "none";
@@ -163,12 +247,18 @@ export class Knockdown {
 	private growPool() {
 		if (!this.pool) return;
 		const grow = Math.min(1, this.restTime / POOL_GROW_SECONDS);
-		const radius = POOL_RADIUS * Math.sqrt(grow) * 2;
-		this.pool.setLocalScale(radius, 0.004, radius * 0.8);
+		this.setPoolRadius(POOL_RADIUS * Math.sqrt(grow) * 2);
+	}
+
+	private setPoolRadius(radius: number) {
+		if (!this.pool) return;
+		this.poolRadius = Math.max(this.poolRadius, radius);
+		this.pool.setLocalScale(this.poolRadius, 0.004, this.poolRadius * 0.8);
 	}
 
 	private clearPool() {
 		this.pool?.destroy();
 		this.pool = null;
+		this.poolRadius = 0;
 	}
 }

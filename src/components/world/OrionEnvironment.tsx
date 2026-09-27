@@ -5,7 +5,7 @@ import { Environment } from "@playcanvas/react/components";
 import { useApp, useTexture } from "@playcanvas/react/hooks";
 import { Asset, EnvLighting, type Texture } from "playcanvas";
 import { ORION_ASSET_PATHS } from "@/engine/orion/assets/AssetPaths";
-import { ORION_ACTIVE_TIME_OF_DAY, ORION_ENVIRONMENT_PROFILES } from "@/engine/orion/rendering/Environment";
+import { applyEnvironmentFog, ORION_ACTIVE_TIME_OF_DAY, ORION_ENVIRONMENT_PROFILES } from "@/engine/orion/rendering/Environment";
 
 /**
  * Sky and image-based lighting from the HDRI. Until it's baked the world has no sky and almost no
@@ -29,6 +29,10 @@ export function OrionEnvironment({ onReady }: Readonly<{ onReady?: () => void }>
 			device.off("devicerestored", restored);
 		};
 	}, [app]);
+
+	useEffect(() => {
+		if (app) applyEnvironmentFog(app.scene, profile);
+	}, [app, profile]);
 
 	useEffect(() => {
 		const source = hdrAsset?.resource as Texture | undefined;

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { readCombatHud, type CombatHudState } from "@/engine/orion/combat/CombatHud";
 import { selectTouchSlot } from "@/engine/orion/input/TouchInput";
+import { MAX_STARS, readWanted } from "@/engine/orion/police/Wanted";
 import { RESERVED_SLOTS } from "@/engine/orion/combat/WeaponData";
 import { usePlayerPose } from "@/components/world/usePlayerPose";
 
@@ -18,7 +19,7 @@ export function useCombatHud(intervalMs: number): CombatHudState {
 			setState((previous) => (
 				previous.weaponId === next.weaponId && previous.magazine === next.magazine && previous.reserve === next.reserve
 					&& previous.reloading === next.reloading && Math.round(previous.reloadProgress * 20) === Math.round(next.reloadProgress * 20)
-					&& Math.round(previous.health) === Math.round(next.health) && previous.wasted === next.wasted
+					&& Math.round(previous.health) === Math.round(next.health) && previous.wasted === next.wasted && previous.busted === next.busted
 					&& previous.slots === next.slots
 					? previous
 					: { ...next }
@@ -29,12 +30,28 @@ export function useCombatHud(intervalMs: number): CombatHudState {
 	return state;
 }
 
+/** The wanted level, sampled like the rest of the HUD: stars, and whether the police are searching. */
+function useWanted(intervalMs: number): { stars: number; searching: boolean } {
+	const [wanted, setWanted] = useState(() => ({ stars: 0, searching: false }));
+	useEffect(() => {
+		const id = window.setInterval(() => {
+			const next = readWanted();
+			setWanted((previous) => (
+				previous.stars === next.stars && previous.searching === next.searching ? previous : { stars: next.stars, searching: next.searching }
+			));
+		}, intervalMs);
+		return () => window.clearInterval(id);
+	}, [intervalMs]);
+	return wanted;
+}
+
 /**
  * Weapon wheel strip (number keys), ammunition, health, a crosshair while a gun is out, and the
  * "wasted" screen. Hidden while driving, except health.
  */
 export function CombatHud() {
 	const combat = useCombatHud(60);
+	const wanted = useWanted(100);
 	const { inVehicle } = usePlayerPose(200);
 	const health = Math.max(0, Math.round((combat.health / combat.maxHealth) * 100));
 	const usesAmmo = combat.magazineSize > 0;
@@ -50,6 +67,11 @@ export function CombatHud() {
 			{combat.wasted ? (
 				<div className="orion-wasted" role="alert">
 					<span>Wasted</span>
+				</div>
+			) : null}
+			{combat.busted ? (
+				<div className="orion-wasted orion-busted" role="alert">
+					<span>Busted</span>
 				</div>
 			) : null}
 
@@ -96,6 +118,19 @@ export function CombatHud() {
 						<span className={health < 30 ? "is-critical" : ""} style={{ width: `${health}%` }} />
 					</div>
 				</div>
+				{wanted.stars > 0 ? (
+					<div
+						className={`orion-wanted${wanted.searching ? " is-searching" : ""}`}
+						role="status"
+						aria-label={`Wanted level ${wanted.stars} of ${MAX_STARS}${wanted.searching ? ", police searching" : ""}`}
+					>
+						{Array.from({ length: MAX_STARS }, (_, index) => (
+							<svg key={index} className={index < wanted.stars ? "is-lit" : ""} viewBox="0 0 24 24" aria-hidden="true">
+								<path d="M12 2.8l2.75 5.8 6.35.75-4.7 4.35 1.25 6.3L12 16.85 6.35 20l1.25-6.3L2.9 9.35l6.35-.75z" />
+							</svg>
+						))}
+					</div>
+				) : null}
 			</div>
 		</>
 	);

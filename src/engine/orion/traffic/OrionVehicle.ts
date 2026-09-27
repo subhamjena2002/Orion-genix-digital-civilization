@@ -1,9 +1,15 @@
-import { Entity, Script, Vec3, type Material, type RaycastResult } from "playcanvas";
+import { Entity, Quat, Script, Vec3, type Material, type RaycastResult } from "playcanvas";
 
+import { onWorldReset } from "../world/WorldReset";
 import { combatAudio } from "../combat/CombatAudio";
 import { damageableMoved, registerDamageable, unregisterDamageable, type Listener } from "../combat/CombatWorld";
-import type { DamageEvent } from "../combat/Damage";
-import { nextCombatId } from "../combat/Damage";
+import type { DamageEvent, DamageSourceRef } from "../combat/Damage";
+import { makeDamageEvent, nextCombatId } from "../combat/Damage";
+import { approachSpeed, junctionPosition, nearestJunction, stepToward, steerToward } from "../police/PursuitDriver";
+import { requestOfficer, type OrionFootOfficer } from "../police/OrionFootOfficer";
+import { FIRE_FROM_STARS, fireAtPlayer, nextShotDelay, policeGun } from "../police/PoliceFire";
+import { POLICE_STATION } from "../police/Police";
+import { markArrestable, readWanted, reportCrime, spotted } from "../police/Wanted";
 import { distanceFromCamera, inCameraView, needsPosing, readPlayerPose } from "../player/PlayerPose";
 import { CarjackRig, drivableCars, registerDrivableCar, unregisterDrivableCar } from "./Carjack";
 import { BURNT_PAINT, getCarMeshes } from "./CarMeshes";
@@ -25,6 +31,7 @@ import {
 import { skidMarks } from "./SkidMarks";
 import type { VehicleStyle } from "./Vehicles";
 import { pavedHeightAt, ROAD_GRID } from "../roads/RoadNetwork";
+import { ORION_OCEAN } from "../world/Ocean";
 import { railStopAhead } from "../rail/RailTraffic";
 import { registerTrafficAgent, trafficAgents, unregisterTrafficAgent, type TrafficAgent } from "./TrafficAgents";
 import {
@@ -99,8 +106,25 @@ const RIDE_SMOOTHING = 14;
 const EFFECT_DISTANCE = 160;
 /** Where the engine sits, as a share of half the car's length ahead of centre. */
 const ENGINE_FORWARD = 0.55;
-const GROUND_PROBE_UP = 1.2;
-const GROUND_PROBE_DOWN = 2.5;
+/**
+ * How far above the car it looks for the ground. Enough for a fast climb in a slow frame, and
+ * still well under a tunnel roof or a bridge deck overhead.
+ */
+const GROUND_PROBE_UP = 3;
+/** Far enough to find the valley floor below any cliff or bridge edge. */
+const GROUND_PROBE_DOWN = 150;
+/** The ground dropping away by more than this at once is a fall, not a slope to follow. */
+const FALL_STEP = 0.6;
+const GRAVITY = 9.81;
+/** Steepest a car will lie along the ground, radians (about 35°). */
+const MAX_TILT = 0.6;
+/** Landing faster than this (m/s, downwards) hurts the car, more the harder it lands. */
+const SAFE_LANDING_SPEED = 7;
+const LANDING_DAMAGE_PER_MS = 4;
+/** With nothing below at all (open sea past the beach), the car sinks this far under the waterline. */
+const SEA_FLOOR_BELOW_WATER = 1.5;
+/** Ground steeper than this (about 44°: cuttings, cliffs) is a wall to a car, not a slope. */
+const DRIVABLE_SLOPE_UP = 0.72;
 /** Rear sliding below this leaves no rubber. */
 const SKID_THRESHOLD = 0.2;
 const TYRE_WIDTH = 0.24;
@@ -111,13 +135,66 @@ const CRASH_QUIETEST = 0.12;
 /** Shortest gap between one car's crash sounds, in seconds. */
 const CRASH_SOUND_GAP = 0.25;
 
+// Police pursuit (cars with a pursuitSlot: see updatePursuitSlot).
+/** Where a dispatched unit joins the chase: out of sight, this far from the player. */
+const DISPATCH_MIN = 85;
+/** Seconds between one unit being dispatched and the next, so they don't arrive as a convoy. */
+const DISPATCH_STAGGER = 4;
+/** First unit out, this long after the first star. */
+const FIRST_DISPATCH_DELAY = 1;
+/**
+ * An explosive hit this hard that finishes a car blows it up there and then — a rocket doesn't
+ * leave it burning for six seconds first. Lighter blast damage still leaves it to burn.
+ */
+const INSTANT_WRECK_DAMAGE = 80;
+/**
+ * Crash damage a unit on a chase takes, as a share of an ordinary car's. Pursuit cars are built
+ * for it (push bars, heavy-duty everything); at the ordinary rate a few scrapes at chase speed
+ * set them alight before they ever reached the player.
+ */
+const POLICE_CRASH_RESISTANCE = 0.25;
+/** Where each unit pulls up around a player on foot (degrees off the line it came in on), so they
+ * surround them instead of all braking for the same spot and piling into each other. */
+const STOP_ANGLES: readonly number[] = [0, 55, -55, 110, -110];
+/** Obstacle lookahead: the car's own length plus this many seconds of travel. */
+const AVOID_LOOKAHEAD_SECONDS = 0.9;
+/** A unit this far behind, and out of sight, is brought round in front again. */
+const PURSUIT_LEASH = 230;
+/** How far a unit can see the player, and how often it looks. */
+const SIGHT_RANGE = 95;
+const SIGHT_INTERVAL = 0.25;
+/** Inside this, with the player in sight, the unit drives straight at them rather than by road. */
+const DIRECT_RANGE = 55;
+/** Top speed a unit drives the grid at, and how close it pulls up to someone on foot. */
+const PURSUIT_CRUISE = 38;
+const STOP_SHORT = 7;
+/** Braking a unit plans its stop with (m/s²): well inside what the tyres can do, so it pulls up in time. */
+const PURSUIT_BRAKING = 6;
+/** A route junction counts as reached this close. */
+const WAYPOINT_REACHED = 10;
+/** Pushing and not moving this long means stuck: back off and try again. */
+const STUCK_SECONDS = 1.3;
+const REVERSE_SECONDS = 1.1;
+/** A stopped unit this close to the player puts its crew out on foot. */
+const CREW_DEPLOY_RANGE = 16;
+/** Seconds stopped beside the player before the doors open. */
+const DISMOUNT_DELAY = 0.7;
+/** The crew runs back to the car once the player is this far away (or driving off). */
+const CREW_RECALL_RANGE = 40;
+/** After the crew gets back in, this long before they'll get out again. */
+const CREW_COOLDOWN = 3;
+/** A car the player damaged this recently and that then blows up is the player's doing. */
+const PLAYER_BLAME_SECONDS = 20;
+/** Where an idle unit waits: nowhere near the city, and not drawn. */
+const STOW_Y = -400;
+
 type Phase = "leg" | "turn";
 
 /**
  * Who is driving: the traffic AI, nobody (stopped for a carjack), the player, or nobody
  * (left parked where the player got out).
  */
-export type VehicleDriver = "ai" | "held" | "player" | "parked" | "wrecked";
+export type VehicleDriver = "ai" | "held" | "player" | "parked" | "wrecked" | "police";
 
 /** Body outline points (fractions of half-width, half-length) swept for collisions. */
 const SWEEP_POINTS: readonly [number, number][] = [
@@ -196,6 +273,11 @@ export class OrionVehicle extends Script {
 	 * React re-render re-applies the entity's initial position between frames.
 	 */
 	private rideY = 0;
+	/** Nose-up and left-side-up tilt to lie along the ground, radians (smoothed). */
+	private pitch = 0;
+	private roll = 0;
+	/** Downward speed while airborne (off a cliff or a ramp), m/s; 0 on the ground. */
+	private fallSpeed = 0;
 	private readonly rayFrom = new Vec3();
 	private readonly rayTo = new Vec3();
 
@@ -231,6 +313,48 @@ export class OrionVehicle extends Script {
 	private ignoreCrossingSeconds = 0;
 	private flashTimer = 0;
 	private brakeLit = false;
+
+	/**
+	 * Police pursuit unit number (0 is the first car sent, at one star), or -1 for an ordinary
+	 * car. A unit waits out of the world until the wanted level calls for it.
+	 */
+	public pursuitSlot = -1;
+	private stowed = false;
+
+	/** Share of crash damage this car takes: a unit on a chase shrugs most of it off. */
+	public get crashResistance(): number {
+		return this.pursuitSlot >= 0 && this.driver === "police" ? POLICE_CRASH_RESISTANCE : 1;
+	}
+
+	/** A police unit out on a chase and still able to drive it. */
+	public get chasing(): boolean {
+		return this.pursuitSlot >= 0 && !this.stowed && this.driver === "police" && !this.burnedOut && this.integrity > 0;
+	}
+
+	/** False for a police unit waiting out of the world (it can't be seen, entered or hit). */
+	public get inWorld(): boolean {
+		return !this.stowed;
+	}
+	private dispatchTimer = 0;
+	/** Route: the junction being driven to, and the step that led to it. */
+	private routeX = -1;
+	private routeZ = -1;
+	private routeDx = 0;
+	private routeDz = 0;
+	private sightTimer = 0;
+	private seesPlayer = false;
+	private stuckSeconds = 0;
+	private reverseSeconds = 0;
+	private reverseSteer = 1;
+	private fireTimer = 0;
+	/** Officers out of the car on foot, and the timers for putting them out. */
+	private crew: OrionFootOfficer[] = [];
+	private dismountSeconds = 0;
+	private crewCooldown = 0;
+	private readonly shot: DamageEvent = makeDamageEvent();
+	private readonly shooter: DamageSourceRef = { id: nextCombatId(), kind: "npc", x: 0, z: 0 };
+	/** When the player last hurt this car (seconds, trafficClock-free wall time). */
+	private playerHarmedAt = -Infinity;
 
 	private braking = false;
 	private yawRate = 0;
@@ -270,11 +394,14 @@ export class OrionVehicle extends Script {
 		this.random = mulberry32(this.seed);
 		this.laneIndex = this.random() < 0.5 ? 0 : 1;
 		this.agent = registerTrafficAgent("vehicle", this.halfLength);
-		if (this.hasHome) this.parkAtHome();
+		if (this.pursuitSlot >= 0) this.stow();
+		else if (this.hasHome) this.parkAtHome();
 		else this.respawnNearPlayer(0);
 		registerDrivableCar(this);
 		this.registerTarget();
+		const stopListening = onWorldReset(() => this.resetForNewGame());
 		this.on("destroy", () => {
+			stopListening();
 			if (this.agent) unregisterTrafficAgent(this.agent);
 			if (this.target) unregisterDamageable(this.target);
 			unregisterDrivableCar(this);
@@ -285,6 +412,7 @@ export class OrionVehicle extends Script {
 	public update(dt: number) {
 		this.sinceCrashSound += dt;
 		const player = readPlayerPose();
+		if (this.pursuitSlot >= 0 && this.updatePursuitSlot(dt)) return;
 		const position = this.entity.getPosition();
 		this.syncTarget(position.y);
 		const playerDistance = Math.hypot(position.x - player.x, position.z - player.z);
@@ -296,7 +424,8 @@ export class OrionVehicle extends Script {
 		// away and out of sight.
 		// Anything but the car the player is in: that includes a car held for a carjack the
 		// player walked away from, which would otherwise sit there for good.
-		const recyclable = this.driver !== "player";
+		// Pursuit units come and go by the wanted level (updatePursuitSlot), never into traffic.
+		const recyclable = this.driver !== "player" && this.pursuitSlot < 0;
 		const outOfPlay = playerDistance > RECYCLE_HARD_LIMIT
 			|| (playerDistance > RECYCLE_DISTANCE && !inCameraView(position.x, position.z, VISIBLE_RANGE));
 		if (recyclable && outOfPlay && this.hasHome) {
@@ -339,7 +468,12 @@ export class OrionVehicle extends Script {
 	 * destruction, such as disabling the engine sooner or detaching parts.
 	 */
 	public takeWeaponDamage(event: DamageEvent) {
+		if (event.source?.kind === "player") this.playerHarmedAt = performance.now() / 1000;
 		this.applyDamage(event.amount);
+		if (event.type === "explosive" && event.amount >= INSTANT_WRECK_DAMAGE && this.integrity <= 0 && !this.burnedOut && !this.stowed) {
+			const position = this.entity.getPosition();
+			this.explode(this.agent?.x ?? position.x, position.y, this.agent?.z ?? position.z);
+		}
 		if (event.type === "explosive" && event.impulse > 0 && this.driver !== "player") {
 			const shove = event.impulse * 0.6;
 			this.receiveImpact(event.directionX * shove, event.directionZ * shove, (Math.random() - 0.5) * event.impulse * 6);
@@ -348,7 +482,7 @@ export class OrionVehicle extends Script {
 
 	/** This car as a combat target: an oriented box the size of its collider. */
 	private registerTarget() {
-		const isAlive = () => !this.burnedOut;
+		const isAlive = () => !this.burnedOut && !this.stowed;
 		this.target = {
 			id: nextCombatId(),
 			kind: "vehicle",
@@ -404,6 +538,15 @@ export class OrionVehicle extends Script {
 		return this.manual && this.physics ? this.physics.rearSlide : 0;
 	}
 
+	/**
+	 * Whether a police car's lights are going: on a chase or driven by the player; off parked,
+	 * and off for a unit that's been called off and is heading back.
+	 */
+	public get lightsFlashing(): boolean {
+		if (!this.police || this.driver === "parked" || this.driver === "wrecked" || this.integrity <= 0) return false;
+		return !(this.pursuitSlot >= 0 && readWanted().stars === 0);
+	}
+
 	public get isManual(): boolean {
 		return this.manual;
 	}
@@ -451,6 +594,30 @@ export class OrionVehicle extends Script {
 		car.velocityX += deltaVelocityX;
 		car.velocityZ += deltaVelocityZ;
 		car.yawRate += spin;
+	}
+
+	/**
+	 * A fresh start after the player dies or is arrested: police units off the street, the
+	 * station's cars back in their bays, and every other car whole and back in traffic.
+	 */
+	private resetForNewGame() {
+		lastPursuitDispatch = -Infinity;
+		this.playerHarmedAt = -Infinity;
+		this.crew = [];
+		this.dispatchTimer = 0;
+		if (this.pursuitSlot >= 0) {
+			this.stow();
+			return;
+		}
+		if (this.hasHome) {
+			this.parkAtHome();
+			return;
+		}
+		this.driver = "ai";
+		this.manual = false;
+		this.repair();
+		this.carjack.reset();
+		this.respawnNearPlayer(RESPAWN_MIN);
 	}
 
 	private get hasHome(): boolean {
@@ -538,6 +705,9 @@ export class OrionVehicle extends Script {
 		const controls = this.controls;
 		if (this.driver === "player") {
 			controls.brake = 0;
+		} else if (this.driver === "police") {
+			this.pursue(dt, car);
+			controls.brake = 0;
 		} else {
 			controls.drive = 0;
 			controls.steer = 0;
@@ -556,11 +726,62 @@ export class OrionVehicle extends Script {
 		}
 
 		this.headingDegrees = car.heading * DEGREES;
-		const ground = this.groundHeight(car.x, car.z, this.rideY);
-		this.rideY += (ground + this.halfHeight - this.rideY) * (1 - Math.exp(-RIDE_SMOOTHING * dt));
+		let ground = this.groundHeight(car.x, car.z, this.rideY);
+		const settle = 1 - Math.exp(-RIDE_SMOOTHING * dt);
+		// Off the paved roads the ground can slope: sample under the nose, tail and both sides,
+		// and lie the car along it rather than level, half in and half above the hill.
+		let pitch = 0;
+		let roll = 0;
+		if (pavedHeightAt(car.x, car.z) === null) {
+			const sin = Math.sin(car.heading);
+			const cos = Math.cos(car.heading);
+			const reach = this.halfLength * 0.8;
+			const side = this.halfWidth * 0.9;
+			const front = this.groundHeight(car.x + sin * reach, car.z + cos * reach, this.rideY);
+			const back = this.groundHeight(car.x - sin * reach, car.z - cos * reach, this.rideY);
+			// Left of the car is +X at heading 0: (cos, −sin).
+			const left = this.groundHeight(car.x + cos * side, car.z - sin * side, this.rideY);
+			const right = this.groundHeight(car.x - cos * side, car.z + sin * side, this.rideY);
+			// Capped: at a cliff edge the ground under the nose can be tens of metres down.
+			pitch = Math.max(-MAX_TILT, Math.min(MAX_TILT, Math.atan2(front - back, reach * 2)));
+			roll = Math.max(-MAX_TILT, Math.min(MAX_TILT, Math.atan2(left - right, side * 2)));
+			// Over a crest the middle rides on the higher of the two axles' average and the centre.
+			ground = Math.max(ground, (front + back) / 2, (left + right) / 2);
+		}
+		// In the air it keeps the attitude it left the ground with.
+		if (this.fallSpeed === 0) {
+			this.pitch += (pitch - this.pitch) * settle;
+			this.roll += (roll - this.roll) * settle;
+		}
+		const rest = ground + this.halfHeight;
+		if (this.fallSpeed > 0 || this.rideY - rest > FALL_STEP) {
+			// Off an edge: it falls, rather than riding on thin air, and lands on whatever is below.
+			this.fallSpeed += GRAVITY * dt;
+			this.rideY -= this.fallSpeed * dt;
+			if (this.rideY <= rest) {
+				this.rideY = rest;
+				if (this.fallSpeed > SAFE_LANDING_SPEED) this.applyDamage((this.fallSpeed - SAFE_LANDING_SPEED) * LANDING_DAMAGE_PER_MS);
+				this.impact = Math.max(this.impact, this.fallSpeed * 0.3);
+				this.fallSpeed = 0;
+			}
+		} else {
+			this.rideY += (rest - this.rideY) * settle;
+		}
+		// Smoothed over bumps, but never below the ground: climbing a hillside fast, the lag put
+		// the car metres under the slope, where it lost sight of it and drove on inside the hill.
+		this.rideY = Math.max(this.rideY, rest - 0.05);
 		const y = this.rideY;
 		this.entity.setPosition(car.x, y, car.z);
-		this.entity.setEulerAngles(0, this.headingDegrees, 0);
+		if (Math.abs(this.pitch) < 1e-3 && Math.abs(this.roll) < 1e-3) {
+			this.entity.setEulerAngles(0, this.headingDegrees, 0);
+		} else {
+			// Heading about the vertical, then the nose up (turning +Z towards +Y is a negative
+			// turn about X), then the left side up (+X towards +Y, positive about Z).
+			tiltYaw.setFromAxisAngle(Vec3.UP, this.headingDegrees);
+			tiltPitch.setFromAxisAngle(Vec3.RIGHT, (-this.pitch * 180) / Math.PI);
+			tiltRoll.setFromAxisAngle(Vec3.BACK, (this.roll * 180) / Math.PI);
+			this.entity.setRotation(tiltYaw.mul(tiltPitch).mul(tiltRoll));
+		}
 		this.speed = car.forwardSpeed;
 		this.layRubber(car, y - this.halfHeight);
 
@@ -574,7 +795,8 @@ export class OrionVehicle extends Script {
 			this.agent.playerControlled = this.driver === "player";
 		}
 		const player = this.driver === "player";
-		this.braking = car.braking || controls.handbrake || (!player && car.speed > 0.2);
+		const pursuing = this.driver === "police";
+		this.braking = car.braking || controls.handbrake || (!player && !pursuing && car.speed > 0.2);
 		// Reversing lights share the brake lamps here.
 		this.updateLights(dt, this.braking || (player && car.reversing));
 		this.trackTurnRate(dt);
@@ -641,6 +863,9 @@ export class OrionVehicle extends Script {
 	 * left is a burnt shell that stays put until it's recycled.
 	 */
 	private explode(x: number, y: number, z: number) {
+		// The player's doing if they were driving a police car into it, or had been hurting this one.
+		const blamed = performance.now() / 1000 - this.playerHarmedAt < PLAYER_BLAME_SECONDS;
+		if (blamed && (this.driver !== "player" || this.police)) reportCrime(this.police ? "policeCarDestroyed" : "vehicleDestroyed", x, z);
 		this.burnedOut = true;
 		this.integrity = 0;
 		this.burnTimer = 0;
@@ -666,7 +891,8 @@ export class OrionVehicle extends Script {
 		}
 
 		this.scorch();
-		this.driver = this.driver === "ai" ? "wrecked" : this.driver;
+		// Traffic and a police unit on a chase both stop being driven: the shell rolls to a stop.
+		this.driver = this.driver === "ai" || this.driver === "police" ? "wrecked" : this.driver;
 		this.beginManual();
 		if (this.physics) {
 			this.physics.velocityX *= 0.3;
@@ -735,7 +961,7 @@ export class OrionVehicle extends Script {
 				this.rayFrom.set(fromX + px, y, fromZ + pz);
 				this.rayTo.set(fromX + px + dirX * reach, y, fromZ + pz + dirZ * reach);
 				for (const hit of raycastAll(this.rayFrom, this.rayTo, { filterCallback: this.notSelf })) {
-					if (Math.abs(hit.normal.y) > 0.6) continue;
+					if (Math.abs(hit.normal.y) > DRIVABLE_SLOPE_UP) continue;
 					const travel = hit.hitFraction * reach;
 					if (travel < bestTravel) {
 						best = hit;
@@ -772,13 +998,14 @@ export class OrionVehicle extends Script {
 		this.impact = Math.max(this.impact, -closing);
 		this.crashSound(Math.abs(change));
 		// Both cars are hurt by their own change of velocity, so the lighter one comes off worse.
-		this.applyDamage(crashDamage(Math.abs(change)));
+		this.applyDamage(crashDamage(Math.abs(change)) * this.crashResistance);
 
 		if (other) {
 			const otherChange = -(1 + RESTITUTION) * closing * (car.spec.mass / totalMass);
 			const spin = (Math.random() - 0.5) * otherChange * 0.4;
 			other.receiveImpact(-nx * otherChange, -nz * otherChange, spin);
-			other.applyDamage(crashDamage(Math.abs(otherChange)));
+			other.applyDamage(crashDamage(Math.abs(otherChange)) * other.crashResistance);
+			if (this.driver === "player") other.playerHarmedAt = performance.now() / 1000;
 		}
 	}
 
@@ -812,6 +1039,7 @@ export class OrionVehicle extends Script {
 			if (Math.abs(along) > this.halfLength + PERSON_HIT_RADIUS) continue;
 			if (Math.abs(side) > this.halfWidth + PERSON_HIT_RADIUS) continue;
 			person.onStruck(car.velocityX, car.velocityZ);
+			if (this.driver === "player") reportCrime("murder", person.x, person.z);
 			this.applyDamage(PEDESTRIAN_DAMAGE);
 			// The car loses the momentum the body carries away.
 			const keep = 1 - (PERSON_MASS * 1.05) / car.spec.mass;
@@ -821,12 +1049,369 @@ export class OrionVehicle extends Script {
 		}
 	}
 
-	/** Top of whatever the car is over (road, pavement, terrain), or its current level if nothing. */
+	/**
+	 * Police pursuit units, every frame. Returns true when the unit is out of the world and nothing
+	 * else should run.
+	 *
+	 * The wanted level decides how many units are out: one per star. Units are sent one at a time,
+	 * a few seconds apart, from out of sight; one that falls far behind is brought round again,
+	 * and once it's no longer needed (the stars dropped, it was wrecked, or the player took it)
+	 * it's withdrawn the next time nobody can see it.
+	 */
+	private updatePursuitSlot(dt: number): boolean {
+		const wanted = readWanted();
+		const needed = wanted.stars > 0;
+		if (this.stowed) {
+			// One unit per star still in the chase: a unit destroyed or taken is replaced by the next
+			// one waiting, even while the wreck is still in view.
+			this.dispatchTimer = needed ? this.dispatchTimer + dt : 0;
+			const now = performance.now() / 1000;
+			const spaced = now - lastPursuitDispatch >= DISPATCH_STAGGER;
+			if (this.dispatchTimer >= FIRST_DISPATCH_DELAY && spaced && chasingUnits() < wanted.stars) {
+				lastPursuitDispatch = now;
+				this.dispatch();
+			}
+			return this.stowed;
+		}
+		if (this.driver === "player" || this.driver === "held") return false;
+		const position = this.entity.getPosition();
+		const player = readPlayerPose();
+		const distance = Math.hypot(position.x - player.x, position.z - player.z);
+		const unseen = !inCameraView(position.x, position.z, VISIBLE_RANGE) || distance > RECYCLE_HARD_LIMIT;
+		const done = !needed || !this.chasing;
+		if (done && unseen && distance > 60) {
+			this.stow();
+			return true;
+		}
+		if (!done && unseen && distance > PURSUIT_LEASH) this.dispatch();
+		return false;
+	}
+
+	/** Sends the unit in: onto a road out of sight near the player, lights on, engine running. */
+	private dispatch() {
+		this.stowed = false;
+		this.dispatchTimer = 0;
+		this.repair();
+		this.carjack.reset();
+		this.setStowedVisible(true);
+		this.manual = false;
+		this.respawnNearPlayer(DISPATCH_MIN);
+		this.driver = "police";
+		const car = this.beginManual();
+		// Out of sight, so it can be turned round: facing the player, not driving away from them.
+		const player = readPlayerPose();
+		const facing = Math.sin(car.heading) * (player.x - car.x) + Math.cos(car.heading) * (player.z - car.z) >= 0;
+		car.reset(car.x, car.z, facing ? car.heading : car.heading + Math.PI, 12);
+		this.routeX = -1;
+		this.stuckSeconds = 0;
+		this.reverseSeconds = 0;
+		this.fireTimer = 1.2;
+		this.crew = [];
+		this.dismountSeconds = 0;
+		this.crewCooldown = 0;
+		this.seesPlayer = false;
+	}
+
+	/** Takes the unit out of the world until it's needed. */
+	private stow() {
+		this.stowed = true;
+		this.driver = "parked";
+		this.repair();
+		this.carjack.reset();
+		this.setStowedVisible(false);
+		const car = this.carPhysics();
+		car.reset(0, 0, 0, 0);
+		this.manual = true;
+		this.speed = 0;
+		this.entity.setPosition(0, STOW_Y, 0);
+		this.entity.rigidbody?.teleport(0, STOW_Y, 0);
+		if (this.agent) {
+			this.agent.x = 1e6;
+			this.agent.z = 1e6;
+			this.agent.speed = 0;
+		}
+	}
+
+	/** The model, the driver and the collider, on or off together. */
+	private setStowedVisible(visible: boolean) {
+		for (const child of this.entity.children) (child as Entity).enabled = visible;
+		if (this.entity.collision) this.entity.collision.enabled = visible;
+		if (this.entity.rigidbody) this.entity.rigidbody.enabled = visible;
+	}
+
+	/**
+	 * Drives the chase: by road to where the player is (or was last seen), straight at them once
+	 * they're close and in sight, pulling up beside someone on foot and ramming someone driving.
+	 * Officers shoot from the car from two stars.
+	 */
+	private pursue(dt: number, car: CarPhysics) {
+		const controls = this.controls;
+		const wanted = readWanted();
+		const player = readPlayerPose();
+		// On fire: the officers bail out of the chase and the car rolls to a stop.
+		if (this.integrity <= 0 || this.burnedOut) {
+			this.driver = "wrecked";
+			this.seesPlayer = false;
+			controls.drive = 0;
+			controls.steer = 0;
+			controls.handbrake = false;
+			return;
+		}
+		const playerCar = player.inVehicle ? [...drivableCars()].find((candidate) => candidate.driver === "player") ?? null : null;
+		if (this.crew.length > 0) {
+			if (wanted.stars > 0) spotted(player.x, player.z);
+			this.manageCrew(car, player.x, player.z, playerCar, wanted.stars);
+			return;
+		}
+		this.crewCooldown = Math.max(0, this.crewCooldown - dt);
+		// Called off (the player escaped, died or was arrested): head back to the station, lights
+		// off, until out of sight — then updatePursuitSlot takes the unit away.
+		if (wanted.stars === 0) {
+			this.seesPlayer = false;
+			const [stationX, stationZ] = POLICE_STATION.position;
+			const [aimX, aimZ, speed] = this.routeToward(car.x, car.z, car.heading, stationX, stationZ);
+			const home = steerToward(car.x, car.z, car.heading, car.forwardSpeed, aimX, aimZ, speed * 0.45);
+			controls.drive = home.drive;
+			controls.steer = home.steer;
+			controls.handbrake = false;
+			return;
+		}
+
+		this.sightTimer -= dt;
+		if (this.sightTimer <= 0) {
+			this.sightTimer = SIGHT_INTERVAL;
+			this.seesPlayer = this.canSee(car.x, car.z, player.x, player.y, player.z);
+		}
+		if (this.seesPlayer) spotted(player.x, player.z);
+
+		// Where to go: the player if in sight (leading a moving car a little), else where they were last seen.
+		let targetX = this.seesPlayer ? player.x : wanted.lastSeenX;
+		let targetZ = this.seesPlayer ? player.z : wanted.lastSeenZ;
+		if (this.seesPlayer && playerCar) {
+			targetX += playerCar.velocityX * 0.6;
+			targetZ += playerCar.velocityZ * 0.6;
+		}
+		const distance = Math.hypot(targetX - car.x, targetZ - car.z);
+
+		// Stuck against something: back off, turning the other way, then try again.
+		if (this.reverseSeconds > 0) {
+			this.reverseSeconds -= dt;
+			controls.drive = -1;
+			controls.steer = this.reverseSteer;
+			controls.handbrake = false;
+			return;
+		}
+
+		let aimX = targetX;
+		let aimZ = targetZ;
+		let wantedSpeed: number;
+		if ((this.seesPlayer && distance < DIRECT_RANGE) || distance < 15) {
+			this.routeX = -1;
+			if (playerCar) {
+				// Ram a car.
+				wantedSpeed = PURSUIT_CRUISE;
+			} else {
+				// Pull up beside someone on foot, each unit on its own side of them, so they end up
+				// surrounded rather than rear-ended by the next car in.
+				const awayX = (car.x - targetX) / Math.max(distance, 0.01);
+				const awayZ = (car.z - targetZ) / Math.max(distance, 0.01);
+				const angle = ((STOP_ANGLES[this.pursuitSlot % STOP_ANGLES.length] ?? 0) * Math.PI) / 180;
+				aimX = targetX + (awayX * Math.cos(angle) - awayZ * Math.sin(angle)) * STOP_SHORT;
+				aimZ = targetZ + (awayX * Math.sin(angle) + awayZ * Math.cos(angle)) * STOP_SHORT;
+				// v = sqrt(2 a d): the speed from which it can still stop at that spot.
+				const toStop = Math.hypot(aimX - car.x, aimZ - car.z);
+				wantedSpeed = Math.min(PURSUIT_CRUISE, Math.sqrt(2 * PURSUIT_BRAKING * Math.max(0, toStop - 1)));
+				if (toStop < 2) wantedSpeed = 0;
+			}
+		} else {
+			[aimX, aimZ, wantedSpeed] = this.routeToward(car.x, car.z, car.heading, targetX, targetZ);
+		}
+
+		[aimX, aimZ, wantedSpeed] = this.avoidAhead(car, aimX, aimZ, wantedSpeed, playerCar);
+		const drive = steerToward(car.x, car.z, car.heading, car.forwardSpeed, aimX, aimZ, wantedSpeed);
+		controls.drive = drive.drive;
+		controls.steer = drive.steer;
+		controls.handbrake = drive.handbrake;
+
+		if (controls.drive > 0.5 && car.speed < 1.5) this.stuckSeconds += dt;
+		else this.stuckSeconds = 0;
+		if (this.stuckSeconds > STUCK_SECONDS) {
+			this.stuckSeconds = 0;
+			this.reverseSeconds = REVERSE_SECONDS;
+			this.reverseSteer = drive.steer >= 0 ? -1 : 1;
+		}
+
+		// Pulled up beside someone standing still on foot: an arrest, at low stars.
+		if (!player.inVehicle && this.seesPlayer && car.speed < 1 && Math.hypot(player.x - car.x, player.z - car.z) < STOP_SHORT + 2 && player.speed < 1.2) {
+			markArrestable();
+		}
+
+		// Pulled up beside the player (on foot, or sat in a stopped car): the crew gets out to fight.
+		const playerStill = !playerCar || Math.hypot(playerCar.velocityX, playerCar.velocityZ) < 1.5;
+		const beside = Math.hypot(player.x - car.x, player.z - car.z) < CREW_DEPLOY_RANGE;
+		if (this.seesPlayer && car.speed < 1 && playerStill && beside && this.crewCooldown === 0) {
+			this.dismountSeconds += dt;
+			if (this.dismountSeconds >= DISMOUNT_DELAY) {
+				this.dismountSeconds = 0;
+				this.deployCrew(car, wanted.stars);
+				if (this.crew.length > 0) return;
+			}
+		} else {
+			this.dismountSeconds = 0;
+		}
+
+		this.shootAtPlayer(dt, car, player.x, player.z, playerCar, wanted.stars);
+	}
+
+	/**
+	 * The next point to drive at on the way to (targetX, targetZ) by road, and how fast. Junction
+	 * to junction along the grid; on the target's own block it goes straight there.
+	 */
+	private routeToward(x: number, z: number, heading: number, targetX: number, targetZ: number): [number, number, number] {
+		const [goalX, goalZ] = nearestJunction(targetX, targetZ);
+		let fresh = false;
+		if (this.routeX < 0) {
+			[this.routeX, this.routeZ] = nearestJunction(x, z);
+			this.routeDx = 0;
+			this.routeDz = 0;
+			fresh = true;
+		}
+		let [jx, jz] = junctionPosition(this.routeX, this.routeZ);
+		// A fresh route's nearest junction can be behind the car: count it as passed rather than
+		// turning round for it.
+		const behind = fresh && Math.sin(heading) * (jx - x) + Math.cos(heading) * (jz - z) < 0;
+		if (behind || Math.hypot(jx - x, jz - z) < WAYPOINT_REACHED) {
+			const next = stepToward(this.routeX, this.routeZ, goalX, goalZ, this.routeDx, this.routeDz);
+			if (!next) return [targetX, targetZ, PURSUIT_CRUISE * 0.6];
+			this.routeDx = next[0] - this.routeX;
+			this.routeDz = next[1] - this.routeZ;
+			[this.routeX, this.routeZ] = next;
+			[jx, jz] = junctionPosition(this.routeX, this.routeZ);
+		}
+		// Slow for the junction if the route turns there.
+		const after = stepToward(this.routeX, this.routeZ, goalX, goalZ, this.routeDx, this.routeDz);
+		const turning = after !== null && (after[0] - this.routeX !== this.routeDx || after[1] - this.routeZ !== this.routeDz);
+		return [jx, jz, approachSpeed(Math.hypot(jx - x, jz - z), turning, PURSUIT_CRUISE)];
+	}
+
+	/**
+	 * Something in the road ahead — a car, another unit, a pedestrian: steer round it on whichever
+	 * side it isn't, and slow down in proportion to how close it is. The player's own car is the
+	 * exception: that one it's trying to hit.
+	 */
+	private avoidAhead(car: CarPhysics, aimX: number, aimZ: number, wantedSpeed: number, playerCar: OrionVehicle | null): [number, number, number] {
+		const sin = Math.sin(car.heading);
+		const cos = Math.cos(car.heading);
+		const lookahead = this.halfLength + 4 + Math.max(0, car.forwardSpeed) * AVOID_LOOKAHEAD_SECONDS;
+		const playerAgent = playerCar?.agent ?? null;
+		let nearest = Infinity;
+		let nearestSide = 0;
+		for (const other of trafficAgents()) {
+			if (other === this.agent || other === playerAgent || !other.alive) continue;
+			const relX = other.x - car.x;
+			const relZ = other.z - car.z;
+			const along = relX * sin + relZ * cos;
+			if (along <= 0 || along > lookahead) continue;
+			// Positive to the car's left (heading rises towards +X).
+			const side = relX * cos - relZ * sin;
+			const clearance = this.halfWidth + (other.kind === "vehicle" ? 1.3 : 0.7);
+			if (Math.abs(side) > clearance || along >= nearest) continue;
+			nearest = along;
+			nearestSide = side;
+		}
+		if (!Number.isFinite(nearest)) return [aimX, aimZ, wantedSpeed];
+		// Pass on the far side of it, a car's width clear.
+		const pass = nearestSide >= 0 ? -1 : 1;
+		const offset = pass * (this.halfWidth * 2 + 1.5);
+		const passX = car.x + sin * (nearest + 4) + cos * offset;
+		const passZ = car.z + cos * (nearest + 4) - sin * offset;
+		return [passX, passZ, Math.min(wantedSpeed, 5 + nearest * 0.7)];
+	}
+
+	/** A clear line from the unit to the player, within sight range. */
+	private canSee(x: number, z: number, playerX: number, playerY: number, playerZ: number): boolean {
+		if (Math.hypot(playerX - x, playerZ - z) > SIGHT_RANGE) return false;
+		const raycastAll = this.raycastAll;
+		if (!raycastAll) return true;
+		const eyeY = this.rideY + this.halfHeight;
+		this.rayFrom.set(x, eyeY, z);
+		this.rayTo.set(playerX, playerY + 1.2, playerZ);
+		// Only buildings and the like block the view; people and cars don't hide anyone for long.
+		return !raycastAll(this.rayFrom, this.rayTo, { filterCallback: this.notSolidBody }).some((hit) => hit.entity.name !== "player" && !hit.entity.script?.has("orionVehicle"));
+	}
+
+	/** Officers firing from the car's window (see PoliceFire for what they carry and how well they shoot). */
+	private shootAtPlayer(dt: number, car: CarPhysics, playerX: number, playerZ: number, playerCar: OrionVehicle | null, stars: number) {
+		if (stars < FIRE_FROM_STARS || !this.seesPlayer) return;
+		const gun = policeGun(stars);
+		if (Math.hypot(playerX - car.x, playerZ - car.z) > gun.range) return;
+		this.fireTimer -= dt;
+		if (this.fireTimer > 0) return;
+		this.fireTimer = nextShotDelay(gun);
+		// From the driver's window.
+		const sin = Math.sin(car.heading);
+		const cos = Math.cos(car.heading);
+		this.shooter.x = car.x;
+		this.shooter.z = car.z;
+		fireAtPlayer(this.app, car.x + cos * this.halfWidth, this.rideY + this.halfHeight * 0.6, car.z - sin * this.halfWidth, gun, playerCar, this.shooter, this.shot);
+	}
+
+	/**
+	 * Puts the crew out: one officer, or two from three stars, stepping out of the doors to fight
+	 * from beside the car.
+	 */
+	private deployCrew(car: CarPhysics, stars: number) {
+		const sin = Math.sin(car.heading);
+		const cos = Math.cos(car.heading);
+		const groundY = this.rideY - this.halfHeight;
+		for (const side of stars >= 3 ? [1, -1] : [1]) {
+			const officer = requestOfficer();
+			if (!officer) break;
+			// Left of the car is (cos, -sin); out of the door, then a step clear of it.
+			const doorX = car.x + cos * side * (this.halfWidth + 0.35) + sin * 0.3;
+			const doorZ = car.z - sin * side * (this.halfWidth + 0.35) + cos * 0.3;
+			const postX = doorX + cos * side * 1.3 - sin * 0.8;
+			const postZ = doorZ - sin * side * 1.3 - cos * 0.8;
+			officer.deploy(doorX, doorZ, postX, postZ, groundY);
+			this.crew.push(officer);
+		}
+	}
+
+	/**
+	 * While the crew is out: the car holds still, the officers fight, and they're called back when
+	 * the player gets away or drives off. A crew that's all down leaves the car abandoned (and
+	 * another unit is sent).
+	 */
+	private manageCrew(car: CarPhysics, playerX: number, playerZ: number, playerCar: OrionVehicle | null, stars: number) {
+		const controls = this.controls;
+		controls.drive = 0;
+		controls.steer = 0;
+		controls.handbrake = true;
+		const standing = this.crew.filter((officer) => !officer.down);
+		if (standing.length === 0) {
+			this.crew = [];
+			this.driver = "wrecked";
+			return;
+		}
+		for (const officer of standing) officer.setPlayerCar(playerCar);
+		const away = Math.hypot(playerX - car.x, playerZ - car.z) > CREW_RECALL_RANGE;
+		const drivingOff = playerCar !== null && Math.hypot(playerCar.velocityX, playerCar.velocityZ) > 5;
+		if (away || drivingOff || stars === 0) for (const officer of standing) officer.recall();
+		if (this.crew.every((officer) => officer.aboard)) {
+			this.crew = [];
+			this.crewCooldown = CREW_COOLDOWN;
+		}
+	}
+
+	/**
+	 * Top of whatever the car is over (road, pavement, terrain, a bridge deck); past the beach,
+	 * where there is nothing, a little under the waterline.
+	 */
 	private groundHeight(x: number, z: number, currentY: number): number {
 		const paved = pavedHeightAt(x, z);
 		if (paved !== null) return paved;
 		const raycastAll = this.raycastAll;
-		const fallback = currentY - this.halfHeight;
+		const fallback = Math.min(currentY - this.halfHeight, ORION_OCEAN.level - SEA_FLOOR_BELOW_WATER);
 		if (!raycastAll) return fallback;
 		this.rayFrom.set(x, currentY + GROUND_PROBE_UP, z);
 		this.rayTo.set(x, currentY - GROUND_PROBE_DOWN, z);
@@ -1120,7 +1705,7 @@ export class OrionVehicle extends Script {
 			this.setMaterial("brake-light", braking ? this.brakeOn : this.brakeOff);
 		}
 		if (!this.police || !this.flashOff) return;
-		if (this.driver === "parked") {
+		if (!this.lightsFlashing) {
 			// A parked patrol car has its beacons off.
 			this.setMaterial("beacon-red", this.flashOff);
 			this.setMaterial("beacon-blue", this.flashOff);
@@ -1172,6 +1757,44 @@ function mulberry32(seed: number) {
 		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
 		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 	};
+}
+
+/** When the last police unit was sent out, so they come a few seconds apart. */
+let lastPursuitDispatch = -Infinity;
+
+const tiltYaw = new Quat();
+const tiltPitch = new Quat();
+const tiltRoll = new Quat();
+
+export interface PoliceMarker {
+	x: number;
+	z: number;
+}
+
+/**
+ * Where the police units on a chase are, for the map. Fills `out` in place (the map polls this
+ * several times a second) and returns how many were written.
+ */
+export function policeMarkers(out: PoliceMarker[]): number {
+	// Units heading back once the player is no longer wanted are no one's concern.
+	if (readWanted().stars === 0) return 0;
+	let count = 0;
+	for (const car of drivableCars()) {
+		if (!car.chasing) continue;
+		const position = car.entity.getPosition();
+		out[count] ??= { x: 0, z: 0 };
+		out[count].x = position.x;
+		out[count].z = position.z;
+		count++;
+	}
+	return count;
+}
+
+/** Police units on the chase right now (see OrionVehicle.chasing). */
+function chasingUnits(): number {
+	let count = 0;
+	for (const car of drivableCars()) if (car.chasing) count++;
+	return count;
 }
 
 /**

@@ -18,6 +18,8 @@ export interface CombatHudState {
 	slots: readonly { slot: number; name: string }[];
 	/** The player is dead and about to respawn. */
 	wasted: boolean;
+	/** The player has been arrested and is about to be released. */
+	busted: boolean;
 }
 
 const state: CombatHudState = {
@@ -34,14 +36,19 @@ const state: CombatHudState = {
 	showCrosshair: false,
 	slots: [],
 	wasted: false,
+	busted: false,
 };
 
-export function publishCombatHud(update: Omit<CombatHudState, "wasted">): void {
+export function publishCombatHud(update: Omit<CombatHudState, "wasted" | "busted">): void {
 	Object.assign(state, update);
 }
 
 export function setWasted(wasted: boolean): void {
 	state.wasted = wasted;
+}
+
+export function setBusted(busted: boolean): void {
+	state.busted = busted;
 }
 
 export function readCombatHud(): Readonly<CombatHudState> {

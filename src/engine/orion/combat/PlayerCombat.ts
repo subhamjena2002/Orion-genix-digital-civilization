@@ -288,9 +288,10 @@ export class PlayerCombat {
 		visual.root.setRotation(this.holdRotation);
 	}
 
-	/** Back to full health with fists out (respawn). */
+	/** Back to full health, fists out and a fresh game's ammo (respawn). */
 	public reset(): void {
 		this.health.reset();
+		this.inventory.restock();
 		this.melee.cancel();
 		this.endSwingAnimation();
 		this.sinceHurt = REGEN_DELAY;

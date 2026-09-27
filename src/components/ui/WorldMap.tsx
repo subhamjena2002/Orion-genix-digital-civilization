@@ -9,6 +9,8 @@ import { ORION_DISTRICTS } from "@/engine/orion/world/WorldModel";
 import { landBounds, landPath, ORION_LAND } from "@/engine/orion/world/StateOutline";
 import { POLICE_STATION } from "@/engine/orion/police/Police";
 import { usePlayerPose } from "@/components/world/usePlayerPose";
+import { policeMarkers, type PoliceMarker } from "@/engine/orion/traffic/OrionVehicle";
+import { HIGHWAY_MAP, mapRelief, type ReliefImage } from "./MapRelief";
 import { useTouchDevice } from "./useTouchDevice";
 
 const MINIMAP_SIZE = 190;
@@ -34,6 +36,20 @@ const SCALE_BAR_UNITS = 250;
 /** Matches the sand ring StateTerrain lays around every coast. */
 const BEACH_MAP_WIDTH = 26;
 
+/** Police on a chase, sampled for the map a few times a second. */
+function usePoliceMarkers(intervalMs: number): readonly PoliceMarker[] {
+	const [markers, setMarkers] = useState<readonly PoliceMarker[]>([]);
+	useEffect(() => {
+		const scratch: PoliceMarker[] = [];
+		const id = window.setInterval(() => {
+			const count = policeMarkers(scratch);
+			setMarkers((previous) => (count === 0 && previous.length === 0 ? previous : scratch.slice(0, count).map((marker) => ({ ...marker }))));
+		}, intervalMs);
+		return () => window.clearInterval(id);
+	}, [intervalMs]);
+	return markers;
+}
+
 function getStateBounds(): Bounds {
 	const bounds = landBounds();
 	return {
@@ -52,9 +68,17 @@ function shortDistrictName(name: string): string {
 export function WorldMap() {
 	const [expanded, setExpanded] = useState(false);
 	const touch = useTouchDevice();
+	const police = usePoliceMarkers(150);
 	const pose = usePlayerPose(120);
 	const stateBounds = useMemo(() => getStateBounds(), []);
 	const coastPaths = useMemo(() => ORION_LAND.map((land) => ({ ...land, d: landPath(land.points) })), []);
+	// Drawn on a canvas, so only in the browser (the page is also prerendered), and after the
+	// first paint so the map doesn't hold up the game's start.
+	const [relief, setRelief] = useState<readonly ReliefImage[]>([]);
+	useEffect(() => {
+		const id = window.setTimeout(() => setRelief(mapRelief()), 0);
+		return () => window.clearTimeout(id);
+	}, []);
 
 	useEffect(() => {
 		function handleKeyDown(event: KeyboardEvent) {
@@ -80,6 +104,9 @@ export function WorldMap() {
 		? Math.max((view.maxX - view.minX) / EXPANDED_WIDTH_PX, (view.maxZ - view.minZ) / 560)
 		: (view.maxX - view.minX) / (touch ? TOUCH_MINIMAP_SIZE : MINIMAP_SIZE);
 	const px = (value: number) => value * worldPerPixel;
+	const nearestPolice = police.reduce((nearest, unit) => Math.min(nearest, Math.hypot(unit.x - pose.x, unit.z - pose.z)), Infinity);
+	// On the corner map, police beyond its edge are pinned to the edge, pointing the way they are.
+	const edge = MINIMAP_SPAN / 2 - px(9);
 
 	return (
 		<div className={expanded ? "orion-map-expanded pointer-events-auto" : "orion-map-corner pointer-events-auto"}>
@@ -133,6 +160,25 @@ export function WorldMap() {
 							/>
 						);
 					})}
+
+					{/* Hills and mountains, hill-shaded. */}
+					{relief.map((image) => (
+						<image key={image.id} href={image.href} x={image.x} y={image.z} width={image.width} height={image.height} preserveAspectRatio="none" />
+					))}
+
+					{/* Expressways: a dark casing under an amber road, bridges edged pale, tunnels dashed. */}
+					{HIGHWAY_MAP.map((highway) => (
+						<g key={highway.id} fill="none" strokeLinecap="round" strokeLinejoin="round">
+							<polyline points={highway.route} stroke="rgba(20,14,6,0.8)" strokeWidth={Math.max(26, px(6))} />
+							{highway.bridges.map((bridge, index) => (
+								<polyline key={index} points={bridge} stroke="rgba(236,230,214,0.85)" strokeWidth={Math.max(30, px(7.5))} />
+							))}
+							<polyline points={highway.route} stroke="#d9a441" strokeWidth={Math.max(16, px(3.6))} />
+							{highway.tunnels.map((tunnel, index) => (
+								<polyline key={index} points={tunnel} stroke="rgba(47,59,44,0.95)" strokeWidth={Math.max(12, px(2.6))} strokeDasharray={`${Math.max(8, px(3))} ${Math.max(8, px(3))}`} strokeLinecap="butt" />
+							))}
+						</g>
+					))}
 
 					{ORION_ROAD_SEGMENTS.map((segment) => (
 						<line
@@ -211,6 +257,23 @@ export function WorldMap() {
 									{shortDistrictName(district.name).toUpperCase()}
 								</text>
 							))}
+							{HIGHWAY_MAP.map((highway) => (
+								<text
+									key={`${highway.id}-label`}
+									transform={`translate(${highway.labelX} ${highway.labelZ}) rotate(${highway.labelAngle})`}
+									y={-px(7)}
+									fontSize={px(6)}
+									letterSpacing={px(0.3)}
+									fill="#e8c27a"
+								>
+									{highway.name.toUpperCase()}
+								</text>
+							))}
+							{relief.map((image) => (
+								<text key={`${image.id}-label`} x={image.peakX} y={image.peakZ - px(5)} fontSize={px(6)} fill="rgba(236,230,214,0.75)" fontStyle="italic">
+									▲ {image.name} · {Math.round(image.peak)} m
+								</text>
+							))}
 							{ORION_LAND.slice(1).map((land) => (
 								<text key={`${land.id}-label`} x={land.centre[0]} y={land.centre[1] + px(3)} fontSize={px(9)} fill="rgba(236,230,214,0.8)">
 									{land.name}
@@ -238,6 +301,22 @@ export function WorldMap() {
 						</g>
 					) : null}
 
+					{police.map((unit, index) => {
+						const dx = unit.x - pose.x;
+						const dz = unit.z - pose.z;
+						const beyond = !expanded && Math.max(Math.abs(dx), Math.abs(dz)) > edge;
+						if (!beyond) {
+							return <circle key={index} className="orion-map-police" cx={unit.x} cy={unit.z} r={px(expanded ? 4 : 5)} stroke="#ffffff" strokeWidth={px(1.2)} />;
+						}
+						const scale = edge / Math.max(Math.abs(dx), Math.abs(dz));
+						const angle = (Math.atan2(dz, dx) * 180) / Math.PI;
+						return (
+							<g key={index} transform={`translate(${pose.x + dx * scale} ${pose.z + dz * scale}) rotate(${angle})`}>
+								<path className="orion-map-police" d={`M ${px(6)} 0 L ${-px(4)} ${px(4.5)} L ${-px(4)} ${-px(4.5)} Z`} stroke="#ffffff" strokeWidth={px(1)} />
+							</g>
+						);
+					})}
+
 					<g transform={`translate(${pose.x} ${pose.z}) rotate(${180 - pose.yaw})`}>
 						<circle r={worldPerPixel * 7} fill="rgba(127,184,143,0.2)" />
 						<path
@@ -249,7 +328,13 @@ export function WorldMap() {
 			</div>
 
 			<div className="orion-map-footer">
-				<span className="orion-kicker">{expanded ? "Orion State" : "North District"}</span>
+				{police.length > 0 ? (
+					<span className="orion-kicker orion-map-police-label" role="status">
+						Police · {Math.round(nearestPolice)} m
+					</span>
+				) : (
+					<span className="orion-kicker">{expanded ? "Orion State" : "North District"}</span>
+				)}
 				<button type="button" onClick={() => setExpanded((open) => !open)} className="orion-map-toggle orion-focus">
 					{touch ? (expanded ? "Close" : "Expand") : expanded ? "Close · Esc" : "Expand · M"}
 				</button>

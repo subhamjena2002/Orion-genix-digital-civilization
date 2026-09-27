@@ -27,7 +27,12 @@ import { onPlayerRig, playerRig } from "@/engine/orion/player/PlayerRig";
 // Module-level so re-renders hand the same arrays back: a fresh literal would make the entity
 // re-apply its starting transform, snapping the camera back for a frame.
 const CAMERA_START: [number, number, number] = [0, 4.5, 7];
-const KEY_LIGHT_ROTATION: [number, number, number] = [38, -35, 0];
+/**
+ * The sun, about 52° up. Its bearing lights the streets from the side: it used to sit behind the
+ * camera at the spawn view, which front-lit everything flat and dropped every shadow out of sight
+ * behind the thing casting it. Side light is what gives buildings and people their shape.
+ */
+const KEY_LIGHT_ROTATION: [number, number, number] = [38, 55, 0];
 const FILL_LIGHT_ROTATION: [number, number, number] = [55, 135, 0];
 /**
  * Longest the world stays hidden waiting for the sky. If the HDRI can't load at all, the world is

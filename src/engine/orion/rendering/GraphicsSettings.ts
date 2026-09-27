@@ -1,9 +1,9 @@
 /**
  * Player-facing graphics settings.
  *
- * Native resolution, 4x MSAA, cascaded sun shadows and 8x anisotropic filtering. Frame rate is
- * protected first by doing less work for the same image (LOD, culling, batching, update
- * throttling) rather than by drawing a worse one.
+ * Native resolution, 4x MSAA, cascaded sun shadows, ambient occlusion and 16x anisotropic
+ * filtering. Frame rate is protected first by doing less work for the same image (LOD, culling,
+ * batching, update throttling) rather than by drawing a worse one.
  *
  * `adaptiveQuality` is the trade-off, and it is ON by default: the quality governor lowers MSAA
  * and shadow resolution, and as a last resort the render resolution, when the machine can't
@@ -34,7 +34,9 @@ export interface GraphicsSettings {
 
 export const DEFAULT_GRAPHICS_SETTINGS: Readonly<GraphicsSettings> = {
 	adaptiveQuality: true,
-	anisotropy: 8,
+	// The GPU's own maximum still applies. 16x costs next to nothing on current hardware, and it's
+	// what keeps a long road sharp to the horizon instead of smearing past a few metres.
+	anisotropy: 16,
 	shadowDistance: 45,
 	shadowCascades: 1,
 	shadowAtlasSize: 2048,

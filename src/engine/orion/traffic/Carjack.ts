@@ -5,6 +5,7 @@ import type { ClipState } from "../player/OrionSkinnedCharacterAnimation";
 import { inCameraView, readPlayerPose } from "../player/PlayerPose";
 import { carHalfHeight, carRoofHeight } from "./CarMeshes";
 import type { OrionVehicle } from "./OrionVehicle";
+import type { DriverSeat } from "./VehicleModels";
 import { VEHICLE_SHAPES, type VehicleStyle } from "./Vehicles";
 
 /**
@@ -31,7 +32,8 @@ export const SEAT_LATERAL = 0.42;
 const SEATED_HEAD_LEAN = 0.28;
 /** How far outside the body the player stands to open the door. */
 const DOOR_STAND_OFF = 0.55;
-const DOOR_FORWARD = 0.25;
+/** The door opening is centred a little behind the seated figure's feet. */
+const DOOR_BEHIND_FEET = 0.15;
 const DOOR_OPEN_DEGREES = 62;
 /**
  * Drivers further than this, or out of the camera's view, aren't drawn: a head behind tinted
@@ -96,8 +98,8 @@ export function findCarNear(x: number, z: number, reach: number): OrionVehicle |
 	let bestDistance = reach;
 	const door = new Vec3();
 	for (const car of cars) {
-		// A burnt-out shell has no engine left to steal.
-		if (car.driver === "player" || car.burnedOut || !car.entity.enabled) continue;
+		// A burnt-out shell has no engine left to steal; an idle police unit isn't in the world.
+		if (car.driver === "player" || car.burnedOut || !car.entity.enabled || !car.inWorld) continue;
 		car.carjack.doorPoint(door);
 		const distance = Math.hypot(door.x - x, door.z - z);
 		if (distance < bestDistance) {
@@ -164,6 +166,10 @@ export class CarjackRig {
 	private driverSeat: { position: Vec3; rotation: Quat; scale: Vec3 } | null = null;
 	/** Seat measured from a real car model; replaces the style default. */
 	private seat: [number, number, number] | null = null;
+	/** Scale of the seated figure (a low cabin seats a smaller one; see DriverSeat). */
+	public seatScale = 1;
+	private handSeated = false;
+	private baseDriverScale: Vec3 | null = null;
 	private pull: { from: Vec3; to: Vec3; yaw: number; time: number } | null = null;
 	private victim: VictimPhase = "none";
 	/** Where the dragged-out driver is, re-applied each frame (see updateVictim). */
@@ -188,7 +194,7 @@ export class CarjackRig {
 
 	/** World point beside the driver's door where the player stands. */
 	public doorPoint(out: Vec3): Vec3 {
-		return this.toWorld(DRIVER_SIDE * (this.car.halfWidth + DOOR_STAND_OFF), -this.car.halfHeight, DOOR_FORWARD, out);
+		return this.toWorld(this.side * (this.car.halfWidth + DOOR_STAND_OFF), -this.car.halfHeight, this.seatForward() - DOOR_BEHIND_FEET, out);
 	}
 
 	/** World position of the seated character's root (feet). */
@@ -200,7 +206,7 @@ export class CarjackRig {
 	/** Yaw (degrees) that faces the car from beside the driver's door. */
 	public faceCarYaw(): number {
 		const right = this.entity.right;
-		return (Math.atan2(-DRIVER_SIDE * right.x, -DRIVER_SIDE * right.z) * 180) / Math.PI;
+		return (Math.atan2(-this.side * right.x, -this.side * right.z) * 180) / Math.PI;
 	}
 
 	public update(dt: number, playerDistance: number) {
@@ -209,8 +215,12 @@ export class CarjackRig {
 			const position = this.entity.getPosition();
 			const show = playerDistance < DRIVER_SHOW_DISTANCE && inCameraView(position.x, position.z, DRIVER_SHOW_DISTANCE);
 			if (driver.enabled !== show) driver.enabled = show;
-			// Re-applied each frame: the entity's React props carry the style's default seat.
-			if (show && this.seat) driver.setLocalPosition(...this.seat);
+			// Re-applied each frame: the entity's React props carry the style's default seat and the
+			// full-size scale, and put them back whenever the car re-renders.
+			if (show && this.seat) {
+				driver.setLocalPosition(...this.seat);
+				if (this.baseDriverScale) driver.setLocalScale(this.baseDriverScale.x * this.seatScale, this.baseDriverScale.y * this.seatScale, this.baseDriverScale.z * this.seatScale);
+			}
 		}
 		this.updateVictim(dt);
 		this.updateShards(dt);
@@ -224,7 +234,7 @@ export class CarjackRig {
 			instance.node.setLocalScale(0, 0, 0);
 		}
 
-		const origin = this.toWorld(DRIVER_SIDE * this.car.halfWidth, -this.car.halfHeight + 0.95, this.seatForward() + 0.2, new Vec3());
+		const origin = this.toWorld(this.side * this.car.halfWidth, -this.car.halfHeight + 0.95, this.seatForward() + 0.2, new Vec3());
 		const right = this.entity.right;
 		const material = shardMaterial();
 		for (let i = 0; i < SHARD_COUNT; i++) {
@@ -238,7 +248,7 @@ export class CarjackRig {
 				origin.z + (Math.random() - 0.5) * 0.5,
 			);
 			// Mostly inwards, away from the punch, with a little spray back out.
-			const inwards = (Math.random() < 0.75 ? -1 : 0.6) * DRIVER_SIDE;
+			const inwards = (Math.random() < 0.75 ? -1 : 0.6) * this.side;
 			const push = 1 + Math.random() * 2.5;
 			const velocity = new Vec3(
 				right.x * inwards * push + (Math.random() - 0.5),
@@ -266,7 +276,7 @@ export class CarjackRig {
 		if (!driver || !this.hasDriver) return;
 		this.hasDriver = false;
 		const from = driver.getPosition().clone();
-		const to = this.toWorld(DRIVER_SIDE * (this.car.halfWidth + THROWN_DISTANCE), -this.car.halfHeight, this.seatForward() - 0.4, new Vec3());
+		const to = this.toWorld(this.side * (this.car.halfWidth + THROWN_DISTANCE), -this.car.halfHeight, this.seatForward() - 0.4, new Vec3());
 		const yaw = this.faceCarYaw() + 180;
 		// Out of the car's hierarchy so it stays behind when the car drives away.
 		const scale = driver.getLocalScale().clone();
@@ -293,8 +303,8 @@ export class CarjackRig {
 	public beatVictim() {
 		if (this.victim !== "down") return;
 		const right = this.entity.right;
-		this.bodyPosition.x += right.x * DRIVER_SIDE * BEAT_SHOVE;
-		this.bodyPosition.z += right.z * DRIVER_SIDE * BEAT_SHOVE;
+		this.bodyPosition.x += right.x * this.side * BEAT_SHOVE;
+		this.bodyPosition.z += right.z * this.side * BEAT_SHOVE;
 		this.bodyYaw += (Math.random() < 0.5 ? -1 : 1) * BEAT_TWIST;
 	}
 
@@ -334,7 +344,7 @@ export class CarjackRig {
 			this.doorParts = null;
 			return;
 		}
-		this.spin.setFromAxisAngle(Vec3.UP, -DRIVER_SIDE * angle);
+		this.spin.setFromAxisAngle(Vec3.UP, -this.side * angle);
 		for (const part of parts) {
 			this.scratch.sub2(part.worldPosition, this.doorHinge);
 			this.spin.transformVector(this.scratch, this.scratch);
@@ -378,8 +388,34 @@ export class CarjackRig {
 		return this.seat ?? driverSeatLocal(this.car.style);
 	}
 
+	/** Which side the driver sits (and gets in and out): +1 the car's left, −1 its right. */
+	private get side(): number {
+		const lateral = this.seatLocal()[0];
+		return lateral === 0 ? DRIVER_SIDE : Math.sign(lateral);
+	}
+
+	/** A seat measured by hand on the model (see VehicleModelSpec.seat). */
+	public setSeat(seat: DriverSeat) {
+		this.handSeated = true;
+		this.seat = [seat.lateral, seat.rootAboveRoad - this.car.halfHeight, seat.forward];
+		// Find the driver now, so a car nobody has touched yet still seats them properly.
+		this.findDriver();
+		this.seatScale = seat.scale ?? 1;
+		if (this.driverSeat) {
+			this.driverSeat.position.set(...this.seat);
+			this.driverSeat.scale.copy(this.baseDriverScale ?? this.driverSeat.scale).mulScalar(this.seatScale);
+			// Still sitting there: move them now, not at the next reset.
+			if (this.hasDriver && !this.pull && this.victim === "none") {
+				this.driver?.setLocalPosition(this.driverSeat.position);
+				this.driver?.setLocalScale(this.driverSeat.scale);
+			}
+		}
+	}
+
 	/** Called by a real car model once it has measured its cabin (see OrionVehicleModel). */
 	public setCabin(roof: number, headForward: number | null) {
+		// A seat measured by hand wins over one worked out from the geometry.
+		if (this.handSeated) return;
 		this.seat = driverSeatLocal(this.car.style, roof, headForward ?? undefined);
 		if (this.driverSeat) this.driverSeat.position.set(...this.seat);
 	}
@@ -388,11 +424,14 @@ export class CarjackRig {
 		if (!this.driver) {
 			this.driver = this.entity.findByName(DRIVER_NAME) as Entity | null;
 			if (this.driver) {
+				this.baseDriverScale = this.driver.getLocalScale().clone();
 				this.driverSeat = {
-					position: this.driver.getLocalPosition().clone(),
+					position: this.seat ? new Vec3(...this.seat) : this.driver.getLocalPosition().clone(),
 					rotation: this.driver.getLocalRotation().clone(),
-					scale: this.driver.getLocalScale().clone(),
+					scale: this.driver.getLocalScale().clone().mulScalar(this.seatScale),
 				};
+				this.driver.setLocalPosition(this.driverSeat.position);
+				this.driver.setLocalScale(this.driverSeat.scale);
 			}
 		}
 		return this.driver;
@@ -477,7 +516,7 @@ export class CarjackRig {
 		for (const node of this.entity.find((candidate) => GLASS_NODE.test(candidate.name) && !NOT_SIDE_GLASS.test(candidate.name))) {
 			for (const instance of meshesUnder(node as Entity)) {
 				const center = this.inverse.transformPoint(instance.aabb.center, this.scratch);
-				const lateral = center.x * DRIVER_SIDE;
+				const lateral = center.x * this.side;
 				if (lateral > this.car.halfWidth * 0.3 && Math.abs(center.z - this.seatForward()) < 1.3) found.push(instance);
 			}
 		}
@@ -496,7 +535,7 @@ export class CarjackRig {
 			const instances = meshesUnder(entity);
 			if (instances.length === 0) continue;
 			const center = this.inverse.transformPoint(instances[0].aabb.center, this.scratch);
-			if (center.x * DRIVER_SIDE <= 0) continue;
+			if (center.x * this.side <= 0) continue;
 			front = Math.max(front, this.frontEdge(instances));
 			parts.push({
 				entity,
@@ -507,7 +546,7 @@ export class CarjackRig {
 			});
 		}
 		if (parts.length > 0) {
-			this.toWorld(DRIVER_SIDE * this.car.halfWidth, 0, front, this.doorHinge);
+			this.toWorld(this.side * this.car.halfWidth, 0, front, this.doorHinge);
 		}
 		this.doorParts = parts;
 		return parts;

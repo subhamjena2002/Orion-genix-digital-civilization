@@ -4,7 +4,9 @@ import {
 	PIXELFORMAT_111110F,
 	PIXELFORMAT_RGBA16F,
 	PIXELFORMAT_RGBA32F,
-	TONEMAP_NEUTRAL,
+	SSAOTYPE_COMBINE,
+	SSAOTYPE_NONE,
+	TONEMAP_ACES2,
 	type AppBase,
 	type CameraComponent,
 	type Entity,
@@ -18,6 +20,16 @@ import { QUALITY_LEVELS, QualityGovernor, setActiveQuality, startingLevel, type 
 /** Name of the directional light that casts the sun's shadows. */
 const KEY_LIGHT_NAME = "key-light";
 const BLOOM_INTENSITY = 0.028;
+/**
+ * Ambient occlusion: the darkening where things meet — a car on the road, feet on the pavement,
+ * the foot of a wall. Radius is in metres: contact-sized, not a dark halo round whole buildings.
+ *
+ * Applied over the finished image ("combine") rather than inside every material ("lighting").
+ * The lighting mode is slightly more correct, but it's compiled into every material's shader, so
+ * adaptive quality switching it off recompiled them all — measured at over a second's freeze,
+ * landing exactly when the machine was already struggling. Combined, switching is free.
+ */
+const SSAO = { radius: 1.5, intensity: 0.55, power: 3, samples: 12, scale: 0.5 } as const;
 /** How often newly loaded textures are checked for filtering upgrades. */
 const TEXTURE_SWEEP_SECONDS = 1;
 
@@ -36,8 +48,11 @@ export function installRenderPipeline(app: AppBase, component: CameraComponent):
 	const settings = loadGraphicsSettings();
 	const frame = new CameraFrame(app, component);
 	frame.rendering.renderFormats = [PIXELFORMAT_111110F, PIXELFORMAT_RGBA16F, PIXELFORMAT_RGBA32F];
-	// Neutral keeps the albedo the art was tuned against and only rolls off the highlights.
-	frame.rendering.toneMapping = TONEMAP_NEUTRAL;
+	// ACES (the revised curve): a filmic shoulder and toe. Compared side by side with Neutral at the
+	// same exposure, it gives the street real contrast and takes the over-saturated yellow out of
+	// the sunlit grass without crushing the shadows. Raising exposure to compensate for its darker
+	// mid-tones brought the glare back, so exposure is left as it was.
+	frame.rendering.toneMapping = TONEMAP_ACES2;
 	frame.bloom.blurLevel = 12;
 	frame.vignette.intensity = 0.22;
 	frame.vignette.inner = 0.55;
@@ -45,6 +60,28 @@ export function installRenderPipeline(app: AppBase, component: CameraComponent):
 	frame.grading.enabled = true;
 	frame.grading.contrast = 1.06;
 	frame.grading.saturation = 1.05;
+	// Contrast where it reads as depth. Most of a shadow's light is the sky's (image-based
+	// lighting), so a stronger sun only brightened the sunlit side and left shadows a milky grey;
+	// a steeper grading curve lifted everything alike. Pulling the shadows down and cutting the
+	// haze does what the eye expects, compared side by side, while shaded walls and grass keep
+	// their detail rather than going black.
+	frame.colorEnhance.enabled = true;
+	frame.colorEnhance.shadows = -0.3;
+	frame.colorEnhance.highlights = 0.1;
+	frame.colorEnhance.dehaze = 0.2;
+	frame.ssao.radius = SSAO.radius;
+	frame.ssao.intensity = SSAO.intensity;
+	frame.ssao.power = SSAO.power;
+	frame.ssao.samples = SSAO.samples;
+	// Half resolution, blurred: the effect is soft by nature, and this quarters its cost.
+	frame.ssao.scale = SSAO.scale;
+	frame.ssao.blurEnabled = true;
+	// Keep the depth pre-pass whether or not ambient occlusion is on. Without it, the quality
+	// governor turning AO off (or back on) changed how every material is drawn, and the first
+	// switch each way recompiled the scene's shaders mid-game: a 1–1.5 s freeze, which made the
+	// governor think the game was slow and switch again. With it, switching compiles nothing;
+	// the cost is the pre-pass on the levels without AO, a small share of the frame.
+	frame.rendering.sceneDepthMap = true;
 
 	const keyLight = () => (app.root.findByName(KEY_LIGHT_NAME) as Entity | null)?.light ?? null;
 	configureSunShadows(keyLight(), settings);
@@ -59,6 +96,7 @@ export function installRenderPipeline(app: AppBase, component: CameraComponent):
 		frame.rendering.samples = level.samples;
 		frame.rendering.sharpness = level.sharpness;
 		frame.bloom.intensity = level.bloom ? BLOOM_INTENSITY : 0;
+		frame.ssao.type = level.ssao ? SSAOTYPE_COMBINE : SSAOTYPE_NONE;
 		frame.update();
 		const light = keyLight();
 		const resolution = Math.min(level.shadowResolution, settings.shadowAtlasSize);
@@ -121,7 +159,7 @@ export function installRenderPipeline(app: AppBase, component: CameraComponent):
 
 	if (process.env.NODE_ENV !== "production") {
 		// A handle for inspecting the running game from the browser console.
-		(window as unknown as { __orion?: unknown }).__orion = { app, governor, levels: QUALITY_LEVELS, settings };
+		(window as unknown as { __orion?: unknown }).__orion = { app, governor, levels: QUALITY_LEVELS, settings, frame };
 	}
 
 	return () => {
