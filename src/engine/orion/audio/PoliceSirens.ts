@@ -71,6 +71,16 @@ class PoliceSirens {
 		voice.filter.frequency.setTargetAtTime(Math.min(placed.muffle, 5000), now, SMOOTHING);
 	}
 
+	/** Stops the sound for good. */
+	public dispose(): void {
+		const voice = this.voice;
+		this.voice = null;
+		if (!voice) return;
+		voice.tone.stop();
+		voice.sweep.stop();
+		voice.panner.disconnect();
+	}
+
 	private createVoice(context: AudioContext, master: GainNode): SirenVoice {
 		const tone = context.createOscillator();
 		// A square wave filtered down: the hard, horn-like edge of a real siren speaker.
@@ -99,7 +109,16 @@ class PoliceSirens {
 
 let sirens: PoliceSirens | null = null;
 
+/**
+ * The live instance, kept where a reloaded copy of this module can find it. A hot reload in
+ * development starts the module over with no sirens; the old voice stayed wired to the speakers
+ * at whatever level it last had, wailing on with no one left to turn it down or off.
+ */
+const holder = globalThis as { __orionPoliceSirens?: PoliceSirens };
+holder.__orionPoliceSirens?.dispose();
+holder.__orionPoliceSirens = undefined;
+
 export function policeSirens(): PoliceSirens {
-	sirens ??= new PoliceSirens();
+	sirens ??= holder.__orionPoliceSirens = new PoliceSirens();
 	return sirens;
 }

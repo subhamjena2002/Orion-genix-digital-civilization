@@ -1,6 +1,8 @@
 import { fetchAsset } from "@playcanvas/react/utils";
-import type { AppBase, ContainerResource, Entity } from "playcanvas";
+import { BoundingBox, type AppBase, type ContainerResource, type Entity, type RenderComponent } from "playcanvas";
 
+import { GUNSHIP_MODEL } from "../aircraft/GunshipModel";
+import { JET_MODEL } from "../aircraft/JetModel";
 import { getBuildingDefinition, ORION_BUILDING_MAP } from "../buildings/Buildings";
 import { VEHICLE_MODEL_BASE, VEHICLE_MODELS } from "../traffic/VehicleModels";
 
@@ -20,8 +22,12 @@ import { VEHICLE_MODEL_BASE, VEHICLE_MODELS } from "../traffic/VehicleModels";
 const TRAIN_MODEL = "/models/rail/metro-train.glb";
 /** Frames each model stays drawn: its colour pass, shadow pass and post effects all compile. */
 const DRAWN_FRAMES = 3;
-/** In front of the lens, far too small to see. */
-const SPECK_SCALE = 0.0005;
+/**
+ * Largest size of the speck in front of the lens, m: far too small to see. Scaled from the model's
+ * own bounds, since models come in metres, centimetres or millimetres — a fixed scale left the
+ * millimetre-built civic vehicles metres across in front of the camera while the game loaded.
+ */
+const SPECK_SIZE = 0.002;
 
 export function modelsToPrewarm(): string[] {
 	const urls = new Set<string>();
@@ -34,6 +40,8 @@ export function modelsToPrewarm(): string[] {
 	}
 	for (const spec of VEHICLE_MODELS) urls.add(`${VEHICLE_MODEL_BASE}/${spec.file}`);
 	urls.add(TRAIN_MODEL);
+	urls.add(GUNSHIP_MODEL);
+	urls.add(JET_MODEL);
 	return [...urls];
 }
 
@@ -67,7 +75,9 @@ export function prewarmModels(app: AppBase, camera: Entity, urls: readonly strin
 				current = resource.instantiateRenderEntity();
 				camera.addChild(current);
 				current.setLocalPosition(0, 0, -1.5);
-				current.setLocalScale(SPECK_SCALE, SPECK_SCALE, SPECK_SCALE);
+				current.setLocalScale(1, 1, 1);
+				const scale = SPECK_SIZE / Math.max(largestSize(current), 1e-6);
+				current.setLocalScale(scale, scale, scale);
 				await waitFrames(DRAWN_FRAMES);
 			} catch {
 				// A model that fails here fails in the scene too, where it's already handled.
@@ -84,4 +94,20 @@ export function prewarmModels(app: AppBase, camera: Entity, urls: readonly strin
 		current?.destroy();
 		current = null;
 	};
+}
+
+/** The largest dimension of everything an entity draws, in world units. */
+function largestSize(root: Entity): number {
+	const bounds = new BoundingBox();
+	let first = true;
+	for (const render of root.findComponents("render") as RenderComponent[]) {
+		for (const instance of render.meshInstances) {
+			if (first) bounds.copy(instance.aabb);
+			else bounds.add(instance.aabb);
+			first = false;
+		}
+	}
+	if (first) return 0;
+	const half = bounds.halfExtents;
+	return 2 * Math.max(half.x, half.y, half.z);
 }

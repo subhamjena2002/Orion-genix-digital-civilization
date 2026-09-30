@@ -37,9 +37,12 @@ export interface QualityLevel {
  * least visible things first: MSAA and fire lights, then ambient occlusion and shadow texel
  * density, and at the bottom bloom and MSAA altogether.
  *
- * Every level renders at native resolution. The bottom two used to render at 90% and 80% and
- * upscale, and since driving is when the frame is heaviest, that's exactly when the whole picture
- * went soft. Coarser shadows and harder edges are far less noticeable than a blurred screen.
+ * Every level but the last renders at native resolution. The bottom two used to render at 90%
+ * and 80% and upscale, and since driving is when the frame is heaviest, that's exactly when the
+ * whole picture went soft. Coarser shadows and harder edges are far less noticeable than a blurred
+ * screen. The last level is the exception, and only for a machine that still can't keep up with
+ * everything else already turned down (a phone rendering at twice its screen's pixels, say):
+ * there a steady picture a little softer beats a stuttering sharp one. Sharpening makes up some.
  */
 export const QUALITY_LEVELS: readonly QualityLevel[] = [
 	{ name: "ultra", renderScale: 1, samples: 4, bloom: true, sharpness: 0, ssao: true, shadowResolution: 4096, fireLights: 4 },
@@ -47,6 +50,7 @@ export const QUALITY_LEVELS: readonly QualityLevel[] = [
 	{ name: "medium", renderScale: 1, samples: 2, bloom: true, sharpness: 0, ssao: false, shadowResolution: 2048, fireLights: 3 },
 	{ name: "low", renderScale: 1, samples: 2, bloom: true, sharpness: 0, ssao: false, shadowResolution: 1024, fireLights: 2 },
 	{ name: "minimum", renderScale: 1, samples: 1, bloom: false, sharpness: 0, ssao: false, shadowResolution: 1024, fireLights: 1 },
+	{ name: "rescue", renderScale: 0.8, samples: 1, bloom: false, sharpness: 0.5, ssao: false, shadowResolution: 1024, fireLights: 1 },
 ];
 
 export interface GovernorOptions {

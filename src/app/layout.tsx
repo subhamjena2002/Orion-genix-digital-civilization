@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { GoogleTag } from "@/components/GoogleTag";
 import { ServiceWorker } from "@/components/ServiceWorker";
 import "./globals.css";
 
@@ -41,6 +42,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col">
         {children}
         <ServiceWorker />
+        <GoogleTag />
       </body>
     </html>
   );

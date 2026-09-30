@@ -1,7 +1,14 @@
-import { Entity, Script, Vec3 } from "playcanvas";
+import { Entity, Quat, Script, Vec3 } from "playcanvas";
 
 import { modelsToPrewarm, prewarmModels } from "../rendering/ModelPrewarm";
 import { resetWorld } from "../world/WorldReset";
+import { writeFlightHud } from "../aircraft/FlightHud";
+import { GUNSHIP_WEAPONS } from "../aircraft/GunshipWeapons";
+import { NO_INPUT } from "../aircraft/HelicopterFlight";
+import { findGunshipNear, type OrionGunship } from "../aircraft/OrionGunship";
+import { NO_JET_INPUT } from "../aircraft/JetFlight";
+import { JET_WEAPONS } from "../aircraft/JetWeapons";
+import { findJetNear, type OrionJet } from "../aircraft/OrionJet";
 import { ORION_OCEAN } from "../world/Ocean";
 import { combatAudio } from "../combat/CombatAudio";
 import { damageablesNear } from "../combat/CombatWorld";
@@ -18,9 +25,11 @@ import { prewarmBurntBodies } from "../traffic/CarMeshes";
 import { crashEffects } from "../traffic/CrashEffects";
 import { skidMarks } from "../traffic/SkidMarks";
 import { clearWrecksNear, type OrionVehicle } from "../traffic/OrionVehicle";
+import { ORION_ACTIVE_TIME_OF_DAY, ORION_ENVIRONMENT_PROFILES, updateAtmosphere } from "../rendering/Environment";
 import { PLAYER_VISUAL_NAME, writeCameraLens, writeCameraView, writePlayerAction, writePlayerPose, writeVehicleState } from "./PlayerPose";
 
 const UP = new Vec3(0, 1, 0);
+const ENVIRONMENT = ORION_ENVIRONMENT_PROFILES[ORION_ACTIVE_TIME_OF_DAY];
 /** Ray begins outside the player's own capsule (radius 0.45) so it can't hit the player. */
 const CAMERA_RAY_START = 0.7;
 const CAMERA_SURFACE_MARGIN = 0.35;
@@ -56,6 +65,30 @@ const FOV_SMOOTHING = 3;
 const SHAKE_PER_IMPACT = 0.045;
 const SHAKE_DECAY = 7;
 const NEAR_CAR_CHECK_SECONDS = 0.2;
+// Chase camera behind the gunship: further back and higher, as it's an 18 m aircraft.
+const FLY_CAMERA_DISTANCE = 19;
+const FLY_CAMERA_HEIGHT = 3.2;
+const FLY_CAMERA_PITCH = 10;
+const FLY_CAMERA_STRETCH = 0.06;
+const FLY_CAMERA_MAX_STRETCH = 6;
+// Chase camera behind the jet: it follows the aircraft's attitude (through loops and rolls),
+// smoothed so turns read as turns rather than the world snapping round.
+const JET_CAMERA_DISTANCE = 24;
+const JET_CAMERA_HEIGHT = 5;
+const JET_CAMERA_STRETCH = 0.035;
+const JET_CAMERA_MAX_STRETCH = 9;
+/** How quickly the camera swings round to the jet's attitude (1/s). */
+const JET_CAMERA_FOLLOW = 6;
+/** How quickly a look round with the mouse or a finger drifts back behind the jet (1/s). */
+const JET_LOOK_RETURN = 2.5;
+/**
+ * While flying (either aircraft) the view reaches to the horizon: on foot the far clip sits just
+ * past where the haze has swallowed everything, but from the air that cut the sea off short of the
+ * horizon. The near clip moves out with it, keeping depth precision (the camera is metres from
+ * anything it could clip).
+ */
+const FLIGHT_FAR_CLIP = 20000;
+const FLIGHT_NEAR_CLIP = 1;
 /**
  * People are animated, not simulated — they have no physics body for the player's capsule to
  * meet — so the player is kept this far (body radius) from each of them in code instead.
@@ -99,7 +132,7 @@ const CARJACK = {
 	doorCloseSeconds: 0.4,
 } as const;
 
-type PlayerMode = "onFoot" | "carjack" | "driving";
+type PlayerMode = "onFoot" | "carjack" | "driving" | "flying" | "jet";
 
 function smooth(t: number): number {
 	const k = Math.max(0, Math.min(1, t));
@@ -158,6 +191,21 @@ export class OrionThirdPersonController extends Script {
 	private dragging = false;
 	private mode: PlayerMode = "onFoot";
 	private car: OrionVehicle | null = null;
+	private gunship: OrionGunship | null = null;
+	private jet: OrionJet | null = null;
+	private readonly jetCamera = new Quat();
+	private jetCameraReady = false;
+	/** Looking round from behind the jet, degrees (drifts back once let go). */
+	private jetLookYaw = 0;
+	private jetLookPitch = 0;
+	private baseFarClip = 0;
+	private baseNearClip = 0;
+	private readonly jetScratch = new Quat();
+	private readonly jetOffset = new Vec3();
+	private readonly jetAhead = new Vec3();
+	private readonly jetUp = new Vec3();
+	private readonly flyScratch: [number, number, number] = [0, 0, 0];
+	private readonly flyFocus = new Vec3();
 	/** This frame's step, kept so the audio mix can be driven from the camera update. */
 	private lastDelta = 1 / 60;
 	private carjackTime = 0;
@@ -205,7 +253,7 @@ export class OrionThirdPersonController extends Script {
 		this.keys.add(event.code);
 	};
 	private readonly wheel = (event: WheelEvent) => {
-		if (this.mode !== "onFoot" || event.deltaY === 0) return;
+		if ((this.mode !== "onFoot" && this.mode !== "flying" && this.mode !== "jet") || event.deltaY === 0) return;
 		event.preventDefault();
 		this.combatInput.wheel += Math.sign(event.deltaY);
 	};
@@ -294,6 +342,8 @@ export class OrionThirdPersonController extends Script {
 		this.characterYaw = this.entity.getEulerAngles().y;
 		this.cameraPosition.copy(this.camera.getPosition());
 		this.baseFov = this.camera.camera?.fov ?? this.baseFov;
+		this.baseFarClip = this.camera.camera?.farClip ?? 800;
+		this.baseNearClip = this.camera.camera?.nearClip ?? 0.2;
 		this.prewarmEffects();
 		this.on("destroy", this.destroy, this);
 	}
@@ -319,7 +369,7 @@ export class OrionThirdPersonController extends Script {
 		if (touch.fire) this.combatInput.attackPressed = true;
 		if (touch.reload) this.combatInput.reloadPressed = true;
 		if (touch.slot !== null) this.combatInput.slotPressed = touch.slot;
-		if (touch.cycle !== 0 && this.mode === "onFoot") this.combatInput.wheel += touch.cycle;
+		if (touch.cycle !== 0 && (this.mode === "onFoot" || this.mode === "flying" || this.mode === "jet")) this.combatInput.wheel += touch.cycle;
 
 		this.yaw -= this.mouseX * this.mouseSensitivity;
 		this.pitch = Math.max(-12, Math.min(68, this.pitch - this.mouseY * this.mouseSensitivity));
@@ -338,8 +388,21 @@ export class OrionThirdPersonController extends Script {
 
 		const interact = this.interactPressed;
 		this.interactPressed = false;
-		if (interact && this.mode === "onFoot") this.tryCarjack();
-		else if (interact && this.mode === "driving") this.tryExitCar();
+		if (interact && this.mode === "onFoot") {
+			if (!this.tryBoardGunship() && !this.tryBoardJet()) this.tryCarjack();
+		} else if (interact && this.mode === "driving") this.tryExitCar();
+		else if (interact && this.mode === "flying") this.tryExitGunship();
+		else if (interact && this.mode === "jet") this.tryExitJet();
+		if (this.mode === "jet") {
+			this.updateJet();
+			this.runCombat(dt, false);
+			return;
+		}
+		if (this.mode === "flying") {
+			this.updateFlying();
+			this.runCombat(dt, false);
+			return;
+		}
 		if (this.mode === "carjack") {
 			this.runCombat(dt, false);
 			this.updateCarjack(dt);
@@ -355,8 +418,11 @@ export class OrionThirdPersonController extends Script {
 		if (this.nearCarTimer <= 0) {
 			this.nearCarTimer = NEAR_CAR_CHECK_SECONDS;
 			const here = this.entity.getPosition();
-			this.nearCar = findCarNear(here.x, here.z, CARJACK_REACH) !== null;
+			const nearGunship = findGunshipNear(here.x, here.z) !== null;
+			const nearJet = !nearGunship && findJetNear(here.x, here.z) !== null;
+			this.nearCar = !nearGunship && !nearJet && findCarNear(here.x, here.z, CARJACK_REACH) !== null;
 			writeVehicleState(false, 0, this.nearCar);
+			writeFlightHud({ nearGunship, nearJet });
 		}
 
 		// Movement is camera-relative (as in most third-person games): the stick/keys pick a
@@ -601,14 +667,19 @@ export class OrionThirdPersonController extends Script {
 	 */
 	public postUpdate(dt: number) {
 		if (this.mode === "driving") this.followCar(dt);
+		else if (this.mode === "flying") this.followGunship(dt);
+		else if (this.mode === "jet") this.followJet(dt);
 		// After animation: pose the player's body from it, then put the weapon in that hand.
 		this.combat?.placeWeapon(dt);
 		playerRig()?.apply(dt);
-		const radians = this.yaw * Math.PI / 180;
+		// The jet's camera isn't steered by yaw: take its heading from where it actually looks.
+		const radians = this.mode === "jet" ? Math.atan2(-this.rayDirection.x, -this.rayDirection.z) : this.yaw * Math.PI / 180;
 		combatAudio().setListener(this.cameraPosition.x, this.cameraPosition.y, this.cameraPosition.z, -Math.cos(radians), Math.sin(radians));
 		// Traffic is mixed here rather than per car: only the nearest few engines are audible, and
 		// which those are can only be decided once the listener has moved for this frame.
 		engineAudio().update(this.lastDelta);
+		// Haze for the camera's height: street-level on foot, thinner and sea-blue from the air.
+		updateAtmosphere(this.app.scene, ENVIRONMENT, this.cameraPosition.y);
 		// After the patrol cars have moved: who can see the player, and the sirens of those chasing.
 		updateWanted(this.lastDelta);
 		policeSirens().update();
@@ -727,8 +798,261 @@ export class OrionThirdPersonController extends Script {
 
 	private get physics() {
 		return this.entity.rigidbody?.system as unknown as {
-			raycastFirst: (from: Vec3, to: Vec3) => { point: Vec3 } | null;
+			raycastFirst: (from: Vec3, to: Vec3, options?: { filterCallback?: (entity: Entity) => boolean }) => { point: Vec3 } | null;
 		} | undefined;
+	}
+
+	/** The camera looks past the aircraft it's following (its own box would pull it in close). */
+	private readonly cameraSees = (entity: Entity) => this.mode !== "flying" || entity.name !== "gunship";
+
+	// ---- The gunship ---------------------------------------------------------------------------
+
+	private tryBoardGunship(): boolean {
+		const position = this.entity.getPosition();
+		const gunship = findGunshipNear(position.x, position.z);
+		if (!gunship || !this.combat) return false;
+		this.gunship = gunship;
+		this.mode = "flying";
+		gunship.board(this.combat.source);
+		this.combat.shielded = true;
+		this.setBodyActive(false);
+		this.yaw = gunship.heading;
+		writePlayerAction("Sitting");
+		writeVehicleState(false, 0, false);
+		writeFlightHud({ nearGunship: false, flying: true });
+		return true;
+	}
+
+	/** Only on the ground: the rotor winds down and the pilot climbs out. */
+	private tryExitGunship() {
+		const gunship = this.gunship;
+		if (gunship?.landed) this.leaveGunship(gunship);
+	}
+
+	private leaveGunship(gunship: OrionGunship) {
+		gunship.leave();
+		const door = gunship.doorPoint(this.flyScratch);
+		this.entity.setPosition(door[0], door[1] + CAPSULE_HALF_HEIGHT, door[2]);
+		this.setBodyActive(true);
+		this.entity.rigidbody?.teleport(door[0], door[1] + CAPSULE_HALF_HEIGHT, door[2]);
+		this.currentVelocity.set(0, 0, 0);
+		if (this.entity.rigidbody) this.entity.rigidbody.linearVelocity = this.currentVelocity;
+		if (this.combat) this.combat.shielded = false;
+		// Facing away from the aircraft, towards the door side.
+		this.characterYaw = gunship.heading + 90;
+		this.gunship = null;
+		this.mode = "onFoot";
+		this.setFlightLens(false);
+		this.applyFacing();
+		writePlayerAction("");
+	}
+
+	/** Stick, keys and touch to the gunship; weapon picks and the trigger too. */
+	private updateFlying() {
+		const gunship = this.gunship;
+		if (!gunship) return;
+		const pressed = (...codes: string[]) => codes.some((code) => this.keys.has(code));
+		let forward = Number(pressed("KeyW", "ArrowUp")) - Number(pressed("KeyS", "ArrowDown"));
+		let turn = Number(pressed("KeyD", "ArrowRight")) - Number(pressed("KeyA", "ArrowLeft"));
+		const strafe = Number(pressed("KeyE")) - Number(pressed("KeyQ"));
+		let climb = Number(pressed("Space")) - Number(pressed("ShiftLeft", "ShiftRight", "ControlLeft", "KeyC"));
+		const touch = readTouchHeld();
+		if (forward === 0 && turn === 0) {
+			forward = touch.moveY;
+			turn = touch.moveX;
+		}
+		if (climb === 0) climb = Number(touch.climb) - Number(touch.descend);
+		const input = this.combatInput;
+		gunship.setControls({ forward, turn, strafe, climb }, this.mouseAttackHeld || touch.fire || input.attackPressed);
+		if (input.slotPressed !== null && input.slotPressed >= 1 && input.slotPressed <= GUNSHIP_WEAPONS.length) {
+			gunship.selectWeapon(GUNSHIP_WEAPONS[input.slotPressed - 1]);
+		}
+		if (input.wheel !== 0) gunship.cycleWeapon(Math.sign(input.wheel));
+		input.slotPressed = null;
+		input.wheel = 0;
+		// Aim where the camera looks.
+		gunship.setAim(this.cameraPosition.x, this.cameraPosition.y, this.cameraPosition.z, -this.rayDirection.x, -this.rayDirection.y, -this.rayDirection.z);
+	}
+
+	/** After the gunship has moved: the pilot in the seat, the camera behind. */
+	private followGunship(dt: number) {
+		const gunship = this.gunship;
+		if (!gunship) return;
+		if (gunship.destroyed) {
+			// Shot down or crashed with the player at the controls.
+			this.leaveGunship(gunship);
+			this.die();
+			return;
+		}
+		const seat = gunship.seatPoint(this.flyScratch);
+		this.entity.setPosition(seat[0], seat[1] + CAPSULE_HALF_HEIGHT, seat[2]);
+		this.characterYaw = gunship.heading;
+		// Sat in the airframe: pitched and banked with it.
+		this.visual ??= this.entity.findByName(PLAYER_VISUAL_NAME) as Entity | null;
+		this.visual?.setRotation(gunship.attitude);
+		writePlayerAction("Sitting");
+		const flight = gunship.flight;
+		const speed = flight.speed;
+		writePlayerPose(seat[0], seat[1], seat[2], this.characterYaw, 0, 0);
+
+		if (this.sinceMouse > CAMERA_RECENTRE_DELAY) {
+			const rate = CAMERA_RECENTRE_RATE + speed * 0.03;
+			const delta = ((gunship.heading - this.yaw + 540) % 360) - 180;
+			this.yaw += delta * (1 - Math.exp(-rate * dt));
+			this.pitch += (FLY_CAMERA_PITCH - this.pitch) * (1 - Math.exp(-2 * dt));
+		}
+		this.flyFocus.set(flight.x, flight.y, flight.z);
+		const stretch = Math.min(FLY_CAMERA_MAX_STRETCH, speed * FLY_CAMERA_STRETCH);
+		this.updateCamera(dt, this.flyFocus, FLY_CAMERA_DISTANCE + stretch, FLY_CAMERA_HEIGHT);
+		this.setFlightLens(true);
+		this.easeFov(this.baseFov + Math.min(MAX_FOV_BOOST * 0.6, speed * FOV_PER_SPEED * 0.4), dt);
+	}
+
+	/**
+	 * The flying lens, or back to the one on foot. Set every frame while flying: the React camera
+	 * re-applies its own props whenever that part of the tree renders.
+	 */
+	private setFlightLens(flying: boolean) {
+		const camera = this.camera?.camera;
+		if (!camera) return;
+		const far = flying ? FLIGHT_FAR_CLIP : this.baseFarClip;
+		const near = flying ? FLIGHT_NEAR_CLIP : this.baseNearClip;
+		if (camera.farClip !== far) camera.farClip = far;
+		if (camera.nearClip !== near) camera.nearClip = near;
+	}
+
+	// ---- The jet --------------------------------------------------------------------------------
+
+	private tryBoardJet(): boolean {
+		const position = this.entity.getPosition();
+		const jet = findJetNear(position.x, position.z);
+		if (!jet || !this.combat) return false;
+		this.jet = jet;
+		this.mode = "jet";
+		jet.board(this.combat.source);
+		this.combat.shielded = true;
+		this.setBodyActive(false);
+		this.jetCameraReady = false;
+		this.jetLookYaw = 0;
+		this.jetLookPitch = 0;
+		writePlayerAction("Sitting");
+		writeVehicleState(false, 0, false);
+		writeFlightHud({ nearJet: false, nearGunship: false, flying: true, aircraft: "jet" });
+		return true;
+	}
+
+	/** Only once it has stopped on its wheels. */
+	private tryExitJet() {
+		const jet = this.jet;
+		if (jet?.landed) this.leaveJet(jet);
+	}
+
+	private leaveJet(jet: OrionJet) {
+		jet.leave();
+		const ladder = jet.ladderPoint(this.flyScratch);
+		this.entity.setPosition(ladder[0], ladder[1] + CAPSULE_HALF_HEIGHT, ladder[2]);
+		this.setBodyActive(true);
+		this.entity.rigidbody?.teleport(ladder[0], ladder[1] + CAPSULE_HALF_HEIGHT, ladder[2]);
+		this.currentVelocity.set(0, 0, 0);
+		if (this.entity.rigidbody) this.entity.rigidbody.linearVelocity = this.currentVelocity;
+		if (this.combat) this.combat.shielded = false;
+		// Beside the cockpit on the left, facing away from it.
+		this.characterYaw = jet.heading + 90;
+		this.yaw = jet.heading;
+		this.pitch = 22;
+		this.jet = null;
+		this.mode = "onFoot";
+		this.setFlightLens(false);
+		this.applyFacing();
+		writePlayerAction("");
+	}
+
+	/**
+	 * Keys, mouse and touch to the jet. Stick: W/S (or the touch stick up/down) pitch, forward
+	 * dives and back pulls up, and A/D bank; Q/E rudder; Space/Shift throttle (held back at idle,
+	 * it brakes). Weapon picks and the trigger too.
+	 */
+	private updateJet() {
+		const jet = this.jet;
+		if (!jet) return;
+		const pressed = (...codes: string[]) => codes.some((code) => this.keys.has(code));
+		let pitch = Number(pressed("KeyS", "ArrowDown")) - Number(pressed("KeyW", "ArrowUp"));
+		let roll = Number(pressed("KeyD", "ArrowRight")) - Number(pressed("KeyA", "ArrowLeft"));
+		const yaw = Number(pressed("KeyE")) - Number(pressed("KeyQ"));
+		let throttle = Number(pressed("Space")) - Number(pressed("ShiftLeft", "ShiftRight", "ControlLeft", "KeyC"));
+		const touch = readTouchHeld();
+		if (pitch === 0 && roll === 0) {
+			// The stick pushed up (forward) dives, as a real one does.
+			pitch = -touch.moveY;
+			roll = touch.moveX;
+		}
+		if (throttle === 0) throttle = Number(touch.climb) - Number(touch.descend);
+		const input = this.combatInput;
+		jet.setControls({ pitch, roll, yaw, throttle }, this.mouseAttackHeld || touch.fire || input.attackPressed);
+		if (input.slotPressed !== null && input.slotPressed >= 1 && input.slotPressed <= JET_WEAPONS.length) {
+			jet.selectWeapon(JET_WEAPONS[input.slotPressed - 1]);
+		}
+		if (input.wheel !== 0) jet.cycleWeapon(Math.sign(input.wheel));
+		input.slotPressed = null;
+		input.wheel = 0;
+	}
+
+	/** After the jet has moved: the pilot in the seat, the chase camera behind. */
+	private followJet(dt: number) {
+		const jet = this.jet;
+		if (!jet || !this.camera) return;
+		if (jet.destroyed) {
+			// Shot down or crashed with the player at the controls.
+			this.leaveJet(jet);
+			this.die();
+			return;
+		}
+		const seat = jet.seatPoint(this.flyScratch);
+		this.entity.setPosition(seat[0], seat[1] + CAPSULE_HALF_HEIGHT, seat[2]);
+		this.characterYaw = jet.heading;
+		this.visual ??= this.entity.findByName(PLAYER_VISUAL_NAME) as Entity | null;
+		this.visual?.setRotation(jet.attitude);
+		writePlayerAction("Sitting");
+		writePlayerPose(seat[0], seat[1], seat[2], this.characterYaw, 0, 0);
+		const flight = jet.flight;
+
+		// Looking round: the mouse and look drags have already turned yaw/pitch this frame. Take
+		// that as a look offset, and hand yaw/pitch back to a neutral pair so they never reach
+		// the on-foot camera's pitch limits.
+		this.jetLookYaw = Math.max(-170, Math.min(170, this.jetLookYaw + this.yaw));
+		this.jetLookPitch = Math.max(-60, Math.min(60, this.jetLookPitch + (this.pitch - 22)));
+		this.yaw = 0;
+		this.pitch = 22;
+		if (this.sinceMouse > CAMERA_RECENTRE_DELAY) {
+			const back = 1 - Math.exp(-JET_LOOK_RETURN * dt);
+			this.jetLookYaw -= this.jetLookYaw * back;
+			this.jetLookPitch -= this.jetLookPitch * back;
+		}
+
+		// The camera's frame follows the jet's attitude with a lag, then the look offset on top.
+		const attitude = jet.attitude;
+		if (!this.jetCameraReady) {
+			this.jetCamera.copy(attitude);
+			this.jetCameraReady = true;
+		} else {
+			this.jetCamera.slerp(this.jetCamera, attitude, 1 - Math.exp(-JET_CAMERA_FOLLOW * dt));
+		}
+		const frame = this.jetScratch.setFromEulerAngles(this.jetLookPitch, this.jetLookYaw, 0);
+		frame.mul2(this.jetCamera, frame);
+		const distance = JET_CAMERA_DISTANCE + Math.min(JET_CAMERA_MAX_STRETCH, flight.speed * JET_CAMERA_STRETCH);
+		frame.transformVector(this.jetOffset.set(0, JET_CAMERA_HEIGHT, -distance), this.jetOffset);
+		frame.transformVector(this.jetAhead.set(0, JET_CAMERA_HEIGHT * 0.3, 30), this.jetAhead);
+		frame.transformVector(this.jetUp.set(0, 1, 0), this.jetUp);
+		this.flyFocus.set(flight.x, flight.y, flight.z);
+		this.cameraPosition.copy(this.flyFocus).add(this.jetOffset);
+		this.cameraTarget.copy(this.flyFocus).add(this.jetAhead);
+		this.camera.setPosition(this.cameraPosition);
+		this.camera.lookAt(this.cameraTarget, this.jetUp);
+		this.rayDirection.copy(this.cameraPosition).sub(this.cameraTarget).normalize();
+		this.setFlightLens(true);
+		writeCameraView(this.cameraPosition.x, this.cameraPosition.z, -this.rayDirection.x, -this.rayDirection.z);
+		writeCameraLens(this.camera.camera?.fov ?? this.baseFov, this.app.graphicsDevice.height);
+		this.easeFov(this.baseFov + Math.min(16, flight.speed * 0.05), dt);
 	}
 
 	/**
@@ -774,6 +1098,10 @@ export class OrionThirdPersonController extends Script {
 
 	private die() {
 		this.wastedTimer = WASTED_SECONDS;
+		// Hands off the controls: nothing reads the keys while wasted, so the gunship flew on,
+		// climbing and turning on whatever was last held, until the respawn.
+		this.gunship?.setControls(NO_INPUT, false);
+		this.jet?.setControls(NO_JET_INPUT, false);
 		clearWanted();
 		setWasted(true);
 		writePlayerAction("Death");
@@ -815,6 +1143,8 @@ export class OrionThirdPersonController extends Script {
 
 	private respawn() {
 		this.drownTimer = 0;
+		if (this.gunship) this.leaveGunship(this.gunship);
+		if (this.jet) this.leaveJet(this.jet);
 		// Out of any car first: dying at the wheel otherwise put the player straight back in it.
 		const car = this.car;
 		if (car) {
@@ -861,7 +1191,7 @@ export class OrionThirdPersonController extends Script {
 		// Start outside the player's own capsule so the ray can't hit the player.
 		const start = this.rayStart.copy(this.cameraTarget).add(this.rayScratch.copy(this.rayDirection).mulScalar(CAMERA_RAY_START));
 		const end = this.desiredCameraPosition.copy(this.cameraTarget).add(this.rayScratch.copy(this.rayDirection).mulScalar(distance));
-		const hit = this.physics?.raycastFirst(start, end);
+		const hit = this.physics?.raycastFirst(start, end, { filterCallback: this.cameraSees });
 		if (!hit) return distance;
 
 		const blocked = Math.hypot(

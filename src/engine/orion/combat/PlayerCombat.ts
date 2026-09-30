@@ -133,6 +133,12 @@ export class PlayerCombat {
 	/** Only the world blocks shots; people and cars are found by the combat grid. */
 	private readonly worldOnly = (entity: Entity) => entity.name !== "player" && !entity.script?.has("orionVehicle") && entity.name !== "rocket";
 
+	/**
+	 * Inside an armoured airframe: whatever hits reaches the airframe (which has its own damage)
+	 * rather than the pilot.
+	 */
+	public shielded = false;
+
 	/** Called when the player's health runs out. */
 	public onDeath: (() => void) | null = null;
 	/** Called when the player is hurt, with the amount (for camera shake, flashes). */
@@ -487,6 +493,7 @@ export class PlayerCombat {
 	}
 
 	private hurt(event: DamageEvent) {
+		if (this.shielded) return;
 		this.sinceHurt = 0;
 		const killed = this.health.damage(event.amount);
 		this.onHurt?.(event.amount);

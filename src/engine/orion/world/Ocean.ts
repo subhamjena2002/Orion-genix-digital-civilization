@@ -5,8 +5,6 @@
  */
 export const ORION_OCEAN = {
 	level: -1.2,
-	/** Extends well past the camera's far clip so no edge is ever visible. */
-	size: 3000,
 	/** How far under the surface counts as submerged rather than wading. */
 	submergeDepth: 0.9,
 	/** Seconds underwater before the player drowns and respawns. */

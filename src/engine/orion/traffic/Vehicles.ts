@@ -3,7 +3,10 @@
  * primitives: everyday hatchbacks and sedans, SUVs, low luxury coupés, three-wheeler autos and
  * police SUVs.
  */
-export type VehicleStyle = "hatchback" | "sedan" | "suv" | "luxury" | "auto" | "police" | "truck" | "militaryWagon";
+export type VehicleStyle =
+	| "hatchback" | "sedan" | "suv" | "luxury" | "auto" | "police" | "truck" | "militaryWagon"
+	// The civic fleet (see VEHICLE_MODELS): public and service vehicles.
+	| "taxi" | "van" | "serviceTruck" | "towTruck" | "bus" | "schoolBus" | "garbageTruck" | "ambulance" | "fireTruck";
 
 export interface VehicleShape {
 	length: number;
@@ -31,6 +34,17 @@ export const VEHICLE_SHAPES: Readonly<Record<VehicleStyle, VehicleShape>> = {
 	truck: { length: 9.6, width: 2.1, bodyHeight: 1, clearance: 0.5, cabinLength: 2.2, cabinHeight: 1.2, cabinOffset: 3.4, wheelRadius: 0.44, maxSpeed: 8 },
 	// An army estate car: a civilian wagon body on a raised chassis and oversized tyres.
 	militaryWagon: { length: 4.8, width: 2, bodyHeight: 0.85, clearance: 0.32, cabinLength: 2.6, cabinHeight: 0.75, cabinOffset: -0.25, wheelRadius: 0.4, maxSpeed: 10.5 },
+	// The civic fleet, at real-world sizes. The heights set the collision box; the cabin numbers
+	// only matter for the fallback seat, as each model's own seat is measured (VehicleModels).
+	taxi: { length: 4.7, width: 1.8, bodyHeight: 0.68, clearance: 0.17, cabinLength: 2.3, cabinHeight: 0.6, cabinOffset: -0.15, wheelRadius: 0.32, maxSpeed: 11 },
+	van: { length: 5, width: 2, bodyHeight: 1.1, clearance: 0.2, cabinLength: 1.6, cabinHeight: 0.7, cabinOffset: 1.4, wheelRadius: 0.34, maxSpeed: 9.5 },
+	serviceTruck: { length: 5.5, width: 2, bodyHeight: 0.9, clearance: 0.3, cabinLength: 1.9, cabinHeight: 0.8, cabinOffset: 1.2, wheelRadius: 0.38, maxSpeed: 10 },
+	towTruck: { length: 6.5, width: 2.2, bodyHeight: 1, clearance: 0.35, cabinLength: 2, cabinHeight: 1.05, cabinOffset: 1.8, wheelRadius: 0.42, maxSpeed: 9 },
+	bus: { length: 11, width: 2.55, bodyHeight: 1.5, clearance: 0.3, cabinLength: 9.5, cabinHeight: 1.2, cabinOffset: 0, wheelRadius: 0.5, maxSpeed: 8 },
+	schoolBus: { length: 10, width: 2.45, bodyHeight: 1.4, clearance: 0.3, cabinLength: 8.4, cabinHeight: 1.2, cabinOffset: -0.4, wheelRadius: 0.48, maxSpeed: 8 },
+	garbageTruck: { length: 8.5, width: 2.5, bodyHeight: 1.6, clearance: 0.35, cabinLength: 2, cabinHeight: 1.25, cabinOffset: 3, wheelRadius: 0.5, maxSpeed: 7 },
+	ambulance: { length: 6.5, width: 2.2, bodyHeight: 1.3, clearance: 0.3, cabinLength: 1.8, cabinHeight: 1.1, cabinOffset: 2, wheelRadius: 0.4, maxSpeed: 11 },
+	fireTruck: { length: 9.5, width: 2.5, bodyHeight: 1.5, clearance: 0.35, cabinLength: 2.4, cabinHeight: 1.25, cabinOffset: 3.3, wheelRadius: 0.5, maxSpeed: 10 },
 };
 
 export interface VehicleSpawn {
@@ -61,8 +75,17 @@ const AUTO_COLOURS = ["#2e8b3d", "#1c1c1c", "#2e8b3d"];
  * style anyway would fall back to a primitive box body, which is worse than a repetitive street.
  */
 const FLEET: readonly [VehicleStyle, number][] = [
-	["truck", 9],
-	["militaryWagon", 9],
+	["truck", 6],
+	["militaryWagon", 6],
+	["taxi", 6],
+	["van", 3],
+	["serviceTruck", 2],
+	["towTruck", 2],
+	["bus", 3],
+	["schoolBus", 2],
+	["garbageTruck", 2],
+	// Ambulances wait outside the hospitals and fire trucks only turn out to fires: neither
+	// drives around in ordinary traffic (see Hospital and FireService).
 ];
 
 export const ORION_VEHICLES: readonly VehicleSpawn[] = FLEET.flatMap(([style, count]) => (

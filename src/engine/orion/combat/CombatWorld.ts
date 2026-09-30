@@ -38,6 +38,16 @@ export function damageablesNear(x: number, z: number, radius: number): readonly 
 	return grid.queryRadius(x, z, radius, scratch);
 }
 
+/**
+ * Damageables near the line from (x0, z0) to (x1, z1) — within `margin` of it — for anything
+ * looking along a sight line (a missile seeker). The array is reused; copy it to keep it.
+ */
+export function damageablesAlong(x0: number, z0: number, x1: number, z1: number, margin: number): readonly Listener[] {
+	return grid.querySegment(x0, z0, x1, z1, margin, segmentAlongScratch);
+}
+
+const segmentAlongScratch: Listener[] = [];
+
 export interface RayHit {
 	target: Listener;
 	distance: number;

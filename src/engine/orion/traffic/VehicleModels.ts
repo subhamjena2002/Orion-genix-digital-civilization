@@ -31,6 +31,11 @@ export interface VehicleModelSpec {
 	/** Extra material names to hide on this model, on top of HIDDEN_MATERIAL. */
 	hideMaterial?: RegExp;
 	/**
+	 * Materials to keep even though HIDDEN_MATERIAL would hide them: a livery drawn as "decals"
+	 * of plain words (TAXI, AMBULANCE) is paint, not a maker's mark.
+	 */
+	keepMaterial?: RegExp;
+	/**
 	 * Police models whose roof light bar shares a texture with every other lamp, so it can't be
 	 * found by material: the node is named instead, and cut into a left (red) and right (blue)
 	 * half that flash.
@@ -122,6 +127,169 @@ export const VEHICLE_MODELS: readonly VehicleModelSpec[] = [
 			// Read from the file's own metadata (Sketchfab download).
 			licence: "CC-BY-4.0",
 			source: "https://sketchfab.com/3d-models/phoenix-93-interceptor-low-poly-model-ac4a91cb1b184ebd82c598c1bc54ba3d",
+		},
+	},
+	// The civic fleet: ten generic service vehicles from one pack, split one per file (the pack's
+	// showroom layout dropped, geometry untouched). The author describes them as "completely
+	// trademark claim proof"; the liveries are generic words and numbers, no badges or marques.
+	{
+		// A yellow cab with a chequer band.
+		file: "civic-taxi.glb",
+		styles: ["taxi"],
+		length: 4.7,
+		keepPaint: true,
+		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
+		// Left-hand drive, behind the windscreen (glass tops out at 1.26 m).
+		seat: { forward: 0.37, lateral: 0.38, rootAboveRoad: 0.25, scale: 0.56 },
+		keepMaterial: /decal/i,
+		credit: {
+			author: "Comrade1280",
+			licence: "CC-BY-4.0",
+			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
+		},
+	},
+	{
+		// A postal van.
+		file: "civic-postal-van.glb",
+		styles: ["van"],
+		length: 5.0,
+		keepPaint: true,
+		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
+		// Right-hand drive, as a mail van is; cab glass from 0.45 to 1.69 m forward.
+		seat: { forward: 1.16, lateral: -0.42, rootAboveRoad: 0.4, scale: 0.76 },
+		keepMaterial: /decal/i,
+		credit: {
+			author: "Comrade1280",
+			licence: "CC-BY-4.0",
+			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
+		},
+	},
+	{
+		// A road-service utility truck.
+		file: "civic-road-service-truck.glb",
+		styles: ["serviceTruck"],
+		length: 5.5,
+		keepPaint: true,
+		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
+		// In the cab (glass from -0.1 to 1.43 m forward), up on the truck floor.
+		seat: { forward: 0.8, lateral: 0.45, rootAboveRoad: 0.75, scale: 0.72 },
+		keepMaterial: /decal/i,
+		credit: {
+			author: "Comrade1280",
+			licence: "CC-BY-4.0",
+			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
+		},
+	},
+	{
+		// A tow truck.
+		file: "civic-tow-truck.glb",
+		styles: ["towTruck"],
+		length: 6.5,
+		keepPaint: true,
+		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
+		// In the cab at the front (glass 1.55 to 3.36 m forward), roof about 2.45 m up.
+		seat: { forward: 2.73, lateral: 0.5, rootAboveRoad: 0.9, scale: 0.84 },
+		keepMaterial: /decal/i,
+		credit: {
+			author: "Comrade1280",
+			licence: "CC-BY-4.0",
+			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
+		},
+	},
+	{
+		// A city bus.
+		file: "civic-city-bus.glb",
+		styles: ["bus"],
+		length: 11,
+		keepPaint: true,
+		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
+		// Right behind the windscreen at the front, high above the road.
+		seat: { forward: 4.65, lateral: 0.75, rootAboveRoad: 1, scale: 1 },
+		keepMaterial: /decal/i,
+		credit: {
+			author: "Comrade1280",
+			licence: "CC-BY-4.0",
+			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
+		},
+	},
+	{
+		// A school bus.
+		file: "civic-school-bus.glb",
+		styles: ["schoolBus"],
+		length: 10,
+		keepPaint: true,
+		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
+		// Behind the bonnet, under the windscreen at 3.16 m forward.
+		seat: { forward: 2.73, lateral: 0.7, rootAboveRoad: 0.9, scale: 0.95 },
+		keepMaterial: /decal/i,
+		credit: {
+			author: "Comrade1280",
+			licence: "CC-BY-4.0",
+			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
+		},
+	},
+	{
+		// A refuse truck.
+		file: "civic-garbage-truck.glb",
+		styles: ["garbageTruck"],
+		length: 8.5,
+		keepPaint: true,
+		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
+		// In the high cab over the front axle (glass 2.83 to 4.13 m forward).
+		seat: { forward: 3.6, lateral: 0.55, rootAboveRoad: 1, scale: 0.79 },
+		keepMaterial: /decal/i,
+		credit: {
+			author: "Comrade1280",
+			licence: "CC-BY-4.0",
+			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
+		},
+	},
+	{
+		// An ambulance.
+		file: "civic-ambulance.glb",
+		styles: ["ambulance"],
+		length: 6.5,
+		keepPaint: true,
+		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
+		// In the cab at the front (windscreen at 2.36 m forward); the box behind is the patient compartment.
+		seat: { forward: 1.83, lateral: 0.45, rootAboveRoad: 0.55, scale: 0.81 },
+		keepMaterial: /decal/i,
+		credit: {
+			author: "Comrade1280",
+			licence: "CC-BY-4.0",
+			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
+		},
+	},
+	{
+		// A fire engine.
+		file: "civic-fire-truck.glb",
+		styles: ["fireTruck"],
+		length: 9.5,
+		keepPaint: true,
+		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
+		// High in the cab-over crew cab (glass 1.08 to 4.56 m forward, roof about 2.5 m up).
+		seat: { forward: 3.93, lateral: 0.6, rootAboveRoad: 1.1, scale: 0.79 },
+		keepMaterial: /decal/i,
+		credit: {
+			author: "Comrade1280",
+			licence: "CC-BY-4.0",
+			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
+		},
+	},
+	{
+		// A patrol sedan (a second police model beside the Phoenix).
+		file: "civic-police-sedan.glb",
+		styles: ["police"],
+		length: 4.9,
+		keepPaint: true,
+		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
+		// Left-hand drive; roof over the seat about 1.5 m up.
+		seat: { forward: 0.37, lateral: 0.4, rootAboveRoad: 0.25, scale: 0.68 },
+		keepMaterial: /decal/i,
+		credit: {
+			author: "Comrade1280",
+			licence: "CC-BY-4.0",
+			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
 		},
 	},
 	// Example — uncomment and edit once the file is in public/models/vehicles/:

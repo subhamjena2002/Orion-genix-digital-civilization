@@ -1,6 +1,8 @@
 "use client";
 
 import { usePlayerPose } from "@/components/world/usePlayerPose";
+import { JET_NAME } from "@/engine/orion/aircraft/JetModel";
+import { useFlightHud } from "./FlightHud";
 
 const KMH_PER_MS = 3.6;
 /** The dial's full sweep. */
@@ -12,6 +14,8 @@ const DIAL_MAX_KMH = 320;
  */
 export function DrivingHud({ touch }: Readonly<{ touch: boolean }>) {
 	const { inVehicle, vehicleSpeed, nearCar, vehicleIntegrity, vehicleBurning } = usePlayerPose(80);
+	const { flying, nearGunship, nearJet } = useFlightHud(120);
+	if (flying) return null;
 	const kmh = Math.round(vehicleSpeed * KMH_PER_MS);
 	const condition = Math.max(0, Math.round(vehicleIntegrity));
 
@@ -42,6 +46,16 @@ export function DrivingHud({ touch }: Readonly<{ touch: boolean }>) {
 				</div>
 			) : null}
 			{/* On a touch screen the controls themselves say all this (a "Take car" button appears). */}
+			{!touch && !inVehicle && nearGunship ? (
+				<div className="orion-control-hint orion-control-hint-prompt" role="status">
+					<HintKey keys={["F"]} label="Fly the gunship" />
+				</div>
+			) : null}
+			{!touch && !inVehicle && nearJet ? (
+				<div className="orion-control-hint orion-control-hint-prompt" role="status">
+					<HintKey keys={["F"]} label={`Fly the ${JET_NAME}`} />
+				</div>
+			) : null}
 			{!touch && !inVehicle && nearCar ? (
 				<div className="orion-control-hint orion-control-hint-prompt" role="status">
 					<HintKey keys={["F"]} label="Take car" />

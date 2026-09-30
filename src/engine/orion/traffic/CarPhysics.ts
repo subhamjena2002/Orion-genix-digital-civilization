@@ -110,6 +110,16 @@ const TUNING: Readonly<Record<VehicleStyle, StyleTuning>> = {
 	truck: { mass: 8500, power: 240_000, topSpeed: 34, grip: 0.82, drag: 0.95, cgHeight: 1.15, frontWeight: 0.45, frontDrive: 0 },
 	// An SUV's weight again on all-wheel drive, sitting high on its suspension.
 	militaryWagon: { mass: 2600, power: 205_000, topSpeed: 48, grip: 0.95, drag: 0.55, cgHeight: 0.78, frontWeight: 0.55, frontDrive: 0.5 },
+	taxi: { mass: 1450, power: 120_000, topSpeed: 52, grip: 1.0, drag: 0.4, cgHeight: 0.55, frontWeight: 0.56, frontDrive: 1 },
+	van: { mass: 2400, power: 130_000, topSpeed: 40, grip: 0.9, drag: 0.62, cgHeight: 0.85, frontWeight: 0.55, frontDrive: 0 },
+	serviceTruck: { mass: 2900, power: 185_000, topSpeed: 44, grip: 0.92, drag: 0.6, cgHeight: 0.85, frontWeight: 0.55, frontDrive: 0 },
+	towTruck: { mass: 5500, power: 220_000, topSpeed: 36, grip: 0.85, drag: 0.8, cgHeight: 1.0, frontWeight: 0.5, frontDrive: 0 },
+	// Buses and the refuse truck: heavy, slow off the line, long to stop, leaning in corners.
+	bus: { mass: 12_000, power: 250_000, topSpeed: 26, grip: 0.8, drag: 1.1, cgHeight: 1.2, frontWeight: 0.4, frontDrive: 0 },
+	schoolBus: { mass: 10_000, power: 220_000, topSpeed: 26, grip: 0.8, drag: 1.05, cgHeight: 1.15, frontWeight: 0.42, frontDrive: 0 },
+	garbageTruck: { mass: 14_000, power: 260_000, topSpeed: 24, grip: 0.8, drag: 1.1, cgHeight: 1.3, frontWeight: 0.45, frontDrive: 0 },
+	ambulance: { mass: 3800, power: 210_000, topSpeed: 46, grip: 0.92, drag: 0.7, cgHeight: 0.95, frontWeight: 0.5, frontDrive: 0 },
+	fireTruck: { mass: 16_000, power: 340_000, topSpeed: 32, grip: 0.85, drag: 1.0, cgHeight: 1.25, frontWeight: 0.45, frontDrive: 0 },
 };
 
 export function carSpecFor(style: VehicleStyle, length: number, width: number): CarSpec {

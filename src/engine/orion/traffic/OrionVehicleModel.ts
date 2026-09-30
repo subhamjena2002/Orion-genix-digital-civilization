@@ -786,8 +786,10 @@ function hideUnwanted(model: Entity, instances: MeshInstance[], spec: VehicleMod
 		}
 	});
 	const extra = spec?.hideMaterial;
+	const keep = spec?.keepMaterial;
 	for (const instance of instances) {
 		const name = instance.material?.name ?? "";
+		if (keep?.test(name)) continue;
 		if (HIDDEN_MATERIAL.test(name) || extra?.test(name)) hidden.add(instance);
 	}
 	for (const instance of hidden) instance.visible = false;
