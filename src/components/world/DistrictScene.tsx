@@ -5,24 +5,28 @@ import { Collision, Render, RigidBody } from "@playcanvas/react/components";
 import { useMaterial, useModel, useTexture } from "@playcanvas/react/hooks";
 import type { PropertyRecord } from "@/engine/orion/properties/Properties";
 import type { Entity as PlayCanvasEntity, Texture } from "playcanvas";
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { getBuildingDefinition, ORION_BUILDING_MAP, resolveBuildingScale, type BuildingPlacement, type YardProp } from "@/engine/orion/buildings/Buildings";
 import { useNearby } from "./useNearby";
+import { useParcelClicks } from "./useParcelClicks";
 import { getVisibleRoadSegments, ROAD_GEOMETRY } from "@/engine/orion/roads/RoadNetwork";
 import { ORION_MATERIALS } from "@/engine/orion/rendering/Materials";
 import { addSolidBody } from "@/engine/orion/rendering/ModelBounds";
 import { ORION_GROUND_TEXTURES } from "@/engine/orion/assets/AssetPaths";
-import { IntersectionShowcase, SHOWCASE_POSITION } from "./IntersectionShowcase";
 import { Ocean } from "./Ocean";
 import { Pedestrians } from "./Pedestrians";
+import { Airfield } from "./Airfield";
 import { Highways } from "./Highways";
+import { Hospitals } from "./Hospital";
+import { MilitaryBase } from "./MilitaryBase";
 import { Mountains } from "./Mountains";
 import { StateTerrain } from "./StateTerrain";
 import { StreetFurniture } from "./StreetFurniture";
-import { Vehicles } from "./Vehicles";
+import { FireEngines, Vehicles } from "./Vehicles";
 import { Police } from "./Police";
 import { Railway } from "./Railway";
 import { POLICE_STATION } from "@/engine/orion/police/Police";
+import { HOSPITAL_REPLACED_BUILDINGS } from "@/engine/orion/world/Hospitals";
 
 /** World-space size (units) that one tile of a ground PBR texture represents. */
 const ASPHALT_TEXTURE_UNIT = 3;
@@ -44,15 +48,19 @@ const GROUND_Y = -0.65;
 const BUILDING_RENDER_RADIUS = 170;
 /** A mounted building stays until it's this far away, so boundaries don't thrash. */
 const BUILDING_UNMOUNT_RADIUS = 215;
-const SHOWCASE_RENDER_RADIUS = 400;
-const SHOWCASE_UNMOUNT_RADIUS = 460;
-/** Culling re-evaluates on a timer; the scene only re-renders when the set actually changes. */
-const CULL_SAMPLE_MS = 400;
+/**
+ * Culling re-evaluates on a timer; the scene only re-renders when the set actually changes. Each
+ * sample admits a few new buildings at most (nearest first): a building arrives with its model and
+ * collider in one frame, and a dozen arriving together at speed made a visible hitch. Sampled
+ * often, the few-at-a-time still keeps ahead of the car (the set leans along the road at speed).
+ */
+const CULL_SAMPLE_MS = 150;
+const BUILDINGS_PER_SAMPLE = 3;
 
-const CULLABLE_BUILDINGS = ORION_BUILDING_MAP.filter((placement) => !POLICE_STATION.replacesBuildings.includes(placement.id));
+const CULLABLE_BUILDINGS = ORION_BUILDING_MAP.filter((placement) => (
+	!POLICE_STATION.replacesBuildings.includes(placement.id) && !HOSPITAL_REPLACED_BUILDINGS.includes(placement.id)
+));
 const buildingPosition = (placement: BuildingPlacement): readonly [number, number] => [placement.position[0], placement.position[2]];
-const SHOWCASE_ITEMS = [SHOWCASE_POSITION] as const;
-const showcasePosition = (position: typeof SHOWCASE_POSITION): readonly [number, number] => [position[0], position[2]];
 const STREET_TREES: readonly [number, number, number][] = [[-14, GROUND_Y, -10.5], [14, GROUND_Y, -10.5], [-14, GROUND_Y, 10.5], [14, GROUND_Y, 10.5]];
 
 /** Builds StandardMaterial props for a real PBR ground surface, falling back to flat color while it streams in. */
@@ -112,10 +120,8 @@ export function DistrictScene({ properties, onSelectProperty }: Readonly<Distric
 	const entrance = useMaterial({ diffuse: "#c6a16c", gloss: 0.3 });
 	const visibleRoads = getVisibleRoadSegments();
 
-	const nearbyBuildings = useNearby(CULLABLE_BUILDINGS, buildingPosition, BUILDING_RENDER_RADIUS, BUILDING_UNMOUNT_RADIUS, CULL_SAMPLE_MS);
-	// The showcase is a 109-mesh model; keep it out of the scene (and the shadow pass)
-	// entirely until the player is near it.
-	const showcaseVisible = useNearby(SHOWCASE_ITEMS, showcasePosition, SHOWCASE_RENDER_RADIUS, SHOWCASE_UNMOUNT_RADIUS, CULL_SAMPLE_MS).length > 0;
+	const nearbyBuildings = useNearby(CULLABLE_BUILDINGS, buildingPosition, BUILDING_RENDER_RADIUS, BUILDING_UNMOUNT_RADIUS, CULL_SAMPLE_MS, BUILDINGS_PER_SAMPLE);
+	useParcelClicks(properties, onSelectProperty);
 
 	return (
 		<>
@@ -139,13 +145,11 @@ export function DistrictScene({ properties, onSelectProperty }: Readonly<Distric
 			{properties.map((property) => (
 				<Parcel
 					key={property.id}
-					propertyId={property.id}
 					x={property.position[0]}
 					z={property.position[2]}
 					material={parcel}
 					line={property.id === "property-001" ? line : quietLine}
 					ready={property.id === "property-001"}
-					onSelect={onSelectProperty}
 				/>
 			))}
 
@@ -181,8 +185,11 @@ export function DistrictScene({ properties, onSelectProperty }: Readonly<Distric
 			<Pedestrians />
 			<Vehicles />
 			<Police />
+			<Hospitals />
+			<FireEngines />
+			<MilitaryBase asphaltDiffuse={asphaltDiffuse} asphaltNormal={asphaltNormal} />
+			<Airfield asphaltDiffuse={asphaltDiffuse} asphaltNormal={asphaltNormal} />
 
-			{showcaseVisible ? <IntersectionShowcase /> : null}
 		</>
 	);
 }
@@ -277,18 +284,16 @@ const RoadVisual = memo(function RoadVisual({ segment, asphaltDiffuse, asphaltNo
 const PARCEL_SIZE: [number, number, number] = [13, 0.22, 12];
 const PARCEL_HALF_EXTENTS: [number, number, number] = [PARCEL_SIZE[0] / 2, PARCEL_SIZE[1] / 2, PARCEL_SIZE[2] / 2];
 
-const Parcel = memo(function Parcel({ propertyId, x, z, material, line, ready, onSelect }: Readonly<{
-	propertyId: string;
+/** A property's plot. Clicking it selects the property (see useParcelClicks). */
+const Parcel = memo(function Parcel({ x, z, material, line, ready }: Readonly<{
 	x: number;
 	z: number;
 	material: ReturnType<typeof useMaterial>;
 	line: ReturnType<typeof useMaterial>;
 	ready: boolean;
-	onSelect: (propertyId: string) => void;
 }>) {
-	const select = useCallback(() => onSelect(propertyId), [onSelect, propertyId]);
 	return (
-		<Entity name="parcel" position={[x, GROUND_Y + PARCEL_SIZE[1] / 2, z]} onClick={select}>
+		<Entity name="parcel" position={[x, GROUND_Y + PARCEL_SIZE[1] / 2, z]}>
 			<Entity name="parcel-surface" scale={PARCEL_SIZE}>
 				<Render type="box" material={material} receiveShadows castShadows={false} />
 				{/* Primitive colliders ignore entity scale, so the size is always passed explicitly. */}

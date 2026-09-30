@@ -76,12 +76,12 @@ export function installRenderPipeline(app: AppBase, component: CameraComponent):
 	// Half resolution, blurred: the effect is soft by nature, and this quarters its cost.
 	frame.ssao.scale = SSAO.scale;
 	frame.ssao.blurEnabled = true;
-	// Keep the depth pre-pass whether or not ambient occlusion is on. Without it, the quality
-	// governor turning AO off (or back on) changed how every material is drawn, and the first
-	// switch each way recompiled the scene's shaders mid-game: a 1–1.5 s freeze, which made the
-	// governor think the game was slow and switch again. With it, switching compiles nothing;
-	// the cost is the pre-pass on the levels without AO, a small share of the frame.
-	frame.rendering.sceneDepthMap = true;
+	// Ambient occlusion needs a depth pre-pass: every opaque object drawn a second time, first.
+	// Measured, that pass was about 290 of 830 draw calls and 2.7 ms of GPU time a frame, whether
+	// AO was on or not (it was kept on so the governor could switch AO without recompiling every
+	// material's shaders). So adaptive quality, whose whole job is keeping the frame rate, runs
+	// without either; only pinned full quality (F4) has AO, and switching to it compiles once.
+	frame.rendering.sceneDepthMap = false;
 
 	const keyLight = () => (app.root.findByName(KEY_LIGHT_NAME) as Entity | null)?.light ?? null;
 	configureSunShadows(keyLight(), settings);
@@ -96,7 +96,9 @@ export function installRenderPipeline(app: AppBase, component: CameraComponent):
 		frame.rendering.samples = level.samples;
 		frame.rendering.sharpness = level.sharpness;
 		frame.bloom.intensity = level.bloom ? BLOOM_INTENSITY : 0;
-		frame.ssao.type = level.ssao ? SSAOTYPE_COMBINE : SSAOTYPE_NONE;
+		const ssao = level.ssao && !settings.adaptiveQuality;
+		frame.ssao.type = ssao ? SSAOTYPE_COMBINE : SSAOTYPE_NONE;
+		frame.rendering.sceneDepthMap = ssao;
 		frame.update();
 		const light = keyLight();
 		const resolution = Math.min(level.shadowResolution, settings.shadowAtlasSize);

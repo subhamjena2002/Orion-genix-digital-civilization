@@ -104,6 +104,26 @@ export const PursuitUnits = memo(function PursuitUnits() {
 	);
 });
 
+/** Fire engines: out of the world until something is burning (see OrionVehicle.updateFireSlot). */
+const FIRE_ENGINES = 2;
+const FIRE_FLEET: readonly VehicleSpawn[] = Array.from({ length: FIRE_ENGINES }, (_, index) => ({
+	id: `fire-engine-${index + 1}`,
+	style: "fireTruck",
+	colour: "#c81e1e",
+	seed: 5003 * (index + 1),
+	speedFactor: 1,
+}));
+
+/** The fire service: each engine answers one burning car at a time. */
+export const FireEngines = memo(function FireEngines() {
+	const materials = useVehicleMaterials();
+	return (
+		<>
+			{FIRE_FLEET.map((vehicle, index) => <VehicleVisual key={vehicle.id} vehicle={vehicle} materials={materials} fireSlot={index} />)}
+		</>
+	);
+});
+
 /** Where a parked car lives: x, z, heading (degrees about Y) and the ground height there. */
 export interface VehicleHome {
 	x: number;
@@ -122,7 +142,7 @@ export function ParkedVehicle({ vehicle, home }: Readonly<{ vehicle: VehicleSpaw
 	return <VehicleVisual vehicle={vehicle} materials={materials} home={home} />;
 }
 
-function VehicleVisual({ vehicle, materials, home, pursuitSlot = -1 }: Readonly<{ vehicle: VehicleSpawn; materials: VehicleMaterials; home?: VehicleHome; pursuitSlot?: number }>) {
+function VehicleVisual({ vehicle, materials, home, pursuitSlot = -1, fireSlot = -1 }: Readonly<{ vehicle: VehicleSpawn; materials: VehicleMaterials; home?: VehicleHome; pursuitSlot?: number; fireSlot?: number }>) {
 	const shape = VEHICLE_SHAPES[vehicle.style];
 	const halfHeight = carHalfHeight(vehicle.style);
 	const modelSpec = pickVehicleModel(vehicle.style, vehicle.seed);
@@ -154,6 +174,7 @@ function VehicleVisual({ vehicle, materials, home, pursuitSlot = -1 }: Readonly<
 				homeYaw={home?.yaw ?? 0}
 				homeGround={home?.ground ?? 0}
 				pursuitSlot={pursuitSlot}
+				fireSlot={fireSlot}
 				brakeOn={materials.brakeOn}
 				brakeOff={materials.brakeOff}
 				flashRedOn={materials.flashRed}

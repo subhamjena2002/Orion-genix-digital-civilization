@@ -7,6 +7,7 @@ import { selectTouchSlot } from "@/engine/orion/input/TouchInput";
 import { MAX_STARS, readWanted } from "@/engine/orion/police/Wanted";
 import { RESERVED_SLOTS } from "@/engine/orion/combat/WeaponData";
 import { usePlayerPose } from "@/components/world/usePlayerPose";
+import { useFlightHud } from "./FlightHud";
 
 const SLOT_KEYS = [1, 2, 3, 4, 5, 6, 7];
 
@@ -52,7 +53,9 @@ function useWanted(intervalMs: number): { stars: number; searching: boolean } {
 export function CombatHud() {
 	const combat = useCombatHud(60);
 	const wanted = useWanted(100);
-	const { inVehicle } = usePlayerPose(200);
+	const { inVehicle: inCar } = usePlayerPose(200);
+	const { flying } = useFlightHud(200);
+	const inVehicle = inCar || flying;
 	const health = Math.max(0, Math.round((combat.health / combat.maxHealth) * 100));
 	const usesAmmo = combat.magazineSize > 0;
 

@@ -74,8 +74,8 @@ export function blastAt(distance: number): { damage: number; push: number } {
  * few percent forever.
  */
 export const FIRE_DRAIN_PER_SECOND = 2.4;
-/** After exploding, the wreck burns along its whole length for this long... */
-export const WRECK_FIRE_SECONDS = 14;
+/** After exploding, the wreck burns along its whole length for this long (time for a fire engine to reach it)... */
+export const WRECK_FIRE_SECONDS = 45;
 /** ...then smoulders, thinning out over this long. */
 export const SMOULDER_SECONDS = 50;
 

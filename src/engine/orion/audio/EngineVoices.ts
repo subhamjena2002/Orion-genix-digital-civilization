@@ -163,6 +163,15 @@ export const ENGINE_VOICES: Readonly<Record<VehicleStyle, EngineVoice>> = {
 	sedan: ROAD_FOUR,
 	hatchback: ROAD_FOUR,
 	auto: AUTO_SINGLE,
+	taxi: ROAD_FOUR,
+	van: UTILITY_FOUR,
+	serviceTruck: UTILITY_FOUR,
+	ambulance: UTILITY_FOUR,
+	towTruck: DIESEL_SIX,
+	bus: DIESEL_SIX,
+	schoolBus: DIESEL_SIX,
+	garbageTruck: DIESEL_SIX,
+	fireTruck: DIESEL_SIX,
 };
 
 export interface EngineState {

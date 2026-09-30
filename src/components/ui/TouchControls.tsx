@@ -13,6 +13,7 @@ import {
 } from "@/engine/orion/input/TouchInput";
 import { readPlayerPose } from "@/engine/orion/player/PlayerPose";
 import { useCombatHud } from "./CombatHud";
+import { useFlightHud } from "./FlightHud";
 
 /** Inner share of the stick's travel that reads as centred, so a resting thumb doesn't creep. */
 const STICK_DEADZONE = 0.12;
@@ -57,6 +58,7 @@ function usePlayerStatus(intervalMs: number) {
 export function TouchControls() {
 	const { inVehicle, nearCar, burning } = usePlayerStatus(100);
 	const combat = useCombatHud(120);
+	const flight = useFlightHud(120);
 
 	useEffect(() => {
 		// A finger lifted while the page wasn't listening never sends its "up".
@@ -80,6 +82,8 @@ export function TouchControls() {
 		: usesAmmo
 			? { label: "Fire", icon: <CrosshairIcon /> }
 			: { label: "Swing", icon: <BladeIcon /> };
+
+	if (flight.flying) return <FlyingControls landed={flight.landed} weaponName={flight.weapon} jet={flight.aircraft === "jet"} />;
 
 	return (
 		<div className="orion-touch" data-mode={inVehicle ? "drive" : "foot"} onContextMenu={(event) => event.preventDefault()}>
@@ -134,6 +138,18 @@ export function TouchControls() {
 						<SwapIcon />
 						<span className="orion-touch-caption">{combat.weaponName}</span>
 					</TapButton>
+					{flight.nearGunship ? (
+						<TapButton label="Fly the gunship" className="orion-touch-enter is-urgent" onTap={() => pressTouch("interact")}>
+							<RotorIcon />
+							<span className="orion-touch-caption">Fly</span>
+						</TapButton>
+					) : null}
+					{flight.nearJet ? (
+						<TapButton label="Fly the jet" className="orion-touch-enter is-urgent" onTap={() => pressTouch("interact")}>
+							<JetIcon />
+							<span className="orion-touch-caption">Fly</span>
+						</TapButton>
+					) : null}
 					{nearCar ? (
 						<TapButton label="Take car" className="orion-touch-enter is-urgent" onTap={() => pressTouch("interact")}>
 							<CarIcon />
@@ -143,6 +159,63 @@ export function TouchControls() {
 				</div>
 			)}
 		</div>
+	);
+}
+
+/**
+ * Flying. Gunship: the stick flies (forward/back, and turns — banking into them at speed), climb
+ * and descend are held. Jet: the stick is the control column (up dives, down pulls up, sideways
+ * banks) and the two held buttons are thrust up and down (held down at idle, it brakes). Fire
+ * aims by dragging off it; the weapon button steps through the weapons. Getting out only once
+ * stopped on the ground.
+ */
+function FlyingControls({ landed, weaponName, jet }: Readonly<{ landed: boolean; weaponName: string; jet: boolean }>) {
+	return (
+		<div className="orion-touch" data-mode="fly" onContextMenu={(event) => event.preventDefault()}>
+			<Stick />
+			<div className="orion-touch-cluster">
+				<HoldButton button="fire" label="Fire" className="orion-touch-fire" lookDrag>
+					<CrosshairIcon />
+					<span className="orion-touch-caption">Fire</span>
+				</HoldButton>
+				<HoldButton button="climb" label={jet ? "More thrust" : "Climb"} className="orion-touch-climb">
+					<ArrowIcon />
+					<span className="orion-touch-caption">{jet ? "Faster" : "Up"}</span>
+				</HoldButton>
+				<HoldButton button="descend" label={jet ? "Less thrust; held at idle, brakes" : "Descend"} className="orion-touch-descend">
+					<ArrowIcon />
+					<span className="orion-touch-caption">{jet ? "Slower" : "Down"}</span>
+				</HoldButton>
+				<TapButton label={`Weapon: ${weaponName}. Tap for the next one`} className="orion-touch-weapon" onTap={() => cycleTouchWeapon(1)}>
+					<SwapIcon />
+					<span className="orion-touch-caption">{weaponName}</span>
+				</TapButton>
+				{landed ? (
+					<TapButton label="Get out" className="orion-touch-exit" onTap={() => pressTouch("interact")}>
+						<ExitIcon />
+						<span className="orion-touch-caption">Exit</span>
+					</TapButton>
+				) : null}
+			</div>
+		</div>
+	);
+}
+
+function RotorIcon() {
+	return (
+		<Icon>
+			<path d="M3 5h18M12 5v3" />
+			<path d="M5 13a3 3 0 0 1 3-3h7a4 4 0 0 1 4 4v1H8a3 3 0 0 1-3-2Z" />
+			<path d="M19 13h2.5M9 18h9M11 15v3M16 15v3" />
+		</Icon>
+	);
+}
+
+function JetIcon() {
+	return (
+		<Icon>
+			<path d="M12 2.5 13.4 8l6.6 5v1.8l-6.4-2.2-.6 4.9 2.4 1.9V21l-3.4-1-3.4 1v-1.6l2.4-1.9-.6-4.9L4 14.8V13l6.6-5Z" />
+		</Icon>
 	);
 }
 

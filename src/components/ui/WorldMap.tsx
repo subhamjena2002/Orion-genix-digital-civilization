@@ -8,6 +8,9 @@ import { RAIL_CROSSINGS, railPolyline } from "@/engine/orion/rail/RailLine";
 import { ORION_DISTRICTS } from "@/engine/orion/world/WorldModel";
 import { landBounds, landPath, ORION_LAND } from "@/engine/orion/world/StateOutline";
 import { POLICE_STATION } from "@/engine/orion/police/Police";
+import { HOSPITAL_REPLACED_BUILDINGS, HOSPITALS } from "@/engine/orion/world/Hospitals";
+import { AIRFIELD_FENCE, AIRFIELD_SURFACES, RUNWAY, SHELTER, SHELTERS } from "@/engine/orion/world/Airfield";
+import { ACCESS_ROAD, BASE, BASE_BOUNDS } from "@/engine/orion/world/MilitaryBase";
 import { usePlayerPose } from "@/components/world/usePlayerPose";
 import { policeMarkers, type PoliceMarker } from "@/engine/orion/traffic/OrionVehicle";
 import { HIGHWAY_MAP, mapRelief, type ReliefImage } from "./MapRelief";
@@ -220,7 +223,7 @@ export function WorldMap() {
 						/>
 					))}
 
-					{ORION_BUILDING_MAP.filter((placement) => !POLICE_STATION.replacesBuildings.includes(placement.id)).map((placement) => (
+					{ORION_BUILDING_MAP.filter((placement) => !POLICE_STATION.replacesBuildings.includes(placement.id) && !HOSPITAL_REPLACED_BUILDINGS.includes(placement.id)).map((placement) => (
 						<rect
 							key={placement.id}
 							x={placement.position[0] - placement.footprint[0] / 2}
@@ -229,6 +232,43 @@ export function WorldMap() {
 							height={placement.footprint[1]}
 							fill="rgba(215,183,122,0.5)"
 						/>
+					))}
+
+					{/* The army base: an olive compound with its access road and a star. */}
+					<line x1={ACCESS_ROAD.x} y1={ACCESS_ROAD.fromZ} x2={ACCESS_ROAD.x} y2={ACCESS_ROAD.toZ} stroke="rgba(255,255,255,0.3)" strokeWidth={Math.max(ACCESS_ROAD.width * 0.5, worldPerPixel)} />
+					<rect x={BASE_BOUNDS.minX} y={BASE_BOUNDS.minZ} width={BASE.size[0]} height={BASE.size[1]} fill="rgba(75,90,58,0.55)" stroke="#a7b07a" strokeWidth={px(1.2)} />
+					<g transform={`translate(${BASE.centre[0]} ${BASE.centre[1]})`}>
+						<circle r={px(6)} fill="#2f3a24" stroke="#e9dfb8" strokeWidth={px(1)} />
+						<path d={starPath(px(4.2))} fill="#e9dfb8" />
+					</g>
+
+					{/* The airfield: its wall, paving (runway darkest, with its centreline) and shelters. */}
+					{AIRFIELD_FENCE.map((run, index) => (
+						<polyline key={index} points={run.map(([x, z]) => `${x},${z}`).join(" ")} fill="none" stroke="#a7b07a" strokeWidth={px(1.2)} />
+					))}
+					{AIRFIELD_SURFACES.map((surface) => (
+						<rect
+							key={surface.id}
+							x={surface.x - surface.width / 2}
+							y={surface.z - surface.depth / 2}
+							width={surface.width}
+							height={surface.depth}
+							fill={surface.kind === "runway" ? "#3b3d40" : surface.kind === "shoulder" || surface.kind === "blastPad" ? "#6c6c6a" : "#8b8a84"}
+						/>
+					))}
+					<line x1={RUNWAY.x} y1={RUNWAY.northZ + 50} x2={RUNWAY.x} y2={RUNWAY.southZ - 50} stroke="#ecebe4" strokeWidth={Math.max(1.5, worldPerPixel)} strokeDasharray="30 20" />
+					{SHELTERS.map((shelter) => (
+						<rect key={shelter.id} x={shelter.backX} y={shelter.z - SHELTER.width / 2} width={SHELTER.depth} height={SHELTER.width} rx={SHELTER.width / 3} fill="#a39f8e" stroke="#6d6a63" strokeWidth={px(0.8)} />
+					))}
+
+					{/* Hospitals: white with a red cross. */}
+					{HOSPITALS.map((hospital) => (
+						<g key={hospital.id} transform={`translate(${hospital.position[0]} ${hospital.position[1]})`}>
+							<rect x={-hospital.footprint[0] / 2} y={-hospital.footprint[1] / 2} width={hospital.footprint[0]} height={hospital.footprint[1]} fill="#e9ecea" />
+							<circle r={px(6)} fill="#ffffff" stroke="#c81e1e" strokeWidth={px(1.2)} />
+							<rect x={-px(3.6)} y={-px(1.1)} width={px(7.2)} height={px(2.2)} fill="#c81e1e" />
+							<rect x={-px(1.1)} y={-px(3.6)} width={px(2.2)} height={px(7.2)} fill="#c81e1e" />
+						</g>
 					))}
 
 					<g transform={`translate(${POLICE_STATION.position[0]} ${POLICE_STATION.position[1]})`}>
@@ -341,4 +381,15 @@ export function WorldMap() {
 			</div>
 		</div>
 	);
+}
+
+/** A five-pointed star of radius `r` about the origin, as SVG path data. */
+function starPath(r: number): string {
+	const points: string[] = [];
+	for (let i = 0; i < 10; i++) {
+		const radius = i % 2 === 0 ? r : r * 0.42;
+		const angle = -Math.PI / 2 + (i * Math.PI) / 5;
+		points.push(`${(Math.cos(angle) * radius).toFixed(2)} ${(Math.sin(angle) * radius).toFixed(2)}`);
+	}
+	return `M ${points.join(" L ")} Z`;
 }

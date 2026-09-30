@@ -395,6 +395,43 @@ class CrashEffectLayer {
 		}
 	}
 
+	/**
+	 * A fire hose, for one frame: water thrown in an arc from the nozzle to land on the target,
+	 * breaking into spray on the way, and steam boiling up where it hits the fire.
+	 */
+	public waterJet(x: number, y: number, z: number, targetX: number, targetY: number, targetZ: number, trail: EmissionAccumulator, dt: number) {
+		const dx = targetX - x;
+		const dz = targetZ - z;
+		const reach = Math.hypot(dx, dz) || 1;
+		// A jet at about 20 m/s horizontally; the rise that lands it on the target after that time.
+		const time = reach / 20;
+		const vx = dx / time;
+		const vz = dz / time;
+		const vy = (targetY - y + 0.5 * GRAVITY * time * time) / time;
+		// A solid core of water, then a looser mist around it that fans out towards the end.
+		const drops = trail.take(220, dt);
+		for (let i = 0; i < drops; i++) {
+			const core = i % 3 !== 0;
+			const spread = core ? 0.03 : 0.1;
+			this.field.spawn({
+				kind: PARTICLE_KIND.smoke, x, y, z,
+				vx: vx * between(1 - spread, 1 + spread), vy: vy * between(0.96, 1.04), vz: vz * between(1 - spread, 1 + spread),
+				size: core ? between(0.1, 0.15) : between(0.14, 0.24), growth: core ? 2.2 : 4.5, life: time * between(0.95, 1.1),
+				intensity: core ? 0.95 : 0.55, tone: 0, drag: core ? 0.05 : 0.4, gravity: GRAVITY, floor: targetY - 0.2,
+				rotation: Math.random() * 6.28,
+			});
+		}
+		// Steam where it lands: pale, billowing, rising.
+		if (Math.random() < dt * 22) {
+			this.field.spawn({
+				kind: PARTICLE_KIND.smoke, x: targetX + between(-0.8, 0.8), y: targetY + 0.4, z: targetZ + between(-0.8, 0.8),
+				vx: between(-0.3, 0.3), vy: between(0.8, 1.6), vz: between(-0.3, 0.3),
+				size: between(0.3, 0.5), growth: 5, life: between(1.6, 2.6),
+				intensity: 0.55, tone: 0, drag: 0.8, buoyancy: 0.6, rotation: Math.random() * 6.28, spin: between(-0.6, 0.6),
+			});
+		}
+	}
+
 	/** Camera shake (metres of jitter) felt at a point from recent explosions. */
 	public cameraShake(x: number, y: number, z: number): number {
 		let shake = 0;

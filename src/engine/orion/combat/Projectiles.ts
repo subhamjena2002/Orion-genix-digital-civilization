@@ -32,6 +32,8 @@ interface Rocket {
 	age: number;
 	spec: RocketSpec | null;
 	source: DamageSourceRef | null;
+	/** A damageable the rocket passes through (the aircraft that fired it). */
+	ignoreId: number;
 	trail: EmissionAccumulator;
 }
 
@@ -43,16 +45,16 @@ export class Projectiles {
 	private readonly rockets: Rocket[] = [];
 	private readonly next = new Vec3();
 	private readonly ray: Ray = { ox: 0, oy: 0, oz: 0, dx: 0, dy: 0, dz: 1 };
-	private readonly ignore = (entity: Entity) => entity.name !== "player";
+	private readonly ignore = (entity: Entity) => entity.name !== "player" && entity.name !== "gunship";
 
-	public constructor(private readonly app: AppBase) {
+	public constructor(private readonly app: AppBase, poolSize = POOL_SIZE) {
 		const material = new StandardMaterial();
 		material.diffuse.set(0.16, 0.18, 0.14);
 		material.useMetalness = true;
 		material.metalness = 0.4;
 		material.gloss = 0.5;
 		material.update();
-		for (let i = 0; i < POOL_SIZE; i++) {
+		for (let i = 0; i < poolSize; i++) {
 			const entity = new Entity("rocket");
 			const body = new Entity("rocket-body");
 			body.addComponent("render", { type: "cylinder", material, castShadows: true });
@@ -67,18 +69,19 @@ export class Projectiles {
 			entity.addChild(nose);
 			entity.enabled = false;
 			app.root.addChild(entity);
-			this.rockets.push({ entity, active: false, position: new Vec3(), velocity: new Vec3(), age: 0, spec: null, source: null, trail: new EmissionAccumulator() });
+			this.rockets.push({ entity, active: false, position: new Vec3(), velocity: new Vec3(), age: 0, spec: null, source: null, ignoreId: -1, trail: new EmissionAccumulator() });
 		}
 	}
 
 	/** Launches from (x, y, z) along the unit direction. Returns false if every rocket is in flight. */
-	public fire(x: number, y: number, z: number, dx: number, dy: number, dz: number, spec: RocketSpec, source: DamageSourceRef | null): boolean {
+	public fire(x: number, y: number, z: number, dx: number, dy: number, dz: number, spec: RocketSpec, source: DamageSourceRef | null, ignoreId = -1): boolean {
 		const rocket = this.rockets.find((candidate) => !candidate.active);
 		if (!rocket) return false;
 		rocket.active = true;
 		rocket.age = 0;
 		rocket.spec = spec;
 		rocket.source = source;
+		rocket.ignoreId = ignoreId;
 		rocket.position.set(x, y, z);
 		rocket.velocity.set(dx * spec.speed, dy * spec.speed, dz * spec.speed);
 		rocket.trail.reset();
@@ -108,7 +111,7 @@ export class Projectiles {
 			let hitDistance = Infinity;
 			const wall = physics?.raycastFirst?.(rocket.position, this.next, { filterCallback: this.ignore });
 			if (wall) hitDistance = wall.point.distance(rocket.position);
-			const body = raycastDamageables(this.ray, Math.min(step, hitDistance), rocket.source?.id ?? -1);
+			const body = raycastDamageables(this.ray, Math.min(step, hitDistance), rocket.ignoreId >= 0 ? rocket.ignoreId : rocket.source?.id ?? -1);
 			if (body) hitDistance = body.distance;
 
 			if (hitDistance !== Infinity || rocket.age >= rocket.spec.lifetime || this.next.y < -5) {

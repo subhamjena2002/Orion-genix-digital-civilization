@@ -20,6 +20,9 @@ export interface TouchHeld {
 	/** Steering arrows, held. */
 	steerLeft: boolean;
 	steerRight: boolean;
+	/** Flying: collective up / down. */
+	climb: boolean;
+	descend: boolean;
 }
 
 export interface TouchEdges {
@@ -31,7 +34,7 @@ export interface TouchEdges {
 	slot: number | null;
 }
 
-export type TouchHoldButton = "fire" | "jump" | "gas" | "brake" | "handbrake" | "steerLeft" | "steerRight";
+export type TouchHoldButton = "fire" | "jump" | "gas" | "brake" | "handbrake" | "steerLeft" | "steerRight" | "climb" | "descend";
 
 /**
  * Degrees the camera turns for a drag across the screen's short side. Scaled to the screen,
@@ -39,7 +42,7 @@ export type TouchHoldButton = "fire" | "jump" | "gas" | "brake" | "handbrake" | 
  */
 const LOOK_DEGREES_PER_SCREEN = 150;
 
-const held: TouchHeld = { moveX: 0, moveY: 0, fire: false, jump: false, gas: false, brake: false, handbrake: false, steerLeft: false, steerRight: false };
+const held: TouchHeld = { moveX: 0, moveY: 0, fire: false, jump: false, gas: false, brake: false, handbrake: false, steerLeft: false, steerRight: false, climb: false, descend: false };
 const edges: TouchEdges = { fire: false, interact: false, reload: false, cycle: 0, slot: null };
 const taken: TouchEdges = { fire: false, interact: false, reload: false, cycle: 0, slot: null };
 const look = { x: 0, y: 0 };
@@ -115,4 +118,6 @@ export function releaseAllTouch(): void {
 	held.handbrake = false;
 	held.steerLeft = false;
 	held.steerRight = false;
+	held.climb = false;
+	held.descend = false;
 }

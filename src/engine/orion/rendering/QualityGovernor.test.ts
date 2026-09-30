@@ -102,10 +102,13 @@ describe("QUALITY_LEVELS", () => {
 		}
 	});
 
-	it("never renders below native resolution, so the picture stays sharp", () => {
-		for (const level of QUALITY_LEVELS) {
+	it("renders at native resolution at every level but the last-resort one", () => {
+		for (const level of QUALITY_LEVELS.slice(0, -1)) {
 			expect(level.renderScale).toBe(1);
 			expect(level.sharpness).toBe(0);
 		}
+		const rescue = QUALITY_LEVELS[QUALITY_LEVELS.length - 1];
+		expect(rescue.renderScale).toBeLessThan(1);
+		expect(rescue.renderScale).toBeGreaterThanOrEqual(0.75);
 	});
 });

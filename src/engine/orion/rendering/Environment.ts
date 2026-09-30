@@ -1,4 +1,4 @@
-import { FOG_EXP2, type Scene } from "playcanvas";
+import { Color, FOG_EXP2, type Scene } from "playcanvas";
 
 export type TimeOfDay = "day" | "night";
 
@@ -8,6 +8,12 @@ export interface EnvironmentProfile {
 	exposure: number;
 	fogColor: string;
 	fogDensity: number;
+	/**
+	 * Haze seen from high up (flying): thinner, and the blue-grey of distant sea rather than the
+	 * sky's horizon, so from the air the sea reads as sea and meets the sky at a visible horizon.
+	 */
+	highFogColor: string;
+	highFogDensity: number;
 	sunIntensity: number;
 	fillIntensity: number;
 	streetLightIntensity: number;
@@ -23,6 +29,8 @@ export const ORION_ENVIRONMENT_PROFILES: Readonly<Record<TimeOfDay, EnvironmentP
 		// At this density: ~10% at 120 m, ~20% at the 170 m building draw distance, ~50% at 300 m.
 		fogColor: "#a9b6b8",
 		fogDensity: 0.0028,
+		highFogColor: "#7f98a6",
+		highFogDensity: 0.0013,
 		sunIntensity: 1.05,
 		fillIntensity: 0.22,
 		streetLightIntensity: 0,
@@ -34,6 +42,8 @@ export const ORION_ENVIRONMENT_PROFILES: Readonly<Record<TimeOfDay, EnvironmentP
 		exposure: 0.65,
 		fogColor: "#182431",
 		fogDensity: 0.004,
+		highFogColor: "#111c27",
+		highFogDensity: 0.0019,
 		sunIntensity: 0.25,
 		fillIntensity: 0.18,
 		streetLightIntensity: 2,
@@ -52,4 +62,27 @@ export function applyEnvironmentFog(scene: Scene, profile: EnvironmentProfile): 
 	scene.fog.type = FOG_EXP2;
 	scene.fog.density = profile.fogDensity;
 	scene.fog.color.fromString(profile.fogColor);
+}
+
+/** Camera heights (m) over which the haze goes from its street-level to its high-altitude form. */
+const HAZE_LOW = 30;
+const HAZE_HIGH = 260;
+/** Each profile's two haze colours, parsed once. */
+const parsed = new WeakMap<EnvironmentProfile, { low: Color; high: Color }>();
+
+/**
+ * Haze for where the camera is, once a frame. At street level it's the profile's own (it hides
+ * the building draw distance); climbing, it thins and turns sea-blue. Only the density and colour
+ * change — both are shader constants, so nothing recompiles (the fog type is fixed at startup).
+ */
+export function updateAtmosphere(scene: Scene, profile: EnvironmentProfile, cameraHeight: number): void {
+	const t = Math.min(1, Math.max(0, (cameraHeight - HAZE_LOW) / (HAZE_HIGH - HAZE_LOW)));
+	const blend = t * t * (3 - 2 * t);
+	scene.fog.density = profile.fogDensity + (profile.highFogDensity - profile.fogDensity) * blend;
+	let colours = parsed.get(profile);
+	if (!colours) {
+		colours = { low: new Color().fromString(profile.fogColor), high: new Color().fromString(profile.highFogColor) };
+		parsed.set(profile, colours);
+	}
+	scene.fog.color.lerp(colours.low, colours.high, blend);
 }

@@ -6,6 +6,7 @@ import type { PropertyRecord } from "@/engine/orion/properties/Properties";
 import { CombatHud } from "./CombatHud";
 import { DrivingHud } from "./DrivingHud";
 import { DrowningOverlay } from "./DrowningOverlay";
+import { FlightHud } from "./FlightHud";
 import { LandscapeMode } from "./LandscapeMode";
 import { SelectionPanel } from "./SelectionPanel";
 import { TouchControls } from "./TouchControls";
@@ -75,6 +76,7 @@ export function OrionHUD({
 
 				<DrivingHud touch={touch} />
 				<CombatHud />
+				<FlightHud touch={touch} />
 				{touch ? <LandscapeMode /> : null}
 			</div>
 		</div>

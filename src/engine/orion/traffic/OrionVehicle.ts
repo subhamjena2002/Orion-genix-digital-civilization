@@ -15,6 +15,7 @@ import { CarjackRig, drivableCars, registerDrivableCar, unregisterDrivableCar } 
 import { BURNT_PAINT, getCarMeshes } from "./CarMeshes";
 import { CarPhysics, carSpecFor, type CarControls } from "./CarPhysics";
 import { crashEffects, type DamageSource } from "./CrashEffects";
+import { EmissionAccumulator } from "../effects/ParticleField";
 import {
 	BLAST_RADIUS,
 	BURN_SECONDS,
@@ -26,6 +27,7 @@ import {
 	damageEffect,
 	PEDESTRIAN_DAMAGE,
 	powerFactor,
+	WRECK_FIRE_SECONDS,
 	type VehicleCondition,
 } from "./VehicleDamage";
 import { skidMarks } from "./SkidMarks";
@@ -115,6 +117,10 @@ const GROUND_PROBE_UP = 3;
 const GROUND_PROBE_DOWN = 150;
 /** The ground dropping away by more than this at once is a fall, not a slope to follow. */
 const FALL_STEP = 0.6;
+/** A parked or wrecked car this still, for this long, rests (see OrionVehicle.resting). */
+const REST_SPEED = 0.02;
+const REST_YAW_RATE = 0.01;
+const REST_AFTER = 0.5;
 const GRAVITY = 9.81;
 /** Steepest a car will lie along the ground, radians (about 35°). */
 const MAX_TILT = 0.6;
@@ -194,7 +200,7 @@ type Phase = "leg" | "turn";
  * Who is driving: the traffic AI, nobody (stopped for a carjack), the player, or nobody
  * (left parked where the player got out).
  */
-export type VehicleDriver = "ai" | "held" | "player" | "parked" | "wrecked" | "police";
+export type VehicleDriver = "ai" | "held" | "player" | "parked" | "wrecked" | "police" | "fire";
 
 /** Body outline points (fractions of half-width, half-length) swept for collisions. */
 const SWEEP_POINTS: readonly [number, number][] = [
@@ -264,6 +270,14 @@ export class OrionVehicle extends Script {
 	};
 	private physics: CarPhysics | null = null;
 	private manual = false;
+	/**
+	 * Parked or wrecked, and settled: nothing is stepped until something moves it. A dozen parked
+	 * cars (the base's, the airfield's, the hospital's) were each running their physics and five
+	 * ground raycasts every frame to stay exactly where they were: a couple of milliseconds a
+	 * frame for nothing. A knock (receiveImpact gives it velocity) or a new driver wakes it.
+	 */
+	private resting = false;
+	private stillFor = 0;
 	private readonly controls: CarControls = { drive: 0, steer: 0, handbrake: false, brake: 0 };
 	private ignoreStalledSeconds = 0;
 	private stalledBlockSeconds = 0;
@@ -319,7 +333,18 @@ export class OrionVehicle extends Script {
 	 * car. A unit waits out of the world until the wanted level calls for it.
 	 */
 	public pursuitSlot = -1;
+	/**
+	 * Fire engine number, or -1. An engine waits out of the world until something is burning,
+	 * then drives to it and puts it out (see updateFireSlot).
+	 */
+	public fireSlot = -1;
 	private stowed = false;
+	/** The burning car this engine is going to, and what it's doing about it. */
+	private fireTarget: OrionVehicle | null = null;
+	private fireDuty: "responding" | "hosing" | "leaving" = "responding";
+	private hoseSeconds = 0;
+	private dutySeconds = 0;
+	private readonly hoseTrail = new EmissionAccumulator();
 
 	/** Share of crash damage this car takes: a unit on a chase shrugs most of it off. */
 	public get crashResistance(): number {
@@ -334,6 +359,28 @@ export class OrionVehicle extends Script {
 	/** False for a police unit waiting out of the world (it can't be seen, entered or hit). */
 	public get inWorld(): boolean {
 		return !this.stowed;
+	}
+
+	/** Flames showing: a car burning down to going up, or a wreck still alight. */
+	public get onFire(): boolean {
+		if (this.stowed) return false;
+		if (this.burnedOut) return this.burnedFor < WRECK_FIRE_SECONDS;
+		return this.integrity < BURNING_BELOW;
+	}
+
+	/**
+	 * Put out by a fire crew: a burning car stops burning (smoking, badly damaged, but it won't
+	 * go up); a burning wreck goes straight to smouldering.
+	 */
+	public extinguish() {
+		if (this.burnedOut) {
+			this.burnedFor = Math.max(this.burnedFor, WRECK_FIRE_SECONDS);
+			return;
+		}
+		if (this.integrity < BURNING_BELOW) {
+			this.integrity = BURNING_BELOW + 2;
+			this.burnTimer = 0;
+		}
 	}
 	private dispatchTimer = 0;
 	/** Route: the junction being driven to, and the step that led to it. */
@@ -394,7 +441,7 @@ export class OrionVehicle extends Script {
 		this.random = mulberry32(this.seed);
 		this.laneIndex = this.random() < 0.5 ? 0 : 1;
 		this.agent = registerTrafficAgent("vehicle", this.halfLength);
-		if (this.pursuitSlot >= 0) this.stow();
+		if (this.pursuitSlot >= 0 || this.fireSlot >= 0) this.stow();
 		else if (this.hasHome) this.parkAtHome();
 		else this.respawnNearPlayer(0);
 		registerDrivableCar(this);
@@ -413,6 +460,7 @@ export class OrionVehicle extends Script {
 		this.sinceCrashSound += dt;
 		const player = readPlayerPose();
 		if (this.pursuitSlot >= 0 && this.updatePursuitSlot(dt)) return;
+		if (this.fireSlot >= 0 && this.updateFireSlot(dt)) return;
 		const position = this.entity.getPosition();
 		this.syncTarget(position.y);
 		const playerDistance = Math.hypot(position.x - player.x, position.z - player.z);
@@ -425,7 +473,7 @@ export class OrionVehicle extends Script {
 		// Anything but the car the player is in: that includes a car held for a carjack the
 		// player walked away from, which would otherwise sit there for good.
 		// Pursuit units come and go by the wanted level (updatePursuitSlot), never into traffic.
-		const recyclable = this.driver !== "player" && this.pursuitSlot < 0;
+		const recyclable = this.driver !== "player" && this.pursuitSlot < 0 && this.fireSlot < 0;
 		const outOfPlay = playerDistance > RECYCLE_HARD_LIMIT
 			|| (playerDistance > RECYCLE_DISTANCE && !inCameraView(position.x, position.z, VISIBLE_RANGE));
 		if (recyclable && outOfPlay && this.hasHome) {
@@ -605,7 +653,8 @@ export class OrionVehicle extends Script {
 		this.playerHarmedAt = -Infinity;
 		this.crew = [];
 		this.dispatchTimer = 0;
-		if (this.pursuitSlot >= 0) {
+		if (this.pursuitSlot >= 0 || this.fireSlot >= 0) {
+			this.releaseFire();
 			this.stow();
 			return;
 		}
@@ -696,17 +745,33 @@ export class OrionVehicle extends Script {
 			car.reset(position.x, position.z, this.headingDegrees / DEGREES, this.speed);
 			this.rideY = this.rideHeight;
 			this.manual = true;
+			this.resting = false;
+			this.stillFor = 0;
 		}
 		return car;
 	}
 
 	private updateManual(dt: number) {
 		const car = this.beginManual();
+		const idle = this.driver === "parked" || this.driver === "wrecked";
+		if (this.resting) {
+			const nudged = Math.abs(car.velocityX) + Math.abs(car.velocityZ) + Math.abs(car.yawRate) > 1e-4;
+			if (idle && !nudged) {
+				// React can re-apply the spawn position between frames: put it back where it rests.
+				const at = this.entity.getPosition();
+				if (Math.abs(at.x - car.x) > 1e-3 || Math.abs(at.z - car.z) > 1e-3 || Math.abs(at.y - this.rideY) > 1e-3) this.placeEntity(car);
+				return;
+			}
+			this.resting = false;
+			this.stillFor = 0;
+		}
 		const controls = this.controls;
 		if (this.driver === "player") {
 			controls.brake = 0;
 		} else if (this.driver === "police") {
 			this.pursue(dt, car);
+		} else if (this.driver === "fire") {
+			this.respondToFire(dt, car);
 			controls.brake = 0;
 		} else {
 			controls.drive = 0;
@@ -771,7 +836,25 @@ export class OrionVehicle extends Script {
 		// the car metres under the slope, where it lost sight of it and drove on inside the hill.
 		this.rideY = Math.max(this.rideY, rest - 0.05);
 		const y = this.rideY;
-		this.entity.setPosition(car.x, y, car.z);
+		this.placeEntity(car);
+		// Settled for a moment with nothing moving it: stop stepping it (see `resting`).
+		const settled = idle && car.speed < REST_SPEED && Math.abs(car.yawRate) < REST_YAW_RATE && this.fallSpeed === 0 && this.impact === 0
+			&& Math.abs(this.rideY - rest) < 0.005 && Math.abs(pitch - this.pitch) < 1e-3 && Math.abs(roll - this.roll) < 1e-3;
+		this.stillFor = settled ? this.stillFor + dt : 0;
+		if (this.stillFor > REST_AFTER) {
+			this.resting = true;
+			car.velocityX = 0;
+			car.velocityZ = 0;
+			car.yawRate = 0;
+		}
+		this.speed = car.forwardSpeed;
+		this.layRubber(car, y - this.halfHeight);
+		this.updateAgentAndLights(dt, car);
+	}
+
+	/** The entity at the car's pose: position, heading, and the tilt of the ground under it. */
+	private placeEntity(car: CarPhysics) {
+		this.entity.setPosition(car.x, this.rideY, car.z);
 		if (Math.abs(this.pitch) < 1e-3 && Math.abs(this.roll) < 1e-3) {
 			this.entity.setEulerAngles(0, this.headingDegrees, 0);
 		} else {
@@ -782,9 +865,10 @@ export class OrionVehicle extends Script {
 			tiltRoll.setFromAxisAngle(Vec3.BACK, (this.roll * 180) / Math.PI);
 			this.entity.setRotation(tiltYaw.mul(tiltPitch).mul(tiltRoll));
 		}
-		this.speed = car.forwardSpeed;
-		this.layRubber(car, y - this.halfHeight);
+	}
 
+	private updateAgentAndLights(dt: number, car: CarPhysics) {
+		const controls = this.controls;
 		if (this.agent) {
 			this.agent.x = car.x;
 			this.agent.z = car.z;
@@ -1137,6 +1221,181 @@ export class OrionVehicle extends Script {
 		for (const child of this.entity.children) (child as Entity).enabled = visible;
 		if (this.entity.collision) this.entity.collision.enabled = visible;
 		if (this.entity.rigidbody) this.entity.rigidbody.enabled = visible;
+	}
+
+	/**
+	 * Fire engines, every frame. Returns true while the engine is out of the world.
+	 *
+	 * An engine is sent when something burns within reach of the player (it'd burn out unseen
+	 * otherwise): from out of sight, a block or two away from the fire, to drive in by road.
+	 * Once the fire is out it drives off and is taken away again when nobody can see it.
+	 */
+	private updateFireSlot(dt: number): boolean {
+		if (this.stowed) {
+			const fire = pickFire(this);
+			if (fire) this.dispatchToFire(fire);
+			return this.stowed;
+		}
+		if (this.driver === "player" || this.driver === "held") {
+			// Taken by the player: the job's off.
+			this.releaseFire();
+			return false;
+		}
+		this.dutySeconds += dt;
+		const position = this.entity.getPosition();
+		const player = readPlayerPose();
+		const distance = Math.hypot(position.x - player.x, position.z - player.z);
+		const unseen = !inCameraView(position.x, position.z, VISIBLE_RANGE) || distance > RECYCLE_HARD_LIMIT;
+		// Done (or given up: wrecked, or far too long on the way), out of sight: back to the station.
+		const finished = this.fireDuty === "leaving" || this.driver === "wrecked" || this.driver === "parked" || this.dutySeconds > FIRE_GIVE_UP_SECONDS;
+		if (finished && unseen && distance > 60) {
+			this.releaseFire();
+			this.stow();
+			return true;
+		}
+		return false;
+	}
+
+	private dispatchToFire(fire: OrionVehicle) {
+		claimedFires.set(fire, this);
+		this.fireTarget = fire;
+		this.fireDuty = "responding";
+		this.hoseSeconds = 0;
+		this.dutySeconds = 0;
+		this.stowed = false;
+		this.repair();
+		this.carjack.reset();
+		this.setStowedVisible(true);
+		this.manual = false;
+		const at = fire.entity.getPosition();
+		this.respawnNearPlayer(FIRE_DISPATCH_MIN, { x: at.x, z: at.z });
+		this.driver = "fire";
+		const car = this.beginManual();
+		// Out of sight, so it can be turned to face the fire.
+		const towards = Math.sin(car.heading) * (at.x - car.x) + Math.cos(car.heading) * (at.z - car.z) >= 0;
+		car.reset(car.x, car.z, towards ? car.heading : car.heading + Math.PI, 8);
+		// Start the route at the junction ahead on this road. Left to pick the nearest junction as
+		// the crow flies, it could be one across a block — and a nine-metre engine went straight
+		// for it, off the road and into the buildings.
+		if (towards) {
+			this.routeX = this.xIndex + this.dx;
+			this.routeZ = this.zIndex + this.dz;
+			this.routeDx = this.dx;
+			this.routeDz = this.dz;
+		} else {
+			this.routeX = this.xIndex;
+			this.routeZ = this.zIndex;
+			this.routeDx = -this.dx;
+			this.routeDz = -this.dz;
+		}
+		this.stuckSeconds = 0;
+		this.reverseSeconds = 0;
+	}
+
+	private releaseFire() {
+		if (this.fireTarget && claimedFires.get(this.fireTarget) === this) claimedFires.delete(this.fireTarget);
+		this.fireTarget = null;
+	}
+
+	/** An engine out on a call (for the map and the sirens). */
+	public get onCall(): boolean {
+		return this.fireSlot >= 0 && !this.stowed && this.driver === "fire" && this.fireDuty !== "leaving";
+	}
+
+	/**
+	 * The engine's crew at work: by road to the fire, pulling up a hose-length short of it, a
+	 * jet of water from the roof monitor until it's out, then away.
+	 */
+	private respondToFire(dt: number, car: CarPhysics) {
+		const controls = this.controls;
+		if (this.integrity <= 0 || this.burnedOut) {
+			this.driver = "wrecked";
+			controls.drive = 0;
+			controls.steer = 0;
+			this.releaseFire();
+			return;
+		}
+		const fire = this.fireTarget;
+		if (this.fireDuty !== "leaving" && (!fire || !fire.onFire)) {
+			// Out (or gone) before the crew got there: nothing to do but leave.
+			this.fireDuty = "leaving";
+			this.releaseFire();
+			this.routeX = -1;
+		}
+		if (this.fireDuty === "leaving" || !fire) {
+			// On along the road, away from the scene, until out of sight (updateFireSlot stows it).
+			const [aimX, aimZ, speed] = this.routeToward(car.x, car.z, car.heading, car.x + Math.sin(car.heading) * 400, car.z + Math.cos(car.heading) * 400);
+			const [x, z, wanted] = this.avoidAhead(car, aimX, aimZ, speed * FIRE_CRUISE_SHARE, null);
+			const drive = steerToward(car.x, car.z, car.heading, car.forwardSpeed, x, z, wanted);
+			controls.drive = drive.drive;
+			controls.steer = drive.steer;
+			controls.handbrake = false;
+			return;
+		}
+		const at = fire.entity.getPosition();
+		const distance = Math.hypot(at.x - car.x, at.z - car.z);
+
+		if (this.reverseSeconds > 0) {
+			this.reverseSeconds -= dt;
+			controls.drive = -1;
+			controls.steer = this.reverseSteer;
+			controls.handbrake = false;
+			return;
+		}
+
+		if (this.fireDuty === "hosing" || (distance < HOSE_RANGE && car.speed < 1.2)) {
+			// Parked up: hold still and play the water on it.
+			this.fireDuty = "hosing";
+			controls.drive = 0;
+			controls.steer = 0;
+			controls.handbrake = true;
+			this.hoseSeconds += dt;
+			const sin = Math.sin(car.heading);
+			const cos = Math.cos(car.heading);
+			// The monitor on the roof, over the cab.
+			const nozzleX = car.x + sin * this.halfLength * 0.55;
+			const nozzleZ = car.z + cos * this.halfLength * 0.55;
+			const nozzleY = this.rideY + this.halfHeight + 0.4;
+			if (distanceFromCamera(car.x, car.z) < EFFECT_DISTANCE * 1.5) {
+				crashEffects(this.app).waterJet(nozzleX, nozzleY, nozzleZ, at.x, at.y, at.z, this.hoseTrail, dt);
+			}
+			if (this.hoseSeconds >= HOSE_SECONDS) {
+				fire.extinguish();
+				this.fireDuty = "leaving";
+				this.releaseFire();
+				this.routeX = -1;
+			}
+			return;
+		}
+
+		// On the way: by road to the fire's block, then straight in, stopping a hose-length short.
+		let aimX: number;
+		let aimZ: number;
+		let wanted: number;
+		if (distance < FIRE_DIRECT_RANGE) {
+			const awayX = (car.x - at.x) / Math.max(distance, 0.01);
+			const awayZ = (car.z - at.z) / Math.max(distance, 0.01);
+			aimX = at.x + awayX * FIRE_STANDOFF;
+			aimZ = at.z + awayZ * FIRE_STANDOFF;
+			const toStop = Math.hypot(aimX - car.x, aimZ - car.z);
+			wanted = Math.min(FIRE_CRUISE, Math.sqrt(2 * PURSUIT_BRAKING * Math.max(0, toStop - 1)));
+			if (toStop < 2) wanted = 0;
+		} else {
+			[aimX, aimZ, wanted] = this.routeToward(car.x, car.z, car.heading, at.x, at.z);
+			wanted = Math.min(wanted, FIRE_CRUISE);
+		}
+		[aimX, aimZ, wanted] = this.avoidAhead(car, aimX, aimZ, wanted, null);
+		const drive = steerToward(car.x, car.z, car.heading, car.forwardSpeed, aimX, aimZ, wanted);
+		controls.drive = drive.drive;
+		controls.steer = drive.steer;
+		controls.handbrake = drive.handbrake;
+		if (controls.drive > 0.5 && car.speed < 1.5) this.stuckSeconds += dt;
+		else this.stuckSeconds = 0;
+		if (this.stuckSeconds > STUCK_SECONDS) {
+			this.stuckSeconds = 0;
+			this.reverseSeconds = REVERSE_SECONDS;
+			this.reverseSteer = drive.steer >= 0 ? -1 : 1;
+		}
 	}
 
 	/**
@@ -1633,8 +1892,8 @@ export class OrionVehicle extends Script {
 		return lanes[Math.min(this.laneIndex, lanes.length - 1)];
 	}
 
-	private respawnNearPlayer(minDistance: number) {
-		const player = readPlayerPose();
+	private respawnNearPlayer(minDistance: number, around: { x: number; z: number } = readPlayerPose()) {
+		const player = around;
 		// Score candidates and keep the best: hidden and uncrowded beats everything, and when
 		// nothing qualifies the car at least goes wherever it's least noticeable.
 		let best: { xIndex: number; zIndex: number; dx: number; dz: number; distance: number; score: number } | null = null;
@@ -1761,6 +2020,70 @@ function mulberry32(seed: number) {
 
 /** When the last police unit was sent out, so they come a few seconds apart. */
 let lastPursuitDispatch = -Infinity;
+
+// Fire service (cars with a fireSlot: see updateFireSlot).
+/** Seconds a fire has to have been burning before an engine is sent (a flare-up isn't a call-out). */
+const FIRE_CALL_DELAY = 2;
+/** Fires further than this from the player are left to burn out. */
+const FIRE_RESPONSE_RANGE = 260;
+/** Engines are brought in at least this far from the fire, out of sight, and drive the rest. */
+const FIRE_DISPATCH_MIN = 90;
+/** Within this, off the road and straight at the fire. */
+const FIRE_DIRECT_RANGE = 45;
+/** Pulls up this far short of the fire: close enough to reach it, clear of a blast. */
+const FIRE_STANDOFF = 11;
+/** Stopped within this of the fire, the crew starts hosing. */
+const HOSE_RANGE = 16;
+/** Seconds of water it takes to put a car fire out. */
+const HOSE_SECONDS = 5;
+/** Top speed on a call (m/s), and the share of it when driving off afterwards. */
+const FIRE_CRUISE = 17;
+const FIRE_CRUISE_SHARE = 0.55;
+/** An engine that hasn't finished in this long (stuck, blocked) is taken off the job. */
+const FIRE_GIVE_UP_SECONDS = 150;
+/** Each burning car is answered by one engine. */
+const claimedFires = new Map<OrionVehicle, OrionVehicle>();
+/** When each fire was first noticed (for FIRE_CALL_DELAY). */
+const fireNoticed = new Map<OrionVehicle, number>();
+
+/** The nearest fire to the player that needs an engine and hasn't got one, or null. */
+function pickFire(engine: OrionVehicle): OrionVehicle | null {
+	const now = performance.now() / 1000;
+	const player = readPlayerPose();
+	let best: OrionVehicle | null = null;
+	let bestDistance = FIRE_RESPONSE_RANGE;
+	for (const car of drivableCars()) {
+		if (!car.onFire) {
+			fireNoticed.delete(car);
+			continue;
+		}
+		if (car === engine || car.fireSlot >= 0 || claimedFires.has(car)) continue;
+		if (!fireNoticed.has(car)) fireNoticed.set(car, now);
+		if (now - fireNoticed.get(car)! < FIRE_CALL_DELAY) continue;
+		const position = car.entity.getPosition();
+		const distance = Math.hypot(position.x - player.x, position.z - player.z);
+		if (distance < bestDistance) {
+			bestDistance = distance;
+			best = car;
+		}
+	}
+	return best;
+}
+
+/** Positions of fire engines on a call, for the map. Returns how many were written. */
+export function fireEngineMarkers(out: { x: number; z: number }[]): number {
+	let count = 0;
+	for (const car of drivableCars()) {
+		if (!car.onCall) continue;
+		const position = car.entity.getPosition();
+		if (out.length <= count) out.push({ x: 0, z: 0 });
+		out[count].x = position.x;
+		out[count].z = position.z;
+		count++;
+	}
+	return count;
+}
+
 
 const tiltYaw = new Quat();
 const tiltPitch = new Quat();
