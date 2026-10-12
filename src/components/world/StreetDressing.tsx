@@ -21,7 +21,7 @@ import { makeCanvas, normalsFromHeight, rgb, seededRandom, textureFromCanvas, te
 import { ORION_ACTIVE_TIME_OF_DAY } from "@/engine/orion/rendering/Environment";
 import { estateDressing } from "@/engine/orion/world/Estates";
 import { LAND_Y } from "@/engine/orion/world/Mountains";
-import { buildDressingChunks, parkGroves, streetDressing } from "@/engine/orion/world/StreetDressing";
+import { buildDressingChunks, dressingCollider, parkGroves, streetDressing } from "@/engine/orion/world/StreetDressing";
 import { ORION_PARCELS } from "@/engine/orion/world/WorldModel";
 import type { MeshData } from "@/engine/orion/world/MeshData";
 
@@ -188,7 +188,8 @@ export const StreetDressing = memo(function StreetDressing() {
 		const phone = window.matchMedia?.("(pointer: coarse)").matches ?? false;
 		// The city's kerbs and the estates' streets and gardens, merged chunk by chunk together.
 		const parks = ORION_PARCELS.filter((parcel) => parcel.zoning === "park");
-		const chunks = buildDressingChunks([...streetDressing(phone ? PHONE_SPACING : undefined), ...estateDressing(), ...parkGroves(parks, LAND_Y)]);
+		const items = [...streetDressing(phone ? PHONE_SPACING : undefined), ...estateDressing(), ...parkGroves(parks, LAND_Y)];
+		const chunks = buildDressingChunks(items);
 		const materials = makeMaterials(device);
 		const meshes: Mesh[] = [];
 		const holder = new PlayCanvasEntity("street-dressing-geometry");
@@ -210,6 +211,19 @@ export const StreetDressing = memo(function StreetDressing() {
 			entity.addComponent("render", { meshInstances: instances, castShadows: true, receiveShadows: true });
 			holder.addChild(entity);
 		}
+		// Trunks and lamp posts are solid: a car that leaves the road stops against one instead of
+		// driving through. One static mesh body for all of them (see dressingCollider).
+		const collider = dressingCollider(items);
+		const colliderMesh = new Mesh(device);
+		colliderMesh.setPositions(collider.positions);
+		colliderMesh.setIndices(collider.positions.length / 3 > 65535 ? new Uint32Array(collider.indices) : new Uint16Array(collider.indices));
+		colliderMesh.update(PRIMITIVE_TRIANGLES);
+		meshes.push(colliderMesh);
+		const posts = new PlayCanvasEntity("street-dressing-posts");
+		// The collision component only reads `meshes` from a render resource.
+		posts.addComponent("collision", { type: "mesh", render: { meshes: [colliderMesh] } as never });
+		posts.addComponent("rigidbody", { type: "static" });
+		holder.addChild(posts);
 		root.addChild(holder);
 		return () => {
 			holder.destroy();

@@ -5,6 +5,7 @@ import { LOD_PROFILES, projectedPixels, selectLod } from "../rendering/lod/LodPo
 import { buildMesh, compactGeometry, isMergeable, mergeGeometry, mergeMeshInstances } from "../rendering/MeshMerge";
 import { DOOR_NODE, DRIVER_SIDE, GLASS_NODE, NOT_SIDE_GLASS, SEAT_LATERAL } from "./Carjack";
 import { BodyDamage, isLoosePart, type CrashHit } from "./BodyDamage";
+import { BodyJolt } from "./BodyJolt";
 import type { OrionVehicle } from "./OrionVehicle";
 import { buildOf } from "./VehicleDamage";
 import { createLodEntities, groupByMaterial, requestVehicleLods, type LodEntities } from "./VehicleLod";
@@ -173,6 +174,12 @@ export class OrionVehicleModel extends Script {
 	private brakeLit: boolean | null = null;
 	private pitch = 0;
 	private roll = 0;
+	/** The crash lurch on top of the driving lean (see BodyJolt), while it's still moving. */
+	private readonly jolt = new BodyJolt();
+	private jolting = false;
+	private readonly joltAxis = new Vec3();
+	/** Seconds of frames skipped since the body was last posed (see needsPosing). */
+	private sincePosed = 0;
 	/** The body tilt last written to the entity: only rewritten when it has really moved. */
 	private shownPitch = Number.NaN;
 	private shownRoll = Number.NaN;
@@ -239,8 +246,13 @@ export class OrionVehicleModel extends Script {
 		if (level !== this.lodLevel) this.applyLod(level);
 		// Out of view, the tilt, the wheels and the swinging loose panels can't be seen: left
 		// alone, the car's whole hierarchy stays clean and the engine skips it each frame.
-		if (!needsPosing(position.x, position.z, this.app.frame, this.slot)) return;
-		this.animateBody(dt, speed, acceleration);
+		if (!needsPosing(position.x, position.z, this.app.frame, this.slot)) {
+			this.sincePosed += dt;
+			return;
+		}
+		// The time since it was last posed, so a crash lurch settles in real time regardless.
+		this.animateBody(dt + this.sincePosed, speed, acceleration);
+		this.sincePosed = 0;
 		if (this.damage) {
 			const forward = (this.entity.parent as Entity | null)?.getWorldTransform().getZ(this.forward);
 			const heading = forward ? Math.atan2(forward.x, forward.z) : 0;
@@ -534,6 +546,14 @@ export class OrionVehicleModel extends Script {
 		const vehicle = this.vehicle;
 		const car = this.entity.parent as Entity | null;
 		if (!vehicle || !car) return;
+		// The lurch: the blow's direction in the car's own frame (+Z ahead, +X to its left).
+		const frame = car.getWorldTransform();
+		frame.getZ(this.joltAxis);
+		const along = (hit.dirX * this.joltAxis.x + hit.dirZ * this.joltAxis.z) / (Math.hypot(this.joltAxis.x, this.joltAxis.z) || 1);
+		frame.getX(this.joltAxis);
+		const left = (hit.dirX * this.joltAxis.x + hit.dirZ * this.joltAxis.z) / (Math.hypot(this.joltAxis.x, this.joltAxis.z) || 1);
+		this.jolt.kick(along, left, hit.deltaV);
+		this.jolting = true;
 		this.damage ??= new BodyDamage(
 			this.app,
 			car,
@@ -844,12 +864,15 @@ export class OrionVehicleModel extends Script {
 		const blend = 1 - Math.exp(-BODY_SMOOTHING * dt);
 		this.pitch += (targetPitch - this.pitch) * blend;
 		this.roll += (targetRoll - this.roll) * blend;
+		if (this.jolting) this.jolting = this.jolt.update(dt);
+		const pitch = this.pitch + this.jolt.pitch;
+		const roll = this.roll + this.jolt.roll;
 		// Setting a transform dirties the car and everything in it for the frame's hierarchy
 		// sync; a parked car rewriting the same zero tilt cost every one of its nodes, every frame.
-		if (Math.abs(this.pitch - this.shownPitch) < BODY_TILT_EPSILON && Math.abs(this.roll - this.shownRoll) < BODY_TILT_EPSILON) return;
-		this.shownPitch = this.pitch;
-		this.shownRoll = this.roll;
-		this.entity.setLocalEulerAngles(this.pitch, 0, this.roll);
+		if (Math.abs(pitch - this.shownPitch) < BODY_TILT_EPSILON && Math.abs(roll - this.shownRoll) < BODY_TILT_EPSILON) return;
+		this.shownPitch = pitch;
+		this.shownRoll = roll;
+		this.entity.setLocalEulerAngles(pitch, 0, roll);
 	}
 
 	private spinWheels(dt: number, speed: number) {

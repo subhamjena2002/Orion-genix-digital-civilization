@@ -343,3 +343,34 @@ export function parkGroves(parks: readonly { position: readonly [number, number,
 	});
 	return items;
 }
+
+/** Radius of a trunk or lamp post's collider (their flared foot and base plinth), metres. */
+const COLLIDER_RADIUS = 0.25;
+/** Height of the collider: everything a car or a person can run into. */
+const COLLIDER_HEIGHT = 3;
+const COLLIDER_SIDES = 8;
+
+/**
+ * What a car runs into at the kerb: an upright octagonal post round the foot of every palm and
+ * lamp, open at both ends (only the sides can be hit). One mesh for the lot, so the physics world
+ * gains one static body however many trees there are.
+ */
+export function dressingCollider(items: readonly DressingItem[]): { positions: number[]; indices: number[] } {
+	const positions: number[] = [];
+	const indices: number[] = [];
+	for (const item of items) {
+		const base = positions.length / 3;
+		for (let side = 0; side < COLLIDER_SIDES; side++) {
+			const angle = (side / COLLIDER_SIDES) * Math.PI * 2;
+			const x = item.x + Math.cos(angle) * COLLIDER_RADIUS;
+			const z = item.z + Math.sin(angle) * COLLIDER_RADIUS;
+			positions.push(x, item.y, z, x, item.y + COLLIDER_HEIGHT, z);
+		}
+		for (let side = 0; side < COLLIDER_SIDES; side++) {
+			const bottom = base + side * 2;
+			const next = base + ((side + 1) % COLLIDER_SIDES) * 2;
+			indices.push(bottom, next, bottom + 1, next, next + 1, bottom + 1);
+		}
+	}
+	return { positions, indices };
+}

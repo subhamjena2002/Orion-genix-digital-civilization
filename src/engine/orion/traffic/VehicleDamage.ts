@@ -48,11 +48,17 @@ export interface BuildSpec {
 	sagDeltaV: number;
 }
 
+/**
+ * Sized to what crashes do to real cars: a car whose velocity changes by 30 km/h (a 60 km/h
+ * rear-ending, both cars sharing it) is pushed in ~13 cm and its windscreen crazes; a
+ * flat-out hit into a wall crushes half a metre. What this costs in condition (maxHitDamage) is
+ * a game decision, kept apart: a car survives many crashes that look bad.
+ */
 export const BUILDS: Readonly<Record<VehicleBuild, BuildSpec>> = {
-	car: { maxHitDamage: 16, dentPerDeltaV: 0.011, maxDent: 0.42, dentRadius: 0.55, dentRadiusPerDeltaV: 0.03, crackDeltaV: 12, crackDamage: 28, shatterDeltaV: 21, shatterDamage: 55, sagDeltaV: 10 },
-	van: { maxHitDamage: 13, dentPerDeltaV: 0.01, maxDent: 0.4, dentRadius: 0.65, dentRadiusPerDeltaV: 0.032, crackDeltaV: 13, crackDamage: 32, shatterDeltaV: 22, shatterDamage: 58, sagDeltaV: 11 },
-	heavy: { maxHitDamage: 8, dentPerDeltaV: 0.006, maxDent: 0.3, dentRadius: 0.7, dentRadiusPerDeltaV: 0.025, crackDeltaV: 16, crackDamage: 40, shatterDeltaV: 26, shatterDamage: 66, sagDeltaV: 14 },
-	bus: { maxHitDamage: 9, dentPerDeltaV: 0.008, maxDent: 0.34, dentRadius: 0.9, dentRadiusPerDeltaV: 0.045, crackDeltaV: 9, crackDamage: 22, shatterDeltaV: 17, shatterDamage: 45, sagDeltaV: 12 },
+	car: { maxHitDamage: 16, dentPerDeltaV: 0.024, maxDent: 0.5, dentRadius: 0.55, dentRadiusPerDeltaV: 0.03, crackDeltaV: 9, crackDamage: 28, shatterDeltaV: 17, shatterDamage: 55, sagDeltaV: 10 },
+	van: { maxHitDamage: 13, dentPerDeltaV: 0.022, maxDent: 0.48, dentRadius: 0.65, dentRadiusPerDeltaV: 0.032, crackDeltaV: 10, crackDamage: 32, shatterDeltaV: 18, shatterDamage: 58, sagDeltaV: 11 },
+	heavy: { maxHitDamage: 8, dentPerDeltaV: 0.012, maxDent: 0.36, dentRadius: 0.7, dentRadiusPerDeltaV: 0.025, crackDeltaV: 13, crackDamage: 40, shatterDeltaV: 22, shatterDamage: 66, sagDeltaV: 14 },
+	bus: { maxHitDamage: 9, dentPerDeltaV: 0.016, maxDent: 0.4, dentRadius: 0.9, dentRadiusPerDeltaV: 0.045, crackDeltaV: 8, crackDamage: 22, shatterDeltaV: 15, shatterDamage: 45, sagDeltaV: 12 },
 };
 
 export function buildOf(style: VehicleStyle): VehicleBuild {

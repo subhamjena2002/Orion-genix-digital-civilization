@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { ROAD_GRID, roadWidthAt } from "../roads/RoadNetwork";
 import type { MeshData } from "./MeshData";
-import { appendTransformed, buildDressingChunks, lampGeometry, palmGeometry, streetDressing } from "./StreetDressing";
+import { appendTransformed, buildDressingChunks, dressingCollider, lampGeometry, palmGeometry, streetDressing } from "./StreetDressing";
 
 function checkMesh(mesh: MeshData): void {
 	const vertices = mesh.positions.length / 3;
@@ -86,5 +86,25 @@ describe("geometry", () => {
 		expect(performance.now() - started).toBeLessThan(2000);
 		expect(chunks.length).toBeGreaterThan(4);
 		for (const chunk of chunks) for (const mesh of [chunk.trunks, chunk.fronds, chunk.metal, chunk.glass]) checkMesh(mesh);
+	});
+});
+
+describe("street dressing collider", () => {
+	it("puts a closed ring of posts round the foot of every palm and lamp", () => {
+		const items = [
+			{ kind: "palm" as const, x: 10, y: 0.2, z: -5, yaw: 0, variant: 1 },
+			{ kind: "lamp" as const, x: -3, y: 0.2, z: 7, yaw: 90, variant: 0 },
+		];
+		const { positions, indices } = dressingCollider(items);
+		expect(positions.length / 3).toBe(2 * 16);
+		expect(indices.length / 3).toBe(2 * 16);
+		for (let i = 0; i < 16; i++) {
+			const x = positions[i * 3];
+			const y = positions[i * 3 + 1];
+			const z = positions[i * 3 + 2];
+			expect(Math.hypot(x - 10, z + 5)).toBeCloseTo(0.25, 6);
+			expect(y === 0.2 || y === 3.2).toBe(true);
+		}
+		expect(Math.max(...indices)).toBe(positions.length / 3 - 1);
 	});
 });

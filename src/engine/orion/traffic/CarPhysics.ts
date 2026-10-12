@@ -174,6 +174,11 @@ export class CarPhysics {
 	public steer = 0;
 	/** Engine power left, 0..1; a damaged engine pulls less (see VehicleDamage). */
 	public powerFactor = 1;
+	/**
+	 * Stability control: brakes single wheels to hold the yaw the steering asks for. A wreck with
+	 * nobody at the wheel has nothing to hold it to.
+	 */
+	public stabilityControl = true;
 
 	// Read-outs for visuals, sound and the HUD.
 	public forwardSpeed = 0;
@@ -208,6 +213,14 @@ export class CarPhysics {
 		this.yawRate = 0;
 		this.steer = 0;
 		this.longitudinalAcceleration = 0;
+	}
+
+	/**
+	 * A crash's yaw is far beyond what stability control can brake away: it stands off for a
+	 * moment (as for the handbrake) and the car spins as the blow and its tyres decide.
+	 */
+	public knock(seconds: number) {
+		this.escHoldoff = Math.max(this.escHoldoff, seconds);
 	}
 
 	public step(dt: number, controls: Readonly<CarControls>) {
@@ -271,7 +284,7 @@ export class CarPhysics {
 
 		// Stability control: off while the handbrake is (or was just) in use.
 		this.escHoldoff = controls.handbrake ? ESC_HANDBRAKE_HOLDOFF : Math.max(0, this.escHoldoff - dt);
-		const escExcess = this.escHoldoff > 0 || speed < 3 ? 0 : Math.max(0, Math.abs(slipRear) - ESC_SLIP);
+		const escExcess = !this.stabilityControl || this.escHoldoff > 0 || speed < 3 ? 0 : Math.max(0, Math.abs(slipRear) - ESC_SLIP);
 
 		// Engine, split between the axles.
 		let drive = 0;

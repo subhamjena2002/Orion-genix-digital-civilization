@@ -17,6 +17,7 @@ import { CarjackRig, drivableCars, registerDrivableCar, unregisterDrivableCar } 
 import { BURNT_PAINT, getCarMeshes } from "./CarMeshes";
 import { CarPhysics, carSpecFor, type CarControls } from "./CarPhysics";
 import { crashEffects, type DamageSource } from "./CrashEffects";
+import { crashImpulse, type CrashBody } from "./CrashImpulse";
 import { EmissionAccumulator } from "../effects/ParticleField";
 import {
 	BLAST_RADIUS,
@@ -94,14 +95,23 @@ const FLASH_SECONDS = 0.28;
 // Off-lane driving (the player, parked and crashed cars) runs on CarPhysics.
 /** Share of an impact's closing speed that bounces back. */
 const RESTITUTION = 0.18;
-/** Sideways speed kept while scraping along a wall. */
-const SCRAPE_FRICTION = 0.9;
+/** Friction across a contact: steel scraping a wall, and two bodies locked together for a moment. */
+const WALL_FRICTION = 0.3;
+const CAR_FRICTION = 0.45;
 /** A hit this hard (change of velocity, m/s) throws sparks off the metal. */
 const SPARK_DELTA_V = 6;
 /** Gap kept between the body and whatever it hit. */
 const COLLISION_SKIN = 0.06;
-/** Yaw kick from off-centre impacts, as a share of the full rigid-body value. */
-const IMPACT_SPIN = 0.6;
+/**
+ * Yaw kick from off-centre impacts, as a share of the full rigid-body value: the tyres are
+ * already gripping as the blow lands and take a little of it.
+ */
+const IMPACT_SPIN = 0.8;
+/** A blow this hard (m/s) puts a car's stability control out of its depth for KNOCK_SECONDS. */
+const KNOCK_DELTA_V = 2;
+const KNOCK_SECONDS = 1.5;
+/** What a car runs into that isn't another car: it neither moves nor turns. */
+const WALL: CrashBody = { mass: Infinity, inertia: Infinity, velocityX: 0, velocityZ: 0, turnRate: 0, offsetX: 0, offsetZ: 0 };
 /** Below this the car just nudges people instead of running them over. */
 const STRIKE_SPEED = 1.4;
 const PERSON_HIT_RADIUS = 0.32;
@@ -744,6 +754,11 @@ export class OrionVehicle extends Script {
 		return this.carPhysics().spec.mass;
 	}
 
+	/** Yaw inertia, kg·m². */
+	public get inertia(): number {
+		return this.carPhysics().spec.inertia;
+	}
+
 	/**
 	 * Run over by the train. Nothing survives that, so the car goes up on the spot and is
 	 * thrown off the line rather than burning down to it over the next few seconds.
@@ -762,6 +777,7 @@ export class OrionVehicle extends Script {
 		car.velocityX += deltaVelocityX;
 		car.velocityZ += deltaVelocityZ;
 		car.yawRate += spin;
+		if (Math.hypot(deltaVelocityX, deltaVelocityZ) > KNOCK_DELTA_V) car.knock(KNOCK_SECONDS);
 	}
 
 	/**
@@ -904,6 +920,7 @@ export class OrionVehicle extends Script {
 			controls.brake = this.driver === "wrecked" ? 0.35 : 1;
 		}
 
+		car.stabilityControl = this.driver !== "wrecked";
 		const previousX = car.x;
 		const previousZ = car.z;
 		car.step(dt, controls);
@@ -1195,33 +1212,47 @@ export class OrionVehicle extends Script {
 		if (closing >= 0) return;
 
 		const other = best.entity.script?.get("orionVehicle") as OrionVehicle | undefined;
-		const totalMass = car.spec.mass + (other?.mass ?? 0);
-		const ownShare = other ? other.mass / totalMass : 1;
-		const change = -(1 + RESTITUTION) * closing * ownShare;
-		const tangentX = car.velocityX - closing * nx;
-		const tangentZ = car.velocityZ - closing * nz;
-		car.velocityX = (closing + change) * nx + tangentX * SCRAPE_FRICTION;
-		car.velocityZ = (closing + change) * nz + tangentZ * SCRAPE_FRICTION;
-		// Torque of the impulse about the centre, at the contact point (yaw positive = left).
-		const impulseX = change * nx * car.spec.mass;
-		const impulseZ = change * nz * car.spec.mass;
-		car.yawRate += ((impulseX * offsetZ - impulseZ * offsetX) / car.spec.inertia) * IMPACT_SPIN;
+		const point = best.point;
+		const otherPosition = other?.entity.getPosition();
+		// Both bodies move and turn; the impulse lands where they touch (see CrashImpulse). A
+		// wall is a body that does neither.
+		const result = crashImpulse(
+			{ mass: car.spec.mass, inertia: car.spec.inertia / IMPACT_SPIN, velocityX: car.velocityX, velocityZ: car.velocityZ, turnRate: car.yawRate, offsetX, offsetZ },
+			other && otherPosition
+				? {
+					mass: other.mass,
+					inertia: other.inertia / IMPACT_SPIN,
+					velocityX: other.velocityX,
+					velocityZ: other.velocityZ,
+					turnRate: other.turnRate / DEGREES,
+					offsetX: point.x - otherPosition.x,
+					offsetZ: point.z - otherPosition.z,
+				}
+				: WALL,
+			nx,
+			nz,
+			RESTITUTION,
+			other ? CAR_FRICTION : WALL_FRICTION,
+		);
+		car.velocityX = result.a.velocityX;
+		car.velocityZ = result.a.velocityZ;
+		car.yawRate = result.a.turnRate;
+		const change = result.deltaVA;
+		if (change > KNOCK_DELTA_V) car.knock(KNOCK_SECONDS);
 		this.impact = Math.max(this.impact, -closing);
-		this.crashSound(Math.abs(change));
+		this.crashSound(change);
 		// Both cars are hurt by their own change of velocity, so the lighter one comes off worse,
 		// and each by its own build: a bus or a lorry takes many more hits than a car.
-		this.applyDamage(crashDamage(Math.abs(change), this.build) * this.crashResistance);
+		this.applyDamage(crashDamage(change, this.build) * this.crashResistance);
 		// The blow shows on the body where it landed: pushed in along the obstacle's normal.
-		const point = best.point;
-		this.bodyCrash(point.x, point.y, point.z, nx, nz, Math.abs(change));
-		if (Math.abs(change) > SPARK_DELTA_V) crashEffects(this.app).impact(point.x, point.y, point.z, -nx, 0.3, -nz, "metal");
+		this.bodyCrash(point.x, point.y, point.z, nx, nz, change);
+		if (change > SPARK_DELTA_V) crashEffects(this.app).impact(point.x, point.y, point.z, -nx, 0.3, -nz, "metal");
 
 		if (other) {
-			const otherChange = -(1 + RESTITUTION) * closing * (car.spec.mass / totalMass);
-			const spin = (Math.random() - 0.5) * otherChange * 0.4;
-			other.receiveImpact(-nx * otherChange, -nz * otherChange, spin);
-			other.applyDamage(crashDamage(Math.abs(otherChange), other.build) * other.crashResistance);
-			other.bodyCrash(point.x, point.y, point.z, -nx, -nz, Math.abs(otherChange));
+			const otherChange = result.deltaVB;
+			other.receiveImpact(result.b.velocityX - other.velocityX, result.b.velocityZ - other.velocityZ, result.b.turnRate - other.turnRate / DEGREES);
+			other.applyDamage(crashDamage(otherChange, other.build) * other.crashResistance);
+			other.bodyCrash(point.x, point.y, point.z, -nx, -nz, otherChange);
 			if (this.driver === "player") other.playerHarmedAt = performance.now() / 1000;
 		}
 	}
