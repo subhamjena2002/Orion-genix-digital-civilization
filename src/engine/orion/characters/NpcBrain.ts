@@ -105,6 +105,17 @@ export class NpcBrain {
 		this.enter("ALERT", min + this.random() * (max - min));
 	}
 
+	/**
+	 * Goes for someone unprovoked — a mission's hostile spotting the player — straight into the
+	 * chase. Someone already fighting, staggering or dead carries on as they are.
+	 */
+	public provoke(threat: NpcThreat): void {
+		if (this.stateName === "DEAD" || this.stateName === "HIT" || this.stateName === "RUN" || this.stateName === "ATTACK") return;
+		this.threatInfo = { ...threat };
+		this.afterHit = "RUN";
+		this.enter("RUN");
+	}
+
 	/** The threat moved (the controller reports where it is now). */
 	public trackThreat(x: number, z: number): void {
 		if (!this.threatInfo) return;

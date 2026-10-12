@@ -1,7 +1,9 @@
 import { BLEND_NONE, Script, StandardMaterial, type Asset, type Entity, type GraphNode, type RenderComponent } from "playcanvas";
 
 import { fixSkinnedBounds } from "../rendering/SkinnedBounds";
+import { lightAsPlayer } from "./CharacterLight";
 import { FootPlant } from "./FootPlant";
+import type { OrionSkinnedCharacterAnimation } from "./OrionSkinnedCharacterAnimation";
 import { readPlayerPose } from "./PlayerPose";
 import { playerRig, setPlayerRig, type PlayerRig } from "./PlayerRig";
 import { CHARACTER_CREATOR_STANCE, PlayerStance } from "./PlayerStance";
@@ -115,6 +117,7 @@ export class OrionPlayerBody extends Script {
 		fixSkinnedBounds(target);
 		const facing = targetFrame ? rigFacing(target, targetFrame, "CC_Base_Hip", "CC_Base_Head", "CC_Base_L_Upperarm", "CC_Base_R_Upperarm") : null;
 		makeOpaque(target);
+		lightAsPlayer(target.findComponents("render") as RenderComponent[]);
 
 		const retarget = new SkeletonRetarget(
 			{ root: source, frame: sourceFrame },
@@ -140,6 +143,10 @@ export class OrionPlayerBody extends Script {
 		this.source = source;
 		this.rig = {
 			apply: (dt) => {
+				// Bones the playing clip leaves alone go back to rest first, or a seated pose's hips
+				// and knee aim could carry over into walking (see OrionSkinnedCharacterAnimation).
+				const clips = (holder!.children[0] as Entity | undefined)?.script?.get("orionSkinnedCharacterAnimation") as OrionSkinnedCharacterAnimation | null | undefined;
+				clips?.restoreUnkeyedBones();
 				retarget.apply();
 				stance?.apply(this.stanceWeight);
 				// Lying down or seated, the feet aren't what holds the body up.

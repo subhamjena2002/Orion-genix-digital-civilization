@@ -44,12 +44,27 @@ export interface QualityLevel {
  * everything else already turned down (a phone rendering at twice its screen's pixels, say):
  * there a steady picture a little softer beats a stuttering sharp one. Sharpening makes up some.
  */
+/**
+ * A light contrast-adaptive sharpen at native resolution: it costs next to nothing and takes the
+ * last softness of MSAA resolve and texture filtering off edges and facades.
+ */
+export const NATIVE_SHARPNESS = 0.3;
+
+/**
+ * Whether the last-resort level (rendering below native resolution) may be used. Only on phones:
+ * on a laptop or desktop a soft picture is the one thing players notice at once (driving was
+ * exactly when it kicked in), so there the governor stops at the level above.
+ */
+export function allowsResolutionRescue(): boolean {
+	return typeof window !== "undefined" && (window.matchMedia?.("(pointer: coarse)").matches ?? false);
+}
+
 export const QUALITY_LEVELS: readonly QualityLevel[] = [
-	{ name: "ultra", renderScale: 1, samples: 4, bloom: true, sharpness: 0, ssao: true, shadowResolution: 4096, fireLights: 4 },
-	{ name: "high", renderScale: 1, samples: 2, bloom: true, sharpness: 0, ssao: true, shadowResolution: 4096, fireLights: 4 },
-	{ name: "medium", renderScale: 1, samples: 2, bloom: true, sharpness: 0, ssao: false, shadowResolution: 2048, fireLights: 3 },
-	{ name: "low", renderScale: 1, samples: 2, bloom: true, sharpness: 0, ssao: false, shadowResolution: 1024, fireLights: 2 },
-	{ name: "minimum", renderScale: 1, samples: 1, bloom: false, sharpness: 0, ssao: false, shadowResolution: 1024, fireLights: 1 },
+	{ name: "ultra", renderScale: 1, samples: 4, bloom: true, sharpness: NATIVE_SHARPNESS, ssao: true, shadowResolution: 4096, fireLights: 4 },
+	{ name: "high", renderScale: 1, samples: 2, bloom: true, sharpness: NATIVE_SHARPNESS, ssao: true, shadowResolution: 4096, fireLights: 4 },
+	{ name: "medium", renderScale: 1, samples: 2, bloom: true, sharpness: NATIVE_SHARPNESS, ssao: false, shadowResolution: 2048, fireLights: 3 },
+	{ name: "low", renderScale: 1, samples: 2, bloom: true, sharpness: NATIVE_SHARPNESS, ssao: false, shadowResolution: 1024, fireLights: 2 },
+	{ name: "minimum", renderScale: 1, samples: 1, bloom: false, sharpness: NATIVE_SHARPNESS, ssao: false, shadowResolution: 1024, fireLights: 1 },
 	{ name: "rescue", renderScale: 0.8, samples: 1, bloom: false, sharpness: 0.5, ssao: false, shadowResolution: 1024, fireLights: 1 },
 ];
 

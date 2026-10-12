@@ -1,23 +1,12 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect } from "react";
 
+import { enterFullscreen, exitFullscreen, useFullscreen } from "./fullscreen";
 import { usePortrait } from "./useTouchDevice";
 
-type FullscreenRoot = HTMLElement & { webkitRequestFullscreen?: () => Promise<void> | void };
-type FullscreenDocument = Document & { webkitFullscreenElement?: Element | null; webkitExitFullscreen?: () => Promise<void> | void };
 /** `lock` is missing from TypeScript's DOM types; it exists on Android browsers. */
 type LockableOrientation = ScreenOrientation & { lock?: (orientation: "landscape") => Promise<void> };
-
-function fullscreenElement(): Element | null {
-	const doc = document as FullscreenDocument;
-	return doc.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
-}
-
-function canFullscreen(): boolean {
-	const root = document.documentElement as FullscreenRoot;
-	return typeof root.requestFullscreen === "function" || typeof root.webkitRequestFullscreen === "function";
-}
 
 /**
  * Full screen (no browser bars eating the height), then locked to landscape. Android allows the
@@ -25,39 +14,12 @@ function canFullscreen(): boolean {
  * Must run inside a tap: browsers refuse both otherwise.
  */
 async function enterLandscape(): Promise<void> {
-	const root = document.documentElement as FullscreenRoot;
-	try {
-		if (!fullscreenElement()) {
-			if (root.requestFullscreen) await root.requestFullscreen({ navigationUI: "hide" });
-			else await root.webkitRequestFullscreen?.();
-		}
-	} catch {
-		// Refused (or unsupported): play in the browser window.
-	}
+	await enterFullscreen();
 	try {
 		await (screen.orientation as LockableOrientation | undefined)?.lock?.("landscape");
 	} catch {
 		// No lock on this device; the rotate prompt covers portrait.
 	}
-}
-
-async function exitFullscreen(): Promise<void> {
-	const doc = document as FullscreenDocument;
-	try {
-		if (doc.exitFullscreen) await doc.exitFullscreen();
-		else await doc.webkitExitFullscreen?.();
-	} catch {
-		// Already out.
-	}
-}
-
-function watchFullscreen(onChange: () => void) {
-	document.addEventListener("fullscreenchange", onChange);
-	document.addEventListener("webkitfullscreenchange", onChange);
-	return () => {
-		document.removeEventListener("fullscreenchange", onChange);
-		document.removeEventListener("webkitfullscreenchange", onChange);
-	};
 }
 
 /**
@@ -68,8 +30,7 @@ function watchFullscreen(onChange: () => void) {
  */
 export function LandscapeMode() {
 	const portrait = usePortrait();
-	const fullscreen = useSyncExternalStore(watchFullscreen, () => fullscreenElement() !== null, () => false);
-	const supported = useSyncExternalStore(watchFullscreen, canFullscreen, () => false);
+	const { fullscreen, supported } = useFullscreen();
 
 	useEffect(() => {
 		// iOS Safari ignores user-scalable=no; a pinch would zoom the page instead of playing.

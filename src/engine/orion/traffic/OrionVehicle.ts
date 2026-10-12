@@ -1,16 +1,18 @@
 import { Entity, Quat, Script, Vec3, type Material, type RaycastResult } from "playcanvas";
 
 import { onWorldReset } from "../world/WorldReset";
+import { emitGameEvent } from "../missions/GameEvents";
 import { combatAudio } from "../combat/CombatAudio";
 import { damageableMoved, registerDamageable, unregisterDamageable, type Listener } from "../combat/CombatWorld";
 import type { DamageEvent, DamageSourceRef } from "../combat/Damage";
 import { makeDamageEvent, nextCombatId } from "../combat/Damage";
-import { approachSpeed, junctionPosition, nearestJunction, stepToward, steerToward } from "../police/PursuitDriver";
+import { approachSpeed, junctionPosition, nearestJunction, stepToward, steerToward, wrapAngle } from "../police/PursuitDriver";
 import { requestOfficer, type OrionFootOfficer } from "../police/OrionFootOfficer";
 import { FIRE_FROM_STARS, fireAtPlayer, nextShotDelay, policeGun } from "../police/PoliceFire";
 import { POLICE_STATION } from "../police/Police";
 import { markArrestable, readWanted, reportCrime, spotted } from "../police/Wanted";
 import { distanceFromCamera, inCameraView, needsPosing, readPlayerPose } from "../player/PlayerPose";
+import { runsThisFrame, updateInterval } from "../characters/NpcBrain";
 import { CarjackRig, drivableCars, registerDrivableCar, unregisterDrivableCar } from "./Carjack";
 import { BURNT_PAINT, getCarMeshes } from "./CarMeshes";
 import { CarPhysics, carSpecFor, type CarControls } from "./CarPhysics";
@@ -23,13 +25,16 @@ import {
 	burnDown,
 	BURNING_BELOW,
 	conditionOf,
+	buildOf,
 	crashDamage,
 	damageEffect,
 	PEDESTRIAN_DAMAGE,
 	powerFactor,
 	WRECK_FIRE_SECONDS,
 	type VehicleCondition,
+	type VehicleBuild,
 } from "./VehicleDamage";
+import type { CrashHit } from "./BodyDamage";
 import { skidMarks } from "./SkidMarks";
 import type { VehicleStyle } from "./Vehicles";
 import { pavedHeightAt, ROAD_GRID } from "../roads/RoadNetwork";
@@ -91,6 +96,8 @@ const FLASH_SECONDS = 0.28;
 const RESTITUTION = 0.18;
 /** Sideways speed kept while scraping along a wall. */
 const SCRAPE_FRICTION = 0.9;
+/** A hit this hard (change of velocity, m/s) throws sparks off the metal. */
+const SPARK_DELTA_V = 6;
 /** Gap kept between the body and whatever it hit. */
 const COLLISION_SKIN = 0.06;
 /** Yaw kick from off-centre impacts, as a share of the full rigid-body value. */
@@ -193,6 +200,56 @@ const CREW_COOLDOWN = 3;
 const PLAYER_BLAME_SECONDS = 20;
 /** Where an idle unit waits: nowhere near the city, and not drawn. */
 const STOW_Y = -400;
+/** Longest single step of lane-following, however long a far car went without updating. */
+const MAX_AI_STEP = 0.25;
+
+/** Mission cars driving a route: their cruise (m/s) and how close counts as reaching a point. */
+const MISSION_CRUISE = 15;
+const MISSION_ROUTE_REACHED = 12;
+/** Taking a right-angle bend, a route driver gets down to this share of its cruise; braking at this rate. */
+const MISSION_CORNER_SHARE = 0.22;
+const MISSION_CORNER_BRAKING = 5.5;
+/** Stuck this long (backing off hasn't freed it) and out of sight: put back on its route. */
+const MISSION_UNSTICK_SECONDS = 8;
+/** How far ahead along its route a route driver aims, m, plus half a second of travel. */
+const MISSION_LOOKAHEAD = 10;
+
+/**
+ * The point `ahead` metres on from (x, z)'s nearest point on the leg from → to, stopping at the
+ * leg's end (the next bend is taken from there).
+ */
+function alongLeg(from: readonly [number, number], to: readonly [number, number], x: number, z: number, ahead: number): [number, number] {
+	const legX = to[0] - from[0];
+	const legZ = to[1] - from[1];
+	const length = Math.hypot(legX, legZ);
+	if (length < 1e-3) return [to[0], to[1]];
+	const along = Math.max(0, ((x - from[0]) * legX + (z - from[1]) * legZ) / length);
+	const at = Math.min(length, along + ahead) / length;
+	return [from[0] + legX * at, from[1] + legZ * at];
+}
+
+/** How a mission car drives its route (see OrionVehicle.placeForMission). */
+export interface MissionDriving {
+	cruise?: number;
+	racer?: boolean;
+}
+
+/**
+ * The speed to be doing now, heading for `point` with `after` beyond it: the tighter the bend at
+ * the point, the slower it's taken, and braking for it starts in time.
+ */
+function cornerSpeed(x: number, z: number, point: readonly [number, number], after: readonly [number, number], cruise: number): number {
+	const inX = point[0] - x;
+	const inZ = point[1] - z;
+	const outX = after[0] - point[0];
+	const outZ = after[1] - point[1];
+	const inLength = Math.hypot(inX, inZ) || 1;
+	const outLength = Math.hypot(outX, outZ) || 1;
+	const turn = Math.acos(Math.max(-1, Math.min(1, (inX * outX + inZ * outZ) / (inLength * outLength))));
+	const share = 1 - (1 - MISSION_CORNER_SHARE) * Math.min(1, turn / (Math.PI / 2));
+	const bend = cruise * share;
+	return Math.min(cruise, Math.sqrt(bend * bend + 2 * MISSION_CORNER_BRAKING * Math.max(0, inLength - MISSION_ROUTE_REACHED)));
+}
 
 type Phase = "leg" | "turn";
 
@@ -200,7 +257,7 @@ type Phase = "leg" | "turn";
  * Who is driving: the traffic AI, nobody (stopped for a carjack), the player, or nobody
  * (left parked where the player got out).
  */
-export type VehicleDriver = "ai" | "held" | "player" | "parked" | "wrecked" | "police" | "fire";
+export type VehicleDriver = "ai" | "held" | "player" | "parked" | "wrecked" | "police" | "fire" | "convoy";
 
 /** Body outline points (fractions of half-width, half-length) swept for collisions. */
 const SWEEP_POINTS: readonly [number, number][] = [
@@ -211,6 +268,12 @@ const SWEEP_POINTS: readonly [number, number][] = [
 
 /** Heights (fractions of half-height above the body centre) swept for collisions. */
 const SWEEP_LIFTS: readonly number[] = [0, 0.75];
+/**
+ * And one low sweep, this far above the bottom of the body, for tall vehicles: a garbage truck's
+ * centre rides at about 1.6 m, above a taxi's roof, so both of its sweeps passed over the taxi
+ * and it drove straight into it. Skipped where it would sit at the centre sweep anyway (cars).
+ */
+const SWEEP_LOW_ABOVE_BOTTOM = 0.5;
 
 type RaycastAll = (start: Vec3, end: Vec3, options?: { filterCallback?: (entity: Entity) => boolean }) => RaycastResult[];
 
@@ -338,6 +401,26 @@ export class OrionVehicle extends Script {
 	 * then drives to it and puts it out (see updateFireSlot).
 	 */
 	public fireSlot = -1;
+	/**
+	 * A mission's car (see missions/MissionActors): out of the world until a mission puts it
+	 * somewhere, parked or driving a route, and taken away again when the mission's over.
+	 */
+	public missionSlot = -1;
+	private missionRoute: readonly (readonly [number, number])[] | null = null;
+	private missionRouteIndex = 0;
+	/** A mission still has a use for it; once let go, it leaves when nobody's looking. */
+	private missionClaimed = false;
+	/** Its route's cruising speed, m/s; a race opponent, and whether it's still held on the grid. */
+	private missionCruise = MISSION_CRUISE;
+	private missionRacer = false;
+	private missionHeld = false;
+	/** Time spent going nowhere since it last got going properly. */
+	private missionStuckSeconds = 0;
+	/** Lane-following time owed from frames this car's driving was skipped (far, unseen). */
+	private aiSkipped = 0;
+	/** Where its route began (the first leg runs from here). */
+	private missionStartX = 0;
+	private missionStartZ = 0;
 	private stowed = false;
 	/** The burning car this engine is going to, and what it's doing about it. */
 	private fireTarget: OrionVehicle | null = null;
@@ -346,9 +429,33 @@ export class OrionVehicle extends Script {
 	private dutySeconds = 0;
 	private readonly hoseTrail = new EmissionAccumulator();
 
+	/** How this vehicle takes a crash: a car, a van, a lorry or a bus (see VehicleDamage). */
+	public get build(): VehicleBuild {
+		return buildOf(this.style);
+	}
+
+	/** Passes a crash to the body, which dents, cracks and comes apart (see BodyDamage). */
+	public bodyCrash(x: number, y: number, z: number, dirX: number, dirZ: number, deltaV: number) {
+		if (this.burnedOut) return;
+		this.bodyModel()?.crash({ x, y, z, dirX, dirZ, deltaV, lost: 100 - this.integrity });
+	}
+
+	private bodyModelScript: { crash(hit: CrashHit): void; resetDamage(): void } | null = null;
+
+	/** The model's script, once it exists (a model streams in after the car does). */
+	private bodyModel(): { crash(hit: CrashHit): void; resetDamage(): void } | null {
+		if (!this.bodyModelScript) {
+			const model = this.entity.findByName("car-model") as Entity | null;
+			this.bodyModelScript = (model?.script?.get("orionVehicleModel") as unknown as { crash(hit: CrashHit): void; resetDamage(): void } | null) ?? null;
+		}
+		return this.bodyModelScript;
+	}
+
 	/** Share of crash damage this car takes: a unit on a chase shrugs most of it off. */
 	public get crashResistance(): number {
-		return this.pursuitSlot >= 0 && this.driver === "police" ? POLICE_CRASH_RESISTANCE : 1;
+		if (this.pursuitSlot >= 0 && this.driver === "police") return POLICE_CRASH_RESISTANCE;
+		// Race rivals are built for it: a race lost to a fender-bender in traffic is no race.
+		return this.missionRacer && this.driver === "convoy" ? POLICE_CRASH_RESISTANCE : 1;
 	}
 
 	/** A police unit out on a chase and still able to drive it. */
@@ -441,10 +548,11 @@ export class OrionVehicle extends Script {
 		this.random = mulberry32(this.seed);
 		this.laneIndex = this.random() < 0.5 ? 0 : 1;
 		this.agent = registerTrafficAgent("vehicle", this.halfLength);
-		if (this.pursuitSlot >= 0 || this.fireSlot >= 0) this.stow();
+		if (this.pursuitSlot >= 0 || this.fireSlot >= 0 || this.missionSlot >= 0) this.stow();
 		else if (this.hasHome) this.parkAtHome();
 		else this.respawnNearPlayer(0);
 		registerDrivableCar(this);
+		if (this.missionSlot >= 0) missionCars.set(this.entity.name, this);
 		this.registerTarget();
 		const stopListening = onWorldReset(() => this.resetForNewGame());
 		this.on("destroy", () => {
@@ -452,6 +560,7 @@ export class OrionVehicle extends Script {
 			if (this.agent) unregisterTrafficAgent(this.agent);
 			if (this.target) unregisterDamageable(this.target);
 			unregisterDrivableCar(this);
+			if (missionCars.get(this.entity.name) === this) missionCars.delete(this.entity.name);
 			this.carjack.destroy();
 		});
 	}
@@ -461,6 +570,7 @@ export class OrionVehicle extends Script {
 		const player = readPlayerPose();
 		if (this.pursuitSlot >= 0 && this.updatePursuitSlot(dt)) return;
 		if (this.fireSlot >= 0 && this.updateFireSlot(dt)) return;
+		if (this.missionSlot >= 0 && this.updateMissionSlot()) return;
 		const position = this.entity.getPosition();
 		this.syncTarget(position.y);
 		const playerDistance = Math.hypot(position.x - player.x, position.z - player.z);
@@ -473,7 +583,8 @@ export class OrionVehicle extends Script {
 		// Anything but the car the player is in: that includes a car held for a carjack the
 		// player walked away from, which would otherwise sit there for good.
 		// Pursuit units come and go by the wanted level (updatePursuitSlot), never into traffic.
-		const recyclable = this.driver !== "player" && this.pursuitSlot < 0 && this.fireSlot < 0;
+		// Nor do a mission's cars: they stay where the player left them until the mission's over.
+		const recyclable = this.driver !== "player" && this.pursuitSlot < 0 && this.fireSlot < 0 && this.missionSlot < 0;
 		const outOfPlay = playerDistance > RECYCLE_HARD_LIMIT
 			|| (playerDistance > RECYCLE_DISTANCE && !inCameraView(position.x, position.z, VISIBLE_RANGE));
 		if (recyclable && outOfPlay && this.hasHome) {
@@ -486,9 +597,18 @@ export class OrionVehicle extends Script {
 			this.respawnNearPlayer(RESPAWN_MIN);
 		}
 		if (this.driver !== "ai") {
+			this.aiSkipped = 0;
 			this.updateManual(dt);
 			return;
 		}
+
+		// Traffic far off or out of sight thinks less often (as the crowd does): its lane-following
+		// is kinematic, so a few frames' time taken in one step lands it in the same place.
+		this.aiSkipped += dt;
+		const interval = updateInterval(playerDistance, inCameraView(position.x, position.z, VISIBLE_RANGE));
+		if (!runsThisFrame(this.app.frame, this.agent?.id ?? 0, interval)) return;
+		dt = Math.min(this.aiSkipped, MAX_AI_STEP);
+		this.aiSkipped = 0;
 
 		const targetSpeed = this.plannedSpeed(dt) * powerFactor(this.integrity);
 		// Kept for the engine sound, which needs to know whether the car is pulling or coasting.
@@ -653,7 +773,7 @@ export class OrionVehicle extends Script {
 		this.playerHarmedAt = -Infinity;
 		this.crew = [];
 		this.dispatchTimer = 0;
-		if (this.pursuitSlot >= 0 || this.fireSlot >= 0) {
+		if (this.pursuitSlot >= 0 || this.fireSlot >= 0 || this.missionSlot >= 0) {
 			this.releaseFire();
 			this.stow();
 			return;
@@ -725,6 +845,7 @@ export class OrionVehicle extends Script {
 	/** A recycled car comes back as a fresh one. */
 	private repair() {
 		if (this.burnedOut) this.scorch(false);
+		this.bodyModel()?.resetDamage();
 		this.burnedOut = false;
 		this.integrity = 100;
 		this.burnTimer = 0;
@@ -773,6 +894,8 @@ export class OrionVehicle extends Script {
 		} else if (this.driver === "fire") {
 			this.respondToFire(dt, car);
 			controls.brake = 0;
+		} else if (this.driver === "convoy") {
+			this.driveRoute(dt, car);
 		} else {
 			controls.drive = 0;
 			controls.steer = 0;
@@ -953,6 +1076,7 @@ export class OrionVehicle extends Script {
 		this.burnedOut = true;
 		this.integrity = 0;
 		this.burnTimer = 0;
+		emitGameEvent({ type: "vehicleDestroyed", id: this.entity.name, byPlayer: blamed || this.driver === "player" });
 		crashEffects(this.app).explosion(x, y + this.halfHeight * 0.5, z, y - this.halfHeight);
 
 		for (const car of drivableCars()) {
@@ -1040,8 +1164,11 @@ export class OrionVehicle extends Script {
 			if (px * dirX + pz * dirZ < -0.01) continue;
 			// Two heights: buildings stand on plinths above the road, so a single ray at the
 			// body's centre would pass underneath them. Neither is low enough to catch a kerb.
-			for (const lift of SWEEP_LIFTS) {
-				const y = centreY + lift * this.halfHeight;
+			// A tall vehicle adds a low one, so it can't ride over a car into it.
+			for (let lift = -1; lift < SWEEP_LIFTS.length; lift++) {
+				const low = centreY - this.halfHeight + SWEEP_LOW_ABOVE_BOTTOM;
+				if (lift < 0 && low > centreY - 0.25) continue;
+				const y = lift < 0 ? low : centreY + SWEEP_LIFTS[lift] * this.halfHeight;
 				this.rayFrom.set(fromX + px, y, fromZ + pz);
 				this.rayTo.set(fromX + px + dirX * reach, y, fromZ + pz + dirZ * reach);
 				for (const hit of raycastAll(this.rayFrom, this.rayTo, { filterCallback: this.notSelf })) {
@@ -1081,14 +1208,20 @@ export class OrionVehicle extends Script {
 		car.yawRate += ((impulseX * offsetZ - impulseZ * offsetX) / car.spec.inertia) * IMPACT_SPIN;
 		this.impact = Math.max(this.impact, -closing);
 		this.crashSound(Math.abs(change));
-		// Both cars are hurt by their own change of velocity, so the lighter one comes off worse.
-		this.applyDamage(crashDamage(Math.abs(change)) * this.crashResistance);
+		// Both cars are hurt by their own change of velocity, so the lighter one comes off worse,
+		// and each by its own build: a bus or a lorry takes many more hits than a car.
+		this.applyDamage(crashDamage(Math.abs(change), this.build) * this.crashResistance);
+		// The blow shows on the body where it landed: pushed in along the obstacle's normal.
+		const point = best.point;
+		this.bodyCrash(point.x, point.y, point.z, nx, nz, Math.abs(change));
+		if (Math.abs(change) > SPARK_DELTA_V) crashEffects(this.app).impact(point.x, point.y, point.z, -nx, 0.3, -nz, "metal");
 
 		if (other) {
 			const otherChange = -(1 + RESTITUTION) * closing * (car.spec.mass / totalMass);
 			const spin = (Math.random() - 0.5) * otherChange * 0.4;
 			other.receiveImpact(-nx * otherChange, -nz * otherChange, spin);
-			other.applyDamage(crashDamage(Math.abs(otherChange)) * other.crashResistance);
+			other.applyDamage(crashDamage(Math.abs(otherChange), other.build) * other.crashResistance);
+			other.bodyCrash(point.x, point.y, point.z, -nx, -nz, Math.abs(otherChange));
 			if (this.driver === "player") other.playerHarmedAt = performance.now() / 1000;
 		}
 	}
@@ -1194,6 +1327,167 @@ export class OrionVehicle extends Script {
 		this.dismountSeconds = 0;
 		this.crewCooldown = 0;
 		this.seesPlayer = false;
+	}
+
+	/**
+	 * Into the world for a mission: whole, at (x, z) facing `yaw` degrees, and either parked
+	 * (nobody in it) or setting off along `route` with its driver.
+	 */
+	public placeForMission(x: number, z: number, yaw: number, route: readonly (readonly [number, number])[] | null, options: MissionDriving = {}) {
+		this.stowed = false;
+		this.setStowedVisible(true);
+		this.repair();
+		this.carjack.reset();
+		this.playerHarmedAt = -Infinity;
+		const car = this.carPhysics();
+		car.reset(x, z, yaw / DEGREES, 0);
+		this.manual = true;
+		this.resting = false;
+		this.stillFor = 0;
+		this.speed = 0;
+		this.headingDegrees = yaw;
+		this.rideY = this.groundHeight(x, z, this.rideHeight + 20) + this.halfHeight;
+		this.entity.setPosition(x, this.rideY, z);
+		this.entity.setEulerAngles(0, yaw, 0);
+		this.entity.rigidbody?.teleport(x, this.rideY, z, 0, yaw, 0);
+		if (this.agent) {
+			this.agent.x = x;
+			this.agent.z = z;
+			this.agent.speed = 0;
+		}
+		this.lastYaw = null;
+		this.missionRoute = route && route.length > 0 ? route : null;
+		this.missionRouteIndex = 0;
+		this.missionClaimed = true;
+		this.missionCruise = options.cruise ?? MISSION_CRUISE;
+		this.missionStartX = x;
+		this.missionStartZ = z;
+		this.missionStuckSeconds = 0;
+		this.stuckSeconds = 0;
+		this.reverseSeconds = 0;
+		this.missionRacer = options.racer ?? false;
+		this.missionHeld = this.missionRacer;
+		this.driver = this.missionRoute ? "convoy" : "parked";
+	}
+
+	/**
+	 * The mission's done with it: it stops where it is (a convoy van pulls up) and leaves once
+	 * nobody's looking — wrecks included, so nothing vanishes in front of the player.
+	 */
+	public releaseFromMission() {
+		this.missionRoute = null;
+		this.missionClaimed = false;
+		this.missionRacer = false;
+		this.missionHeld = false;
+		if (this.driver === "convoy") this.driver = "parked";
+	}
+
+	/**
+	 * Mission cars, every frame. Returns true while the car is out of the world. One the player
+	 * was still in when the mission ended is theirs until they leave it somewhere out of sight.
+	 */
+	private updateMissionSlot(): boolean {
+		if (this.stowed) return true;
+		if (this.missionClaimed || this.driver === "player" || this.driver === "held") return false;
+		const position = this.entity.getPosition();
+		const player = readPlayerPose();
+		const distance = Math.hypot(position.x - player.x, position.z - player.z);
+		if (distance > RECYCLE_HARD_LIMIT || (distance > RECYCLE_DISTANCE && !inCameraView(position.x, position.z, VISIBLE_RANGE))) {
+			this.stow();
+			return true;
+		}
+		return false;
+	}
+
+	/** The lights go green for a race opponent held on the grid. */
+	public releaseFromGrid() {
+		this.missionHeld = false;
+	}
+
+	/** How far round its route it is: points passed, and where (for a race's standings). */
+	public get routeProgress(): { passed: number; x: number; z: number } | null {
+		if (!this.missionClaimed || this.stowed) return null;
+		const car = this.carPhysics();
+		return { passed: this.missionRouteIndex, x: car.x, z: car.z };
+	}
+
+	/**
+	 * A mission car on its route, at its cruise, braking for the bends and minding the traffic
+	 * ahead. A race opponent waits on the grid for the start.
+	 */
+	private driveRoute(dt: number, car: CarPhysics) {
+		const controls = this.controls;
+		controls.brake = 0;
+		controls.handbrake = false;
+		const route = this.missionRoute;
+		if (!route || this.integrity <= 0 || this.burnedOut) {
+			this.driver = "wrecked";
+			controls.drive = 0;
+			controls.steer = 0;
+			return;
+		}
+		if (this.missionHeld) {
+			controls.drive = 0;
+			controls.steer = 0;
+			controls.handbrake = true;
+			return;
+		}
+		if (this.reverseSeconds > 0) {
+			// Backing off whatever it ran into, wheels turned away from it.
+			this.reverseSeconds -= dt;
+			controls.drive = -1;
+			controls.steer = this.reverseSteer;
+			return;
+		}
+		let point = route[this.missionRouteIndex];
+		while (point && Math.hypot(point[0] - car.x, point[1] - car.z) < MISSION_ROUTE_REACHED) point = route[++this.missionRouteIndex];
+		if (!point) {
+			// Made it to the end: home first in a race, or — a convoy — away.
+			this.driver = "parked";
+			this.missionRoute = null;
+			controls.drive = 0;
+			controls.steer = 0;
+			emitGameEvent(this.missionRacer ? { type: "racerFinished", id: this.entity.name } : { type: "actorEscaped", id: this.entity.name });
+			return;
+		}
+		const after = route[this.missionRouteIndex + 1];
+		let speed = after ? cornerSpeed(car.x, car.z, point, after, this.missionCruise) : this.missionCruise;
+		// Follow the line of the road, not a beeline: aim a little way ahead along this leg, so a
+		// car knocked off it steers back onto the road rather than across a block.
+		const from = route[this.missionRouteIndex - 1] ?? [this.missionStartX, this.missionStartZ];
+		const [aheadX, aheadZ] = alongLeg(from, point, car.x, car.z, MISSION_LOOKAHEAD + Math.max(0, car.forwardSpeed) * 0.5);
+		// Still swinging round onto the new heading: no picking up speed until it's lined up.
+		const facing = Math.cos(wrapAngle(Math.atan2(aheadX - car.x, aheadZ - car.z) - car.heading));
+		const bend = this.missionCruise * MISSION_CORNER_SHARE;
+		speed = Math.min(speed, bend + (this.missionCruise - bend) * Math.max(0, facing) ** 4);
+		const [x, z, wanted] = this.avoidAhead(car, aheadX, aheadZ, speed, null);
+		const drive = steerToward(car.x, car.z, car.heading, car.forwardSpeed, x, z, wanted);
+		controls.drive = drive.drive;
+		controls.steer = drive.steer;
+
+		// Pinned against something: back off and try again. Still going nowhere after a few goes,
+		// and nobody's watching: back on the road where it left it, facing the way to go.
+		if (controls.drive > 0.5 && car.speed < 1.5) {
+			this.stuckSeconds += dt;
+			this.missionStuckSeconds += dt;
+		} else {
+			this.stuckSeconds = 0;
+			if (car.speed > 6) this.missionStuckSeconds = 0;
+		}
+		if (this.missionStuckSeconds > MISSION_UNSTICK_SECONDS && !inCameraView(car.x, car.z, VISIBLE_RANGE)) {
+			this.missionStuckSeconds = 0;
+			this.stuckSeconds = 0;
+			const from = route[this.missionRouteIndex - 1] ?? [car.x, car.z];
+			const heading = Math.atan2(point[0] - from[0], point[1] - from[1]);
+			car.reset(from[0], from[1], heading, 0);
+			this.headingDegrees = heading * DEGREES;
+			return;
+		}
+		if (this.stuckSeconds > STUCK_SECONDS) {
+			this.stuckSeconds = 0;
+			this.reverseSeconds = REVERSE_SECONDS;
+			this.reverseSteer = drive.steer >= 0 ? -1 : 1;
+		}
 	}
 
 	/** Takes the unit out of the world until it's needed. */
@@ -2133,4 +2427,47 @@ export function clearWrecksNear(x: number, z: number, radius: number): number {
 		if (car.clearWreck()) cleared++;
 	}
 	return cleared;
+}
+
+// Mission cars (cars with a missionSlot: see missions/MissionActors).
+
+/** By id (the entity's name, as the missions know them). */
+const missionCars = new Map<string, OrionVehicle>();
+
+/** Puts a mission's car into the world; false if there's no such car. */
+export function placeMissionVehicle(id: string, x: number, z: number, yaw: number, route: readonly (readonly [number, number])[] | null = null, options: MissionDriving = {}): boolean {
+	const car = missionCars.get(id);
+	if (!car) return false;
+	car.placeForMission(x, z, yaw, route, options);
+	return true;
+}
+
+/** Green light: the race opponents set off. */
+export function startMissionRacers(ids: Iterable<string>): void {
+	for (const id of ids) missionCars.get(id)?.releaseFromGrid();
+}
+
+/** How far round its route a mission car is, or null if it isn't out. */
+export function missionVehicleProgress(id: string): { passed: number; x: number; z: number } | null {
+	return missionCars.get(id)?.routeProgress ?? null;
+}
+
+/** Takes a mission's cars out of the world again (bar the one the player's in). */
+export function releaseMissionVehicles(ids: Iterable<string>): void {
+	for (const id of ids) missionCars.get(id)?.releaseFromMission();
+}
+
+/** Where the mission cars that are out are, for the map: fills `out`, returns how many. */
+export function missionVehicleMarkers(out: { id: string; x: number; z: number }[]): number {
+	let count = 0;
+	for (const [id, car] of missionCars) {
+		if (!car.inWorld || car.burnedOut) continue;
+		const position = car.entity.getPosition();
+		const slot = out[count] ?? (out[count] = { id, x: 0, z: 0 });
+		slot.id = id;
+		slot.x = position.x;
+		slot.z = position.z;
+		count++;
+	}
+	return count;
 }

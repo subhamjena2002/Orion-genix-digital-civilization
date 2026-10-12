@@ -18,6 +18,7 @@ import {
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+	AIRFIELD_BOUNDS,
 	AIRFIELD_LABELS,
 	AIRFIELD_LIGHTS,
 	AIRFIELD_MARKINGS,
@@ -36,6 +37,7 @@ import {
 import { addQuad, addVertex, emptyMesh } from "@/engine/orion/world/MeshData";
 
 import { Jet } from "./Jet";
+import { cullBatchGroup } from "./useDistanceCull";
 import { ParkedVehicle } from "./Vehicles";
 import { compileUpFront, toCollisionMesh, toMesh } from "./WorldMesh";
 
@@ -134,7 +136,17 @@ export const Airfield = memo(function Airfield({ asphaltDiffuse, asphaltNormal }
 			entity.addComponent("render", { meshInstances: [instance], castShadows: false, receiveShadows: true, batchGroupId });
 			place(entity, [label.x, PAINT_TOP + 0.004, label.z], [label.width, 1, label.height], LABEL_YAW[label.up]);
 		}
+		// Runway paint, numbers and lights: not drawn from across the city.
+		const stopCulling = group
+			? cullBatchGroup(app, group.id, {
+				x: (AIRFIELD_BOUNDS.minX + AIRFIELD_BOUNDS.maxX) / 2,
+				z: (AIRFIELD_BOUNDS.minZ + AIRFIELD_BOUNDS.maxZ) / 2,
+				halfX: (AIRFIELD_BOUNDS.maxX - AIRFIELD_BOUNDS.minX) / 2,
+				halfZ: (AIRFIELD_BOUNDS.maxZ - AIRFIELD_BOUNDS.minZ) / 2,
+			}, 300)
+			: null;
 		return () => {
+			stopCulling?.();
 			holder.destroy();
 			quad.destroy();
 			if (group && batcher) batcher.removeGroup(group.id);

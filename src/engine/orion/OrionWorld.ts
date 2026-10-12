@@ -1,4 +1,3 @@
-import { ORION_PROPERTIES } from "./properties/Properties";
 import { ORION_BUILDING_REGISTRY } from "./buildings/Buildings";
 import { ORION_RENDERING } from "./rendering/Renderer";
 import { ORION_STAGING_TERRAIN } from "./terrain/Terrain";
@@ -25,7 +24,6 @@ export const ORION_WORLD = {
 	city: ORION_CITY,
 	startAddress: ORION_START_ADDRESS,
 	publicSpaces: ORION_PUBLIC_SPACES,
-	properties: ORION_PROPERTIES,
 	buildings: ORION_BUILDING_REGISTRY,
 	roads: ORION_ROAD_SEGMENTS,
 	intersections: ORION_INTERSECTIONS,

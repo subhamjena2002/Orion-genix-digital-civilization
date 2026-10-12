@@ -1,5 +1,5 @@
 import type { RegisteredAsset } from "../assets/AssetRegistry";
-import type { Vector3Tuple } from "../properties/Properties";
+import type { Vector3Tuple } from "../world/Vector";
 
 export interface BridgeDefinition extends RegisteredAsset {
 	category: "road-bridge" | "pedestrian-bridge" | "overpass" | "underpass" | "elevated-road";

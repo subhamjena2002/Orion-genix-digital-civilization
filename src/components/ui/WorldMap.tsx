@@ -1,43 +1,49 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 
-import { ORION_BUILDING_MAP } from "@/engine/orion/buildings/Buildings";
-import { ORION_ROAD_SEGMENTS } from "@/engine/orion/roads/RoadNetwork";
-import { RAIL_CROSSINGS, railPolyline } from "@/engine/orion/rail/RailLine";
-import { ORION_DISTRICTS } from "@/engine/orion/world/WorldModel";
-import { landBounds, landPath, ORION_LAND } from "@/engine/orion/world/StateOutline";
-import { POLICE_STATION } from "@/engine/orion/police/Police";
-import { HOSPITAL_REPLACED_BUILDINGS, HOSPITALS } from "@/engine/orion/world/Hospitals";
-import { AIRFIELD_FENCE, AIRFIELD_SURFACES, RUNWAY, SHELTER, SHELTERS } from "@/engine/orion/world/Airfield";
-import { ACCESS_ROAD, BASE, BASE_BOUNDS } from "@/engine/orion/world/MilitaryBase";
 import { usePlayerPose } from "@/components/world/usePlayerPose";
+import { activeTarget, clearWaypoint, getWaypoint, LANDMARK_BLIPS, navigationVersion, onNavigationChange, routeTo, setWaypoint, type Blip, type BlipKind, type Target } from "@/engine/orion/navigation/Navigation";
+import type { Route } from "@/engine/orion/navigation/RoadGraph";
+import { missionBlips } from "@/engine/orion/missions/MissionBlips";
+import { readCameraView } from "@/engine/orion/player/PlayerPose";
 import { policeMarkers, type PoliceMarker } from "@/engine/orion/traffic/OrionVehicle";
-import { HIGHWAY_MAP, mapRelief, type ReliefImage } from "./MapRelief";
+import { ESTATE_NAMES } from "@/engine/orion/world/Estates";
+import { isOnLand, landBounds } from "@/engine/orion/world/StateOutline";
+import { ORION_DISTRICTS } from "@/engine/orion/world/WorldModel";
+import { BLIP_LABELS, BlipIcon } from "./MapIcons";
+import { MAP_COLOURS, MapLayers } from "./MapLayers";
 import { useTouchDevice } from "./useTouchDevice";
 
+/**
+ * The map: a radar in the corner that turns with the camera, and the full map (M) to zoom, pan and
+ * set a waypoint on. Wherever the player is being sent — their waypoint, or a mission's objective
+ * (see navigation/Navigation) — the GPS route is drawn on both, by road, and redrawn as they go.
+ */
+
 const MINIMAP_SIZE = 190;
-/** Smaller on touch screens, where it shares a landscape phone's height with the controls. */
 const TOUCH_MINIMAP_SIZE = 124;
-/** How many world units the corner minimap shows across its full width. */
-const MINIMAP_SPAN = 420;
-
-/** The rail loop as SVG points; the route never changes, so it is worked out once. */
-const RAIL_PATH = railPolyline().map((point) => `${point.x},${point.z}`).join(" ");
-
-interface Bounds {
-	minX: number;
-	maxX: number;
-	minZ: number;
-	maxZ: number;
-}
-
-/** Sea shown around the outermost coast on the full map. */
+/** World metres across the radar. */
+const MINIMAP_SPAN = 360;
+/** Sea round the coast on the full map, metres. */
 const STATE_MAP_MARGIN = 90;
-const EXPANDED_WIDTH_PX = 900;
-const SCALE_BAR_UNITS = 250;
-/** Matches the sand ring StateTerrain lays around every coast. */
-const BEACH_MAP_WIDTH = 26;
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 12;
+/** A press that moves less than this (px) is a tap (set waypoint), not a drag. */
+const TAP_SLOP = 6;
+/** Re-plan the route once the player has moved this far (m). */
+const REPLAN_DISTANCE = 10;
+/** Icon sizes on screen, px. */
+const ICON_EXPANDED = 20;
+const ICON_MINIMAP = 15;
+
+const STATE = (() => {
+	const bounds = landBounds();
+	return { minX: bounds.minX - STATE_MAP_MARGIN, maxX: bounds.maxX + STATE_MAP_MARGIN, minZ: bounds.minZ - STATE_MAP_MARGIN, maxZ: bounds.maxZ + STATE_MAP_MARGIN };
+})();
+const STATE_W = STATE.maxX - STATE.minX;
+const STATE_H = STATE.maxZ - STATE.minZ;
+const STATE_CENTRE: readonly [number, number] = [(STATE.minX + STATE.maxX) / 2, (STATE.minZ + STATE.maxZ) / 2];
 
 /** Police on a chase, sampled for the map a few times a second. */
 function usePoliceMarkers(intervalMs: number): readonly PoliceMarker[] {
@@ -53,343 +59,374 @@ function usePoliceMarkers(intervalMs: number): readonly PoliceMarker[] {
 	return markers;
 }
 
-function getStateBounds(): Bounds {
-	const bounds = landBounds();
-	return {
-		minX: bounds.minX - STATE_MAP_MARGIN,
-		maxX: bounds.maxX + STATE_MAP_MARGIN,
-		minZ: bounds.minZ - STATE_MAP_MARGIN,
-		maxZ: bounds.maxZ + STATE_MAP_MARGIN,
-	};
+/** Mission givers, targets and the safehouse, sampled for the map a few times a second. */
+function useMissionBlips(intervalMs: number): readonly Blip[] {
+	const [blips, setBlips] = useState<readonly Blip[]>([]);
+	useEffect(() => {
+		const sample = () => setBlips((previous) => {
+			const next = missionBlips();
+			const same = next.length === previous.length && next.every((blip, index) => {
+				const old = previous[index];
+				return old.id === blip.id && old.kind === blip.kind && Math.abs(old.x - blip.x) < 0.5 && Math.abs(old.z - blip.z) < 0.5;
+			});
+			return same ? previous : next;
+		});
+		sample();
+		const id = window.setInterval(sample, intervalMs);
+		return () => window.clearInterval(id);
+	}, [intervalMs]);
+	return blips;
 }
 
-/** Short map labels; the full names are too long to sit inside a district at state scale. */
-function shortDistrictName(name: string): string {
-	return name.replace(/ District$/, "").replace("Low-Density Residential", "Residential").replace("High-Density Residential", "Uptown");
+/** The current destination, re-read whenever navigation changes. */
+function useTarget(): Target | null {
+	const version = useSyncExternalStore(onNavigationChange, navigationVersion, () => 0);
+	// eslint-disable-next-line react-hooks/exhaustive-deps
+	return useMemo(() => activeTarget(), [version]);
 }
+
+/**
+ * The GPS route from the player to the target, re-planned as they move: from where they are to
+ * the nearest REPLAN_DISTANCE (the route starts at the nearest road anyway).
+ */
+function useRoute(target: Target | null, x: number, z: number): Route | null {
+	const fromX = Math.round(x / REPLAN_DISTANCE) * REPLAN_DISTANCE;
+	const fromZ = Math.round(z / REPLAN_DISTANCE) * REPLAN_DISTANCE;
+	return useMemo(() => (target ? routeTo(fromX, fromZ, target.x, target.z) : null), [target, fromX, fromZ]);
+}
+
+function formatDistance(metres: number): string {
+	return metres >= 1000 ? `${(metres / 1000).toFixed(1)} km` : `${Math.round(metres / 10) * 10} m`;
+}
+
+/** Where the player is, by name: an estate, a district, or just the state. */
+function placeName(x: number, z: number): string {
+	const estate = ESTATE_NAMES.find((candidate) => Math.hypot(candidate.x - x, candidate.z - z) < 140);
+	if (estate) return estate.name;
+	const district = ORION_DISTRICTS.find((candidate) => Math.abs(candidate.bounds.center[0] - x) <= candidate.bounds.size[0] / 2 + 20 && Math.abs(candidate.bounds.center[2] - z) <= candidate.bounds.size[1] / 2 + 20);
+	return district ? district.name : "Orion State";
+}
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
 export function WorldMap() {
 	const [expanded, setExpanded] = useState(false);
 	const touch = useTouchDevice();
 	const police = usePoliceMarkers(150);
-	const pose = usePlayerPose(120);
-	const stateBounds = useMemo(() => getStateBounds(), []);
-	const coastPaths = useMemo(() => ORION_LAND.map((land) => ({ ...land, d: landPath(land.points) })), []);
-	// Drawn on a canvas, so only in the browser (the page is also prerendered), and after the
-	// first paint so the map doesn't hold up the game's start.
-	const [relief, setRelief] = useState<readonly ReliefImage[]>([]);
+	const mission = useMissionBlips(200);
+	const pose = usePlayerPose(60);
+	const target = useTarget();
+	const route = useRoute(target, pose.x, pose.z);
+	const waypoint = getWaypoint();
+
+	// The full map's view: centre and zoom, and the frame's size in pixels.
+	const [centre, setCentre] = useState<readonly [number, number]>(STATE_CENTRE);
+	const [zoom, setZoom] = useState(1);
+	const frameRef = useRef<HTMLDivElement>(null);
+	const svgRef = useRef<SVGSVGElement>(null);
+	const [frame, setFrame] = useState({ width: 900, height: 560 });
+
 	useEffect(() => {
-		const id = window.setTimeout(() => setRelief(mapRelief()), 0);
-		return () => window.clearTimeout(id);
+		const element = frameRef.current;
+		if (!element) return;
+		const observer = new ResizeObserver(() => setFrame({ width: element.clientWidth || 1, height: element.clientHeight || 1 }));
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, [expanded]);
+
+	const open = useCallback((next: boolean) => {
+		setExpanded(next);
+		if (next) {
+			// The cursor is needed on the map: let go of mouse-look.
+			if (document.pointerLockElement) document.exitPointerLock();
+			setZoom(1);
+			setCentre(STATE_CENTRE);
+		}
 	}, []);
 
 	useEffect(() => {
 		function handleKeyDown(event: KeyboardEvent) {
-			if (event.code === "KeyM") setExpanded((open) => !open);
+			if (event.code === "KeyM") open(!expanded);
 			if (event.code === "Escape") setExpanded(false);
+			if (expanded && (event.code === "Equal" || event.code === "NumpadAdd")) setZoom((value) => clamp(value * 1.4, MIN_ZOOM, MAX_ZOOM));
+			if (expanded && (event.code === "Minus" || event.code === "NumpadSubtract")) setZoom((value) => clamp(value / 1.4, MIN_ZOOM, MAX_ZOOM));
 		}
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, []);
+	}, [expanded, open]);
 
-	// The minimap follows the player; the expanded map shows the whole state at once.
-	const view = expanded
-		? stateBounds
-		: {
-			minX: pose.x - MINIMAP_SPAN / 2,
-			maxX: pose.x + MINIMAP_SPAN / 2,
-			minZ: pose.z - MINIMAP_SPAN / 2,
-			maxZ: pose.z + MINIMAP_SPAN / 2,
+	// ---- View ----------------------------------------------------------------------------------
+	const minimapPx = touch ? TOUCH_MINIMAP_SIZE : MINIMAP_SIZE;
+	const spanW = expanded ? STATE_W / zoom : MINIMAP_SPAN;
+	const spanH = expanded ? STATE_H / zoom : MINIMAP_SPAN;
+	const viewX = expanded ? centre[0] : pose.x;
+	const viewZ = expanded ? centre[1] : pose.z;
+	const viewBox = `${viewX - spanW / 2} ${viewZ - spanH / 2} ${spanW} ${spanH}`;
+	// World metres per screen pixel ("meet" fits the tighter axis).
+	const unit = expanded ? Math.max(spanW / frame.width, spanH / frame.height) : MINIMAP_SPAN / minimapPx;
+	const px = (value: number) => value * unit;
+	// The radar turns so the camera's view is up.
+	const camera = readCameraView();
+	const heading = camera.known ? (Math.atan2(camera.forwardZ, camera.forwardX) * 180) / Math.PI : -90;
+	const turn = expanded ? 0 : -90 - heading;
+	const turnRadians = (turn * Math.PI) / 180;
+	const edge = MINIMAP_SPAN / 2 - px(10);
+
+	/** A world offset from the player, turned onto the radar and pinned inside its edge. */
+	const pinned = (dx: number, dz: number): { x: number; z: number; out: boolean; angle: number } => {
+		const sx = dx * Math.cos(turnRadians) - dz * Math.sin(turnRadians);
+		const sz = dx * Math.sin(turnRadians) + dz * Math.cos(turnRadians);
+		const reach = Math.max(Math.abs(sx), Math.abs(sz));
+		const out = reach > edge;
+		const k = out ? edge / reach : 1;
+		// Back into world space (the drawing is inside the turned group).
+		const bx = sx * k * Math.cos(-turnRadians) - sz * k * Math.sin(-turnRadians);
+		const bz = sx * k * Math.sin(-turnRadians) + sz * k * Math.cos(-turnRadians);
+		return { x: pose.x + bx, z: pose.z + bz, out, angle: (Math.atan2(sz, sx) * 180) / Math.PI };
+	};
+
+	// ---- Interaction (full map) ---------------------------------------------------------------
+	const pointers = useRef(new Map<number, { x: number; y: number }>());
+	const gesture = useRef<{ startX: number; startY: number; centre: readonly [number, number]; zoom: number; moved: boolean; pinch: number | null }>({ startX: 0, startY: 0, centre: STATE_CENTRE, zoom: 1, moved: false, pinch: null });
+
+	/**
+	 * Screen to world, worked out from the map's box and its view ("meet": the view scaled to fit
+	 * and centred). getScreenCTM was off by the map's own offset on the page in some browsers.
+	 */
+	const toWorld = (clientX: number, clientY: number): [number, number] | null => {
+		const svg = svgRef.current;
+		if (!svg) return null;
+		const rect = svg.getBoundingClientRect();
+		if (rect.width === 0 || rect.height === 0) return null;
+		const scale = Math.min(rect.width / spanW, rect.height / spanH);
+		const left = rect.left + (rect.width - spanW * scale) / 2;
+		const top = rect.top + (rect.height - spanH * scale) / 2;
+		return [viewX - spanW / 2 + (clientX - left) / scale, viewZ - spanH / 2 + (clientY - top) / scale];
+	};
+
+	const clampCentre = (x: number, z: number, atZoom: number): [number, number] => {
+		const halfW = STATE_W / atZoom / 2;
+		const halfH = STATE_H / atZoom / 2;
+		return [clamp(x, STATE.minX + halfW, STATE.maxX - halfW), clamp(z, STATE.minZ + halfH, STATE.maxZ - halfH)];
+	};
+
+	const zoomAround = (factor: number, clientX: number, clientY: number, from = zoom, fromCentre = centre) => {
+		const anchor = toWorld(clientX, clientY);
+		const next = clamp(from * factor, MIN_ZOOM, MAX_ZOOM);
+		if (!anchor) {
+			setZoom(next);
+			return;
+		}
+		const ratio = from / next;
+		setZoom(next);
+		setCentre(clampCentre(anchor[0] + (fromCentre[0] - anchor[0]) * ratio, anchor[1] + (fromCentre[1] - anchor[1]) * ratio, next));
+	};
+
+	const onWheel = (event: ReactWheelEvent<SVGSVGElement>) => {
+		if (!expanded) return;
+		zoomAround(Math.pow(1.0015, -event.deltaY), event.clientX, event.clientY);
+	};
+
+	const onPointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
+		if (!expanded) return;
+		pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+		try {
+			// Keeps a drag going when the pointer leaves the map; not every pointer can be captured.
+			event.currentTarget.setPointerCapture(event.pointerId);
+		} catch {
+			// Fine without.
+		}
+		const points = [...pointers.current.values()];
+		gesture.current = {
+			startX: event.clientX,
+			startY: event.clientY,
+			centre,
+			zoom,
+			moved: pointers.current.size > 1,
+			pinch: points.length === 2 ? Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y) : null,
 		};
-	const viewBox = `${view.minX} ${view.minZ} ${view.maxX - view.minX} ${view.maxZ - view.minZ}`;
-	// The expanded map letterboxes ("meet"), so the pixel scale follows whichever axis is tighter.
-	const worldPerPixel = expanded
-		? Math.max((view.maxX - view.minX) / EXPANDED_WIDTH_PX, (view.maxZ - view.minZ) / 560)
-		: (view.maxX - view.minX) / (touch ? TOUCH_MINIMAP_SIZE : MINIMAP_SIZE);
-	const px = (value: number) => value * worldPerPixel;
+	};
+
+	const onPointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+		if (!expanded || !pointers.current.has(event.pointerId)) return;
+		pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+		const state = gesture.current;
+		const points = [...pointers.current.values()];
+		if (points.length === 2 && state.pinch) {
+			const distance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+			zoomAround(distance / state.pinch, (points[0].x + points[1].x) / 2, (points[0].y + points[1].y) / 2, state.zoom, state.centre);
+			return;
+		}
+		const dx = event.clientX - state.startX;
+		const dy = event.clientY - state.startY;
+		if (!state.moved && Math.hypot(dx, dy) < TAP_SLOP) return;
+		state.moved = true;
+		setCentre(clampCentre(state.centre[0] - dx * unit, state.centre[1] - dy * unit, zoom));
+	};
+
+	const onPointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
+		if (!expanded || !pointers.current.has(event.pointerId)) return;
+		pointers.current.delete(event.pointerId);
+		const state = gesture.current;
+		if (pointers.current.size > 0 || state.moved || event.button === 2) return;
+		const point = toWorld(event.clientX, event.clientY);
+		if (!point) return;
+		// Tapping the waypoint again takes it away; anywhere else on land puts it there.
+		if (waypoint && Math.hypot(waypoint.x - point[0], waypoint.z - point[1]) < px(14)) clearWaypoint();
+		else if (isOnLand(point[0], point[1])) setWaypoint(point[0], point[1]);
+	};
+
+	// ---- Drawing -------------------------------------------------------------------------------
+	const iconScale = px(expanded ? ICON_EXPANDED : ICON_MINIMAP);
+	const icon = (kind: BlipKind, x: number, z: number, key: string, scale = iconScale) => (
+		<g key={key} transform={`translate(${x} ${z}) rotate(${-turn}) scale(${scale})`}>
+			<BlipIcon kind={kind} />
+		</g>
+	);
+	const routePoints = route ? route.points.map(([x, z]) => `${x.toFixed(1)},${z.toFixed(1)}`).join(" ") : "";
+	const targetDistance = target ? (route?.length ?? Math.hypot(target.x - pose.x, target.z - pose.z)) : 0;
 	const nearestPolice = police.reduce((nearest, unit) => Math.min(nearest, Math.hypot(unit.x - pose.x, unit.z - pose.z)), Infinity);
-	// On the corner map, police beyond its edge are pinned to the edge, pointing the way they are.
-	const edge = MINIMAP_SPAN / 2 - px(9);
+	const targetPin = target && !expanded ? pinned(target.x - pose.x, target.z - pose.z) : null;
+	const north = !expanded ? pinned(0, -MINIMAP_SPAN) : null;
 
 	return (
 		<div className={expanded ? "orion-map-expanded pointer-events-auto" : "orion-map-corner pointer-events-auto"}>
-			{/* Tapping the corner map opens it, on a touch screen: the footer button is a small target. */}
-			<div className="orion-map-frame" onClick={touch && !expanded ? () => setExpanded(true) : undefined}>
+			<div ref={frameRef} className="orion-map-frame" onClick={!expanded ? () => open(true) : undefined}>
 				<svg
+					ref={svgRef}
 					viewBox={viewBox}
 					width="100%"
 					height="100%"
 					preserveAspectRatio={expanded ? "xMidYMid meet" : "xMidYMid slice"}
 					role="img"
 					aria-label="World map"
+					className={expanded ? "orion-map-canvas" : undefined}
+					onWheel={onWheel}
+					onPointerDown={onPointerDown}
+					onPointerMove={onPointerMove}
+					onPointerUp={onPointerUp}
+					onPointerCancel={onPointerUp}
+					onContextMenu={(event) => {
+						event.preventDefault();
+						if (expanded) clearWaypoint();
+					}}
 				>
 					<defs>
-						<radialGradient id="orion-sea" cx="50%" cy="50%" r="75%">
-							<stop offset="0%" stopColor="#12303d" />
-							<stop offset="100%" stopColor="#081820" />
-						</radialGradient>
-						<pattern id="orion-sea-lines" width={px(14)} height={px(14)} patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
-							<line x1="0" y1="0" x2="0" y2={px(14)} stroke="rgba(120,180,200,0.05)" strokeWidth={px(1)} />
+						<linearGradient id="orion-sea" x1="0" y1="0" x2="1" y2="1">
+							<stop offset="0%" stopColor={MAP_COLOURS.sea} />
+							<stop offset="100%" stopColor={MAP_COLOURS.seaDeep} />
+						</linearGradient>
+						<pattern id="orion-sea-lines" width={40} height={40} patternUnits="userSpaceOnUse" patternTransform="rotate(30)">
+							<line x1="0" y1="0" x2="0" y2="40" stroke="rgba(255,255,255,0.06)" strokeWidth={8} />
 						</pattern>
 					</defs>
-					<rect x={view.minX - 2000} y={view.minZ - 2000} width={view.maxX - view.minX + 4000} height={view.maxZ - view.minZ + 4000} fill="url(#orion-sea)" />
-					<rect x={view.minX - 2000} y={view.minZ - 2000} width={view.maxX - view.minX + 4000} height={view.maxZ - view.minZ + 4000} fill="url(#orion-sea-lines)" />
+					<g transform={turn ? `rotate(${turn} ${pose.x} ${pose.z})` : undefined}>
+						<rect x={STATE.minX - 3000} y={STATE.minZ - 3000} width={STATE_W + 6000} height={STATE_H + 6000} fill="url(#orion-sea)" />
+						<rect x={STATE.minX - 3000} y={STATE.minZ - 3000} width={STATE_W + 6000} height={STATE_H + 6000} fill="url(#orion-sea-lines)" />
+						<MapLayers unit={expanded ? Math.round(unit * 20) / 20 : unit} labels={expanded} />
 
-					{/* Shallow-water shelf, then beach, then the land itself. */}
-					{coastPaths.map((land) => (
-						<path key={`${land.id}-shelf`} d={land.d} fill="none" stroke="rgba(92,168,186,0.16)" strokeWidth={Math.max(60, px(16))} strokeLinejoin="round" />
-					))}
-					{coastPaths.map((land) => (
-						<path key={`${land.id}-beach`} d={land.d} fill="#c2ad85" stroke="#c2ad85" strokeWidth={Math.max(BEACH_MAP_WIDTH * 2, px(3))} strokeLinejoin="round" />
-					))}
-					{coastPaths.map((land) => (
-						<path key={land.id} d={land.d} fill="#2f3b2c" stroke="rgba(236,222,190,0.55)" strokeWidth={px(1.2)} strokeLinejoin="round" />
-					))}
-
-					{ORION_DISTRICTS.map((district) => {
-						const [cx, , cz] = district.bounds.center;
-						const [w, d] = district.bounds.size;
-						return (
-							<rect
-								key={district.id}
-								x={cx - w / 2}
-								y={cz - d / 2}
-								width={w}
-								height={d}
-								rx={12}
-								fill={district.contentState === "active" ? "rgba(215,183,122,0.16)" : "rgba(255,255,255,0.04)"}
-								stroke={district.contentState === "active" ? "rgba(215,183,122,0.5)" : "rgba(255,255,255,0.1)"}
-								strokeWidth={px(1)}
-							/>
-						);
-					})}
-
-					{/* Hills and mountains, hill-shaded. */}
-					{relief.map((image) => (
-						<image key={image.id} href={image.href} x={image.x} y={image.z} width={image.width} height={image.height} preserveAspectRatio="none" />
-					))}
-
-					{/* Expressways: a dark casing under an amber road, bridges edged pale, tunnels dashed. */}
-					{HIGHWAY_MAP.map((highway) => (
-						<g key={highway.id} fill="none" strokeLinecap="round" strokeLinejoin="round">
-							<polyline points={highway.route} stroke="rgba(20,14,6,0.8)" strokeWidth={Math.max(26, px(6))} />
-							{highway.bridges.map((bridge, index) => (
-								<polyline key={index} points={bridge} stroke="rgba(236,230,214,0.85)" strokeWidth={Math.max(30, px(7.5))} />
-							))}
-							<polyline points={highway.route} stroke="#d9a441" strokeWidth={Math.max(16, px(3.6))} />
-							{highway.tunnels.map((tunnel, index) => (
-								<polyline key={index} points={tunnel} stroke="rgba(47,59,44,0.95)" strokeWidth={Math.max(12, px(2.6))} strokeDasharray={`${Math.max(8, px(3))} ${Math.max(8, px(3))}`} strokeLinecap="butt" />
-							))}
-						</g>
-					))}
-
-					{ORION_ROAD_SEGMENTS.map((segment) => (
-						<line
-							key={segment.id}
-							x1={segment.start[0]}
-							y1={segment.start[2]}
-							x2={segment.end[0]}
-							y2={segment.end[2]}
-							stroke="rgba(255,255,255,0.3)"
-							strokeWidth={Math.max(segment.width * 0.5, worldPerPixel)}
-							strokeLinecap="round"
-						/>
-					))}
-
-					{/* The rail loop, drawn as sleepers over a rail: dashes on top of a solid line. */}
-					<g>
-						<polyline
-							points={RAIL_PATH}
-							fill="none"
-							stroke="rgba(228,222,208,0.55)"
-							strokeWidth={Math.max(3, worldPerPixel * 1.5)}
-						/>
-						<polyline
-							points={RAIL_PATH}
-							fill="none"
-							stroke="rgba(30,28,24,0.85)"
-							strokeWidth={Math.max(3, worldPerPixel * 1.5)}
-							strokeDasharray={`${Math.max(2, worldPerPixel)} ${Math.max(4, worldPerPixel * 2)}`}
-						/>
-					</g>
-					{RAIL_CROSSINGS.map((crossing) => (
-						<circle
-							key={crossing.id}
-							cx={crossing.x} cy={crossing.z}
-							r={Math.max(3, worldPerPixel * 2)}
-							fill="none"
-							stroke="rgba(226,164,92,0.9)"
-							strokeWidth={Math.max(1.5, worldPerPixel)}
-						/>
-					))}
-
-					{ORION_BUILDING_MAP.filter((placement) => !POLICE_STATION.replacesBuildings.includes(placement.id) && !HOSPITAL_REPLACED_BUILDINGS.includes(placement.id)).map((placement) => (
-						<rect
-							key={placement.id}
-							x={placement.position[0] - placement.footprint[0] / 2}
-							y={placement.position[2] - placement.footprint[1] / 2}
-							width={placement.footprint[0]}
-							height={placement.footprint[1]}
-							fill="rgba(215,183,122,0.5)"
-						/>
-					))}
-
-					{/* The army base: an olive compound with its access road and a star. */}
-					<line x1={ACCESS_ROAD.x} y1={ACCESS_ROAD.fromZ} x2={ACCESS_ROAD.x} y2={ACCESS_ROAD.toZ} stroke="rgba(255,255,255,0.3)" strokeWidth={Math.max(ACCESS_ROAD.width * 0.5, worldPerPixel)} />
-					<rect x={BASE_BOUNDS.minX} y={BASE_BOUNDS.minZ} width={BASE.size[0]} height={BASE.size[1]} fill="rgba(75,90,58,0.55)" stroke="#a7b07a" strokeWidth={px(1.2)} />
-					<g transform={`translate(${BASE.centre[0]} ${BASE.centre[1]})`}>
-						<circle r={px(6)} fill="#2f3a24" stroke="#e9dfb8" strokeWidth={px(1)} />
-						<path d={starPath(px(4.2))} fill="#e9dfb8" />
-					</g>
-
-					{/* The airfield: its wall, paving (runway darkest, with its centreline) and shelters. */}
-					{AIRFIELD_FENCE.map((run, index) => (
-						<polyline key={index} points={run.map(([x, z]) => `${x},${z}`).join(" ")} fill="none" stroke="#a7b07a" strokeWidth={px(1.2)} />
-					))}
-					{AIRFIELD_SURFACES.map((surface) => (
-						<rect
-							key={surface.id}
-							x={surface.x - surface.width / 2}
-							y={surface.z - surface.depth / 2}
-							width={surface.width}
-							height={surface.depth}
-							fill={surface.kind === "runway" ? "#3b3d40" : surface.kind === "shoulder" || surface.kind === "blastPad" ? "#6c6c6a" : "#8b8a84"}
-						/>
-					))}
-					<line x1={RUNWAY.x} y1={RUNWAY.northZ + 50} x2={RUNWAY.x} y2={RUNWAY.southZ - 50} stroke="#ecebe4" strokeWidth={Math.max(1.5, worldPerPixel)} strokeDasharray="30 20" />
-					{SHELTERS.map((shelter) => (
-						<rect key={shelter.id} x={shelter.backX} y={shelter.z - SHELTER.width / 2} width={SHELTER.depth} height={SHELTER.width} rx={SHELTER.width / 3} fill="#a39f8e" stroke="#6d6a63" strokeWidth={px(0.8)} />
-					))}
-
-					{/* Hospitals: white with a red cross. */}
-					{HOSPITALS.map((hospital) => (
-						<g key={hospital.id} transform={`translate(${hospital.position[0]} ${hospital.position[1]})`}>
-							<rect x={-hospital.footprint[0] / 2} y={-hospital.footprint[1] / 2} width={hospital.footprint[0]} height={hospital.footprint[1]} fill="#e9ecea" />
-							<circle r={px(6)} fill="#ffffff" stroke="#c81e1e" strokeWidth={px(1.2)} />
-							<rect x={-px(3.6)} y={-px(1.1)} width={px(7.2)} height={px(2.2)} fill="#c81e1e" />
-							<rect x={-px(1.1)} y={-px(3.6)} width={px(2.2)} height={px(7.2)} fill="#c81e1e" />
-						</g>
-					))}
-
-					<g transform={`translate(${POLICE_STATION.position[0]} ${POLICE_STATION.position[1]})`}>
-						<rect
-							x={-POLICE_STATION.footprint[0] / 2}
-							y={-POLICE_STATION.footprint[1] / 2}
-							width={POLICE_STATION.footprint[0]}
-							height={POLICE_STATION.footprint[1]}
-							fill="#2f5bd3"
-						/>
-						<circle r={px(6)} fill="#1b3f94" stroke="#ffffff" strokeWidth={px(1.2)} />
-						<text y={px(2.6)} fontSize={px(7)} fontWeight={700} textAnchor="middle" fill="#ffffff" fontFamily="var(--font-geist-mono), monospace">P</text>
-					</g>
-
-					{expanded ? (
-						<g fontFamily="var(--font-geist-mono), monospace" textAnchor="middle" style={{ pointerEvents: "none" }}>
-							{ORION_DISTRICTS.map((district) => (
-								<text
-									key={`${district.id}-label`}
-									x={district.bounds.center[0]}
-									y={district.bounds.center[2] + district.bounds.size[1] / 2 - px(8)}
-									fontSize={px(5.5)}
-									letterSpacing={px(0.3)}
-									fill="rgba(236,230,214,0.7)"
-								>
-									{shortDistrictName(district.name).toUpperCase()}
-								</text>
-							))}
-							{HIGHWAY_MAP.map((highway) => (
-								<text
-									key={`${highway.id}-label`}
-									transform={`translate(${highway.labelX} ${highway.labelZ}) rotate(${highway.labelAngle})`}
-									y={-px(7)}
-									fontSize={px(6)}
-									letterSpacing={px(0.3)}
-									fill="#e8c27a"
-								>
-									{highway.name.toUpperCase()}
-								</text>
-							))}
-							{relief.map((image) => (
-								<text key={`${image.id}-label`} x={image.peakX} y={image.peakZ - px(5)} fontSize={px(6)} fill="rgba(236,230,214,0.75)" fontStyle="italic">
-									▲ {image.name} · {Math.round(image.peak)} m
-								</text>
-							))}
-							{ORION_LAND.slice(1).map((land) => (
-								<text key={`${land.id}-label`} x={land.centre[0]} y={land.centre[1] + px(3)} fontSize={px(9)} fill="rgba(236,230,214,0.8)">
-									{land.name}
-								</text>
-							))}
-							<text x={stateBounds.minX + px(30)} y={stateBounds.maxZ - px(46)} textAnchor="start" fontSize={px(15)} letterSpacing={px(6)} fill="rgba(215,183,122,0.85)">
-								ORION STATE
-							</text>
-							<text x={stateBounds.minX + px(30)} y={stateBounds.maxZ - px(28)} textAnchor="start" fontSize={px(9)} fill="rgba(120,180,200,0.55)" fontStyle="italic">
-								Orion Sea
-							</text>
-
-							<g transform={`translate(${stateBounds.maxX - px(44)} ${stateBounds.minZ + px(48)})`}>
-								<circle r={px(20)} fill="rgba(8,16,20,0.6)" stroke="rgba(236,230,214,0.35)" strokeWidth={px(1)} />
-								<path d={`M 0 ${-px(16)} L ${px(5)} 0 L 0 ${px(3)} L ${-px(5)} 0 Z`} fill="#d7b77a" />
-								<path d={`M 0 ${px(16)} L ${px(5)} 0 L 0 ${-px(3)} L ${-px(5)} 0 Z`} fill="rgba(236,230,214,0.45)" />
-								<text y={-px(24)} fontSize={px(9)} fill="#d7b77a">N</text>
+						{/* The GPS route, on a white casing so it reads over the roads. */}
+						{route ? (
+							<g fill="none" strokeLinecap="round" strokeLinejoin="round">
+								<polyline points={routePoints} stroke="#ffffff" strokeWidth={Math.max(9, px(7))} />
+								<polyline points={routePoints} stroke={target?.kind === "waypoint" ? MAP_COLOURS.route : MAP_COLOURS.objective} strokeWidth={Math.max(5, px(4.2))} />
 							</g>
+						) : null}
 
-							<g transform={`translate(${stateBounds.minX + px(30)} ${stateBounds.minZ + px(40)})`} textAnchor="start">
-								<rect width={SCALE_BAR_UNITS} height={px(4)} fill="rgba(236,230,214,0.7)" />
-								<rect width={SCALE_BAR_UNITS / 2} height={px(4)} fill="rgba(8,16,20,0.9)" stroke="rgba(236,230,214,0.7)" strokeWidth={px(0.8)} />
-								<text y={-px(6)} fontSize={px(8)} fill="rgba(236,230,214,0.7)">{SCALE_BAR_UNITS} m</text>
-							</g>
+						{LANDMARK_BLIPS.map((blip) => {
+							if (expanded) return icon(blip.kind, blip.x, blip.z, blip.id);
+							const dx = blip.x - pose.x;
+							const dz = blip.z - pose.z;
+							return Math.hypot(dx, dz) < MINIMAP_SPAN * 0.75 ? icon(blip.kind, blip.x, blip.z, blip.id) : null;
+						})}
+
+						{/* Mission targets stay on the radar's edge when out of range, like the police. */}
+						{mission.map((blip) => {
+							if (expanded) return icon(blip.kind, blip.x, blip.z, blip.id);
+							const dx = blip.x - pose.x;
+							const dz = blip.z - pose.z;
+							if (blip.kind === "target" || blip.kind === "missionVehicle") {
+								const pin = pinned(dx, dz);
+								return icon(blip.kind, pin.x, pin.z, blip.id);
+							}
+							return Math.hypot(dx, dz) < MINIMAP_SPAN * 0.75 ? icon(blip.kind, blip.x, blip.z, blip.id) : null;
+						})}
+
+						{police.map((unit, index) => {
+							if (expanded) return <circle key={index} className="orion-map-police" cx={unit.x} cy={unit.z} r={px(5)} stroke="#ffffff" strokeWidth={px(1.2)} />;
+							const pin = pinned(unit.x - pose.x, unit.z - pose.z);
+							return <circle key={index} className="orion-map-police" cx={pin.x} cy={pin.z} r={px(5)} stroke="#ffffff" strokeWidth={px(1.2)} />;
+						})}
+
+						{target ? (
+							expanded
+								? icon(target.kind === "waypoint" ? "waypoint" : "objective", target.x, target.z, "target", px(ICON_EXPANDED * 1.3))
+								: targetPin ? icon(target.kind === "waypoint" ? "waypoint" : "objective", targetPin.x, targetPin.z, "target", px(ICON_MINIMAP * 1.3)) : null
+						) : null}
+
+						{/* The player: an arrow the way they face. */}
+						<g transform={`translate(${pose.x} ${pose.z}) rotate(${180 - pose.yaw}) scale(${px(expanded ? 18 : 16)})`}>
+							<BlipIcon kind="player" />
 						</g>
-					) : null}
 
-					{police.map((unit, index) => {
-						const dx = unit.x - pose.x;
-						const dz = unit.z - pose.z;
-						const beyond = !expanded && Math.max(Math.abs(dx), Math.abs(dz)) > edge;
-						if (!beyond) {
-							return <circle key={index} className="orion-map-police" cx={unit.x} cy={unit.z} r={px(expanded ? 4 : 5)} stroke="#ffffff" strokeWidth={px(1.2)} />;
-						}
-						const scale = edge / Math.max(Math.abs(dx), Math.abs(dz));
-						const angle = (Math.atan2(dz, dx) * 180) / Math.PI;
-						return (
-							<g key={index} transform={`translate(${pose.x + dx * scale} ${pose.z + dz * scale}) rotate(${angle})`}>
-								<path className="orion-map-police" d={`M ${px(6)} 0 L ${-px(4)} ${px(4.5)} L ${-px(4)} ${-px(4.5)} Z`} stroke="#ffffff" strokeWidth={px(1)} />
+						{north ? (
+							<g transform={`translate(${north.x} ${north.z}) rotate(${-turn})`}>
+								<circle r={px(7)} fill="rgba(29,42,53,0.85)" />
+								<text y={px(3)} fontSize={px(9)} fontWeight={800} textAnchor="middle" fill="#ffffff" fontFamily="var(--font-geist-sans), sans-serif">N</text>
 							</g>
-						);
-					})}
-
-					<g transform={`translate(${pose.x} ${pose.z}) rotate(${180 - pose.yaw})`}>
-						<circle r={worldPerPixel * 7} fill="rgba(127,184,143,0.2)" />
-						<path
-							d={`M 0 ${-worldPerPixel * 6} L ${worldPerPixel * 4} ${worldPerPixel * 5} L 0 ${worldPerPixel * 2.5} L ${-worldPerPixel * 4} ${worldPerPixel * 5} Z`}
-							fill="#7fb88f"
-						/>
+						) : null}
 					</g>
 				</svg>
+
+				{expanded ? (
+					<>
+						<div className="orion-map-legend">
+							<p className="orion-map-legend-title">Map legend</p>
+							<ul>
+								{(["player", "waypoint", "objective", "mission", "target", "safehouse", "hospital", "police", "airport", "army"] as const).map((kind) => (
+									<li key={kind}>
+										<svg viewBox={kind === "waypoint" ? "-0.6 -1.15 1.2 1.2" : "-0.6 -0.6 1.2 1.2"} width={16} height={16} aria-hidden="true"><BlipIcon kind={kind} /></svg>
+										{BLIP_LABELS[kind]}
+									</li>
+								))}
+								<li>
+									<span className="orion-map-legend-route" aria-hidden="true" />
+									GPS route
+								</li>
+							</ul>
+						</div>
+						<div className="orion-map-zoom">
+							<button type="button" className="orion-focus" aria-label="Zoom in" onClick={() => setZoom((value) => clamp(value * 1.5, MIN_ZOOM, MAX_ZOOM))}>+</button>
+							<button type="button" className="orion-focus" aria-label="Zoom out" onClick={() => { const next = clamp(zoom / 1.5, MIN_ZOOM, MAX_ZOOM); setZoom(next); setCentre((value) => clampCentre(value[0], value[1], next)); }}>−</button>
+							<button type="button" className="orion-focus" aria-label="Centre on me" onClick={() => { const next = Math.max(zoom, 4); setZoom(next); setCentre(clampCentre(pose.x, pose.z, next)); }}>◎</button>
+						</div>
+						<p className="orion-map-hint">
+							{touch ? "Tap to set a waypoint · Pinch to zoom · Drag to move" : "Click to set a waypoint · Right-click to clear · Scroll to zoom · Drag to move"}
+						</p>
+					</>
+				) : null}
 			</div>
 
 			<div className="orion-map-footer">
 				{police.length > 0 ? (
-					<span className="orion-kicker orion-map-police-label" role="status">
-						Police · {Math.round(nearestPolice)} m
+					<span className="orion-kicker orion-map-police-label" role="status">Police · {Math.round(nearestPolice)} m</span>
+				) : target ? (
+					<span className="orion-kicker orion-map-target-label" role="status">
+						<span className="orion-map-target-dot" style={{ background: target.kind === "waypoint" ? MAP_COLOURS.waypoint : MAP_COLOURS.objective }} aria-hidden="true" />
+						{target.label} · {formatDistance(targetDistance)}
 					</span>
 				) : (
-					<span className="orion-kicker">{expanded ? "Orion State" : "North District"}</span>
+					<span className="orion-kicker">{expanded ? "Orion State" : placeName(pose.x, pose.z)}</span>
 				)}
-				<button type="button" onClick={() => setExpanded((open) => !open)} className="orion-map-toggle orion-focus">
-					{touch ? (expanded ? "Close" : "Expand") : expanded ? "Close · Esc" : "Expand · M"}
-				</button>
+				<span className="flex items-center gap-3">
+					{expanded && waypoint ? (
+						<button type="button" onClick={() => clearWaypoint()} className="orion-map-toggle orion-focus">Clear waypoint</button>
+					) : null}
+					<button type="button" onClick={(event) => { event.stopPropagation(); open(!expanded); }} className="orion-map-toggle orion-focus">
+						{touch ? (expanded ? "Close" : "Map") : expanded ? "Close · Esc" : "Map · M"}
+					</button>
+				</span>
 			</div>
 		</div>
 	);
-}
-
-/** A five-pointed star of radius `r` about the origin, as SVG path data. */
-function starPath(r: number): string {
-	const points: string[] = [];
-	for (let i = 0; i < 10; i++) {
-		const radius = i % 2 === 0 ? r : r * 0.42;
-		const angle = -Math.PI / 2 + (i * Math.PI) / 5;
-		points.push(`${(Math.cos(angle) * radius).toFixed(2)} ${(Math.sin(angle) * radius).toFixed(2)}`);
-	}
-	return `M ${points.join(" L ")} Z`;
 }

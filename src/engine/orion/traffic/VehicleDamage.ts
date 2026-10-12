@@ -1,21 +1,80 @@
+import type { VehicleStyle } from "./Vehicles";
+
 /**
- * Vehicle condition: every car starts at 100% and is worn down by crashes. At 0% the engine
- * catches fire and the car explodes a few seconds later, as in GTA.
+ * Vehicle condition: every vehicle starts at 100% and is worn down crash by crash. It shows on
+ * the body long before the engine goes — scratched and dulled paint, dents, cracked then
+ * shattered glass, a bumper hanging off (see OrionVehicleModel) — then the engine smokes, then
+ * burns, and only after burning a while does it go up.
  *
  * Damage follows crash analysis rather than raw speed: what wrecks a car is its *change* of
- * velocity (delta-v), and the energy involved goes with the square of it. Because each car's
- * own delta-v already accounts for the mass it hit, a small car hitting a heavy one takes the
- * worse end of it for free, and a gentle nudge at parking speed does nothing at all.
+ * velocity (delta-v), so a small car hitting a heavy one takes the worse end of it, and a
+ * nudge at parking speed does nothing. But no single crash finishes a vehicle off: a flat-out hit
+ * into a wall takes a car about a sixth of the way, so it takes five or six of those — or ten
+ * or more ordinary prangs — before it catches fire. A bus or a lorry takes longer still.
  */
 
 /** Delta-v (m/s) below which an impact is just a scrape. */
 const DAMAGE_THRESHOLD = 2.5;
+/** Delta-v at which a single hit does its build's worst (about a 100 km/h crash into a wall). */
+const WORST_HIT_DELTA_V = 30;
+
 /**
- * Delta-v that writes a car off in one hit. Real crash data treats about 20 m/s of delta-v as
- * catastrophic; this sits a little above that, so a flat-out crash into a building destroys
- * the car while traffic can be shunted about all day.
+ * How each kind of vehicle takes a crash.
+ *
+ * - car: crumples readily, glass goes in a hard hit.
+ * - van: a little tougher than a car.
+ * - heavy (lorries, fire engines, bin lorries): steel frames, so smaller, shallower dents and a
+ *   good many hits before anything gives; small cab windows hold out longest.
+ * - bus: long, thin panels dent wide and shallow, and the big windows are the first thing to go.
  */
-const WRITE_OFF_DELTA_V = 26;
+export type VehicleBuild = "car" | "van" | "heavy" | "bus";
+
+export interface BuildSpec {
+	/** Condition lost to the worst single hit. */
+	maxHitDamage: number;
+	/** Dent depth (m) per m/s of delta-v over the threshold, and the deepest any spot gets. */
+	dentPerDeltaV: number;
+	maxDent: number;
+	/** Dent radius (m): base plus per m/s. */
+	dentRadius: number;
+	dentRadiusPerDeltaV: number;
+	/** Glass cracks on a hit this hard (m/s), or once this much condition is gone... */
+	crackDeltaV: number;
+	crackDamage: number;
+	/** ...and shatters on a hit this hard, or once this much is gone. */
+	shatterDeltaV: number;
+	shatterDamage: number;
+	/** An end hit this hard tears the bumper down. */
+	sagDeltaV: number;
+}
+
+export const BUILDS: Readonly<Record<VehicleBuild, BuildSpec>> = {
+	car: { maxHitDamage: 16, dentPerDeltaV: 0.011, maxDent: 0.42, dentRadius: 0.55, dentRadiusPerDeltaV: 0.03, crackDeltaV: 12, crackDamage: 28, shatterDeltaV: 21, shatterDamage: 55, sagDeltaV: 10 },
+	van: { maxHitDamage: 13, dentPerDeltaV: 0.01, maxDent: 0.4, dentRadius: 0.65, dentRadiusPerDeltaV: 0.032, crackDeltaV: 13, crackDamage: 32, shatterDeltaV: 22, shatterDamage: 58, sagDeltaV: 11 },
+	heavy: { maxHitDamage: 8, dentPerDeltaV: 0.006, maxDent: 0.3, dentRadius: 0.7, dentRadiusPerDeltaV: 0.025, crackDeltaV: 16, crackDamage: 40, shatterDeltaV: 26, shatterDamage: 66, sagDeltaV: 14 },
+	bus: { maxHitDamage: 9, dentPerDeltaV: 0.008, maxDent: 0.34, dentRadius: 0.9, dentRadiusPerDeltaV: 0.045, crackDeltaV: 9, crackDamage: 22, shatterDeltaV: 17, shatterDamage: 45, sagDeltaV: 12 },
+};
+
+export function buildOf(style: VehicleStyle): VehicleBuild {
+	switch (style) {
+		case "bus":
+		case "schoolBus":
+			return "bus";
+		case "truck":
+		case "serviceTruck":
+		case "towTruck":
+		case "garbageTruck":
+		case "fireTruck":
+			return "heavy";
+		case "van":
+		case "ambulance":
+		case "militaryWagon":
+		case "suv":
+			return "van";
+		default:
+			return "car";
+	}
+}
 /** Running someone over barely marks the car. */
 export const PEDESTRIAN_DAMAGE = 1.5;
 
@@ -38,11 +97,51 @@ export const BLAST_PUSH = 9;
 
 export type VehicleCondition = "sound" | "smoking" | "burning" | "wrecked";
 
-/** Condition lost by a car whose own velocity changed by `deltaV` metres per second. */
-export function crashDamage(deltaV: number): number {
+/**
+ * Condition lost by a vehicle whose own velocity changed by `deltaV` metres per second: rising
+ * steeply with the hit, but never more than its build's worst in one go.
+ */
+export function crashDamage(deltaV: number, build: VehicleBuild = "car"): number {
 	const over = deltaV - DAMAGE_THRESHOLD;
 	if (over <= 0) return 0;
-	return Math.min(100, (over / WRITE_OFF_DELTA_V) ** 2 * 100);
+	const severity = Math.min(1, over / (WORST_HIT_DELTA_V - DAMAGE_THRESHOLD));
+	return BUILDS[build].maxHitDamage * severity ** 1.3;
+}
+
+/** How a hit dents the body: depth and radius in metres, and how ragged (0..1). Null below a scrape. */
+export function dentFor(deltaV: number, build: VehicleBuild = "car"): { depth: number; radius: number; crumple: number } | null {
+	const over = deltaV - DAMAGE_THRESHOLD;
+	if (over <= 0) return null;
+	const spec = BUILDS[build];
+	return {
+		depth: Math.min(spec.maxDent, over * spec.dentPerDeltaV),
+		radius: spec.dentRadius + over * spec.dentRadiusPerDeltaV,
+		crumple: Math.min(1, 0.25 + over / 30),
+	};
+}
+
+export type GlassState = "intact" | "cracked" | "shattered";
+
+/** A hit this many times the shatter threshold takes whole glass straight out. */
+const OUTRIGHT_SHATTER = 1.45;
+
+/**
+ * The glass after a hit of `deltaV` with `lost` condition gone in all. It only ever gets worse,
+ * and goes in steps: a hard hit crazes whole glass, and it's the next hard hit (or the damage
+ * mounting up) that knocks it out — only a truly violent crash shatters it at once.
+ */
+export function glassAfter(current: GlassState, deltaV: number, lost: number, build: VehicleBuild = "car"): GlassState {
+	const spec = BUILDS[build];
+	if (current === "shattered" || lost >= spec.shatterDamage) return "shattered";
+	if (deltaV >= spec.shatterDeltaV * OUTRIGHT_SHATTER) return "shattered";
+	if (current === "cracked" && deltaV >= spec.shatterDeltaV) return "shattered";
+	if (current === "cracked" || deltaV >= spec.crackDeltaV || lost >= spec.crackDamage) return "cracked";
+	return "intact";
+}
+
+/** How battered the paint looks (0 new, 1 wrecked): it dulls and darkens as damage builds. */
+export function wear(lost: number): number {
+	return Math.max(0, Math.min(1, lost / 80));
 }
 
 /** How much of the engine's power is left at this condition. */
@@ -70,10 +169,10 @@ export function blastAt(distance: number): { damage: number; push: number } {
 
 /**
  * Once the engine is alight the fire eats what's left of the car (percent per second), so a
- * burning car always ends in an explosion, as in GTA. Without it a car could sit on fire at a
- * few percent forever.
+ * burning car always ends in an explosion, as in GTA — but slowly enough (about fifteen seconds
+ * from the first flames) to get out and away. Without it a car could sit on fire forever.
  */
-export const FIRE_DRAIN_PER_SECOND = 2.4;
+export const FIRE_DRAIN_PER_SECOND = 1.4;
 /** After exploding, the wreck burns along its whole length for this long (time for a fire engine to reach it)... */
 export const WRECK_FIRE_SECONDS = 45;
 /** ...then smoulders, thinning out over this long. */

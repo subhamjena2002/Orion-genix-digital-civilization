@@ -15,6 +15,7 @@ import { Projectiles } from "./Projectiles";
 import { publishCombatHud } from "./CombatHud";
 import { WEAPONS, type WeaponDefinition } from "./WeaponData";
 import { WeaponInventory } from "./WeaponInventory";
+import { onProgressChange, ownsWeapon } from "../missions/Progress";
 import { WeaponModels, type WeaponVisual } from "./WeaponModels";
 
 /** What the controller passes in each frame. */
@@ -83,6 +84,7 @@ interface PhysicsRaycast {
  */
 export class PlayerCombat {
 	public readonly inventory = new WeaponInventory(WEAPONS, "fists");
+	private readonly stopWatchingProgress: () => void;
 	public readonly health = new Health(100);
 	public readonly source: DamageSourceRef = { id: nextCombatId(), kind: "player", x: 0, z: 0 };
 
@@ -93,7 +95,7 @@ export class PlayerCombat {
 	private readonly output: CombatOutput = { recoilPitch: 0, recoilYaw: 0, faceAim: false };
 	private readonly body: Listener;
 	/** The weapon list for the HUD; the carried set doesn't change, so it's built once. */
-	private readonly slotList: readonly { slot: number; name: string }[];
+	private slotList: readonly { slot: number; name: string }[];
 	private shown: WeaponVisual | null = null;
 	private shownFor: WeaponDefinition | null = null;
 	private aimHold = 0;
@@ -161,7 +163,17 @@ export class PlayerCombat {
 			takeDamage: (event) => this.hurt(event),
 		};
 		registerDamageable(this.body);
-		this.slotList = this.inventory.weapons.map((weapon) => ({ slot: weapon.definition.slot, name: weapon.definition.name }));
+		this.inventory.setOwnership(ownsWeapon);
+		this.slotList = this.ownedSlots();
+		this.stopWatchingProgress = onProgressChange(() => {
+			this.inventory.setOwnership(ownsWeapon);
+			this.slotList = this.ownedSlots();
+		});
+	}
+
+	/** The weapon strip: what the player has earned so far (see missions/Progress). */
+	private ownedSlots(): { slot: number; name: string }[] {
+		return this.inventory.owned.map((weapon) => ({ slot: weapon.definition.slot, name: weapon.definition.name }));
 	}
 
 	public get equipped(): WeaponDefinition {
@@ -304,6 +316,7 @@ export class PlayerCombat {
 	}
 
 	public destroy(): void {
+		this.stopWatchingProgress();
 		unregisterDamageable(this.body);
 		this.models.destroy();
 		this.projectiles.destroy();

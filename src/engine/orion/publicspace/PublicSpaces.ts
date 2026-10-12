@@ -1,4 +1,4 @@
-import type { Vector3Tuple } from "../properties/Properties";
+import type { Vector3Tuple } from "../world/Vector";
 
 export type PublicSpaceType = "park" | "plaza" | "promenade" | "courtyard" | "playground";
 

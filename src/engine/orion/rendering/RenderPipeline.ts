@@ -1,4 +1,5 @@
 import {
+	Color,
 	CameraFrame,
 	MiniStats,
 	PIXELFORMAT_111110F,
@@ -15,7 +16,7 @@ import {
 } from "playcanvas";
 
 import { loadGraphicsSettings, saveGraphicsSettings, type GraphicsSettings } from "./GraphicsSettings";
-import { QUALITY_LEVELS, QualityGovernor, setActiveQuality, startingLevel, type QualityLevel } from "./QualityGovernor";
+import { allowsResolutionRescue, QUALITY_LEVELS, QualityGovernor, setActiveQuality, startingLevel, type QualityLevel } from "./QualityGovernor";
 
 /** Name of the directional light that casts the sun's shadows. */
 const KEY_LIGHT_NAME = "key-light";
@@ -58,15 +59,19 @@ export function installRenderPipeline(app: AppBase, component: CameraComponent):
 	frame.vignette.inner = 0.55;
 	frame.vignette.outer = 1.25;
 	frame.grading.enabled = true;
-	frame.grading.contrast = 1.06;
-	frame.grading.saturation = 1.05;
+	frame.grading.contrast = 1.08;
+	frame.grading.saturation = 1.12;
+	// Warmer overall, as a sunny coastal city reads: the sky's ambient otherwise tints every
+	// shaded wall blue-grey.
+	frame.grading.tint = new Color(1.04, 1, 0.93);
 	// Contrast where it reads as depth. Most of a shadow's light is the sky's (image-based
 	// lighting), so a stronger sun only brightened the sunlit side and left shadows a milky grey;
 	// a steeper grading curve lifted everything alike. Pulling the shadows down and cutting the
 	// haze does what the eye expects, compared side by side, while shaded walls and grass keep
 	// their detail rather than going black.
 	frame.colorEnhance.enabled = true;
-	frame.colorEnhance.shadows = -0.3;
+	// Shadows lifted a touch rather than crushed: shaded facades should stay in daylight.
+	frame.colorEnhance.shadows = 0.08;
 	frame.colorEnhance.highlights = 0.1;
 	frame.colorEnhance.dehaze = 0.2;
 	frame.ssao.radius = SSAO.radius;
@@ -87,7 +92,8 @@ export function installRenderPipeline(app: AppBase, component: CameraComponent):
 	configureSunShadows(keyLight(), settings);
 
 	const governor = new QualityGovernor({
-		levelCount: QUALITY_LEVELS.length,
+		// Below native resolution only on phones (see allowsResolutionRescue).
+		levelCount: allowsResolutionRescue() ? QUALITY_LEVELS.length : QUALITY_LEVELS.length - 1,
 		startLevel: startingLevel(),
 	});
 

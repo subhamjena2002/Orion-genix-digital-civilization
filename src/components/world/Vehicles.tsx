@@ -1,12 +1,16 @@
 "use client";
 
 import { Container, Entity } from "@playcanvas/react";
-import { Collision, RigidBody, Script } from "@playcanvas/react/components";
+import { Collision, Script } from "@playcanvas/react/components";
 import { useApp, useMaterial, useModel } from "@playcanvas/react/hooks";
 import { BLEND_NORMAL, Entity as PlayCanvasEntity, MeshInstance, StandardMaterial, type Material, type Mesh } from "playcanvas";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { ORION_ASSET_PATHS } from "@/engine/orion/assets/AssetPaths";
+import { MISSIONS, SAFEHOUSE } from "@/engine/orion/missions/MissionCatalog";
+import { onProgressChange, progressVersion, readProgress } from "@/engine/orion/missions/Progress";
+import { pavedHeightAt } from "@/engine/orion/roads/RoadNetwork";
+import { terrainHeightAt } from "@/engine/orion/world/Mountains";
 import { OrionSkinnedCharacterAnimation } from "@/engine/orion/player/OrionSkinnedCharacterAnimation";
 import { DRIVER_NAME, driverSeatLocal } from "@/engine/orion/traffic/Carjack";
 import { carHalfHeight, getCarMeshes } from "@/engine/orion/traffic/CarMeshes";
@@ -15,6 +19,7 @@ import { OrionVehicleModel } from "@/engine/orion/traffic/OrionVehicleModel";
 import { pickVehicleModel, VEHICLE_MODEL_BASE, type VehicleModelSpec } from "@/engine/orion/traffic/VehicleModels";
 import { ROAD_TOP_Y } from "@/engine/orion/traffic/TrafficSignals";
 import { ORION_VEHICLES, VEHICLE_SHAPES, type VehicleSpawn, type VehicleStyle } from "@/engine/orion/traffic/Vehicles";
+import { KinematicBody } from "./KinematicBody";
 
 export interface VehicleMaterials {
 	body: Material;
@@ -124,6 +129,49 @@ export const FireEngines = memo(function FireEngines() {
 	);
 });
 
+/**
+ * Every car any mission puts into the world, each its own slot (out of the world until needed).
+ * A car several missions use — the race rivals — is one slot, shared.
+ */
+const MISSION_FLEET: readonly (VehicleSpawn & { driven: boolean })[] = [
+	...new Map(MISSIONS
+		.flatMap((mission) => [...(mission.spawns ?? []), ...mission.objectives.flatMap((objective) => objective.spawns ?? [])])
+		.flatMap((spawn) => spawn.type === "vehicle" ? [spawn] : [])
+		.map((spawn) => [spawn.id, spawn] as const)).values(),
+].map((spawn, index) => ({ id: spawn.id, style: spawn.style, colour: spawn.colour, seed: 3307 * (index + 1), speedFactor: 1, driven: spawn.route !== undefined }));
+
+/** Mission cars (see OrionVehicle.placeForMission): the ones parked for the player have nobody in them. */
+export const MissionVehicles = memo(function MissionVehicles() {
+	const materials = useVehicleMaterials();
+	return (
+		<>
+			{MISSION_FLEET.map((vehicle, index) => (
+				<VehicleVisual key={vehicle.id} vehicle={vehicle} materials={materials} missionSlot={index} driverless={!vehicle.driven} />
+			))}
+		</>
+	);
+});
+
+/** The cars the player has earned, parked at the safehouse. */
+export const GarageVehicles = memo(function GarageVehicles() {
+	useSyncExternalStore(onProgressChange, progressVersion, progressVersion);
+	const garage = readProgress().garage;
+	return (
+		<>
+			{garage.slice(0, SAFEHOUSE.bays.length).map((car, index) => {
+				const bay = SAFEHOUSE.bays[index];
+				return (
+					<ParkedVehicle
+						key={car.id}
+						vehicle={{ id: `garage-${car.id}`, style: car.style, colour: car.colour, seed: 9011 * (index + 1), speedFactor: 1.1 }}
+						home={{ x: bay.x, z: bay.z, yaw: bay.yaw, ground: pavedHeightAt(bay.x, bay.z) ?? terrainHeightAt(bay.x, bay.z) }}
+					/>
+				);
+			})}
+		</>
+	);
+});
+
 /** Where a parked car lives: x, z, heading (degrees about Y) and the ground height there. */
 export interface VehicleHome {
 	x: number;
@@ -142,7 +190,15 @@ export function ParkedVehicle({ vehicle, home }: Readonly<{ vehicle: VehicleSpaw
 	return <VehicleVisual vehicle={vehicle} materials={materials} home={home} />;
 }
 
-function VehicleVisual({ vehicle, materials, home, pursuitSlot = -1, fireSlot = -1 }: Readonly<{ vehicle: VehicleSpawn; materials: VehicleMaterials; home?: VehicleHome; pursuitSlot?: number; fireSlot?: number }>) {
+function VehicleVisual({ vehicle, materials, home, pursuitSlot = -1, fireSlot = -1, missionSlot = -1, driverless = false }: Readonly<{
+	vehicle: VehicleSpawn;
+	materials: VehicleMaterials;
+	home?: VehicleHome;
+	pursuitSlot?: number;
+	fireSlot?: number;
+	missionSlot?: number;
+	driverless?: boolean;
+}>) {
 	const shape = VEHICLE_SHAPES[vehicle.style];
 	const halfHeight = carHalfHeight(vehicle.style);
 	const modelSpec = pickVehicleModel(vehicle.style, vehicle.seed);
@@ -151,14 +207,14 @@ function VehicleVisual({ vehicle, materials, home, pursuitSlot = -1, fireSlot = 
 	return (
 		<Entity name={vehicle.id} position={position}>
 			<Collision type="box" halfExtents={[shape.width / 2, halfHeight, shape.length / 2]} />
-			<RigidBody type="kinematic" />
+			<KinematicBody />
 			{/* The model stands on y = 0, so shift it down to the collision box centre. */}
 			{modelSpec ? (
 				<GlbCar spec={modelSpec} vehicle={vehicle} materials={materials} offsetY={-halfHeight} />
 			) : (
 				<CarModel style={vehicle.style} paint={vehicle.colour} materials={materials} offsetY={-halfHeight} />
 			)}
-			{home ? null : <CarDriver position={driverSeatLocal(vehicle.style)} />}
+			{home || driverless ? null : <CarDriver position={driverSeatLocal(vehicle.style)} />}
 			<Script
 				script={OrionVehicle}
 				seed={vehicle.seed}
@@ -175,6 +231,7 @@ function VehicleVisual({ vehicle, materials, home, pursuitSlot = -1, fireSlot = 
 				homeGround={home?.ground ?? 0}
 				pursuitSlot={pursuitSlot}
 				fireSlot={fireSlot}
+				missionSlot={missionSlot}
 				brakeOn={materials.brakeOn}
 				brakeOff={materials.brakeOff}
 				flashRedOn={materials.flashRed}

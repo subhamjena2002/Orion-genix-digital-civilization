@@ -1,4 +1,4 @@
-import type { Vector3Tuple } from "../properties/Properties";
+import type { Vector3Tuple } from "../world/Vector";
 import { ORION_DISTRICTS } from "../world/WorldModel";
 
 export type RoadType = "primary-arterial" | "secondary" | "local" | "alley" | "service" | "industrial" | "bridge" | "ramp" | "overpass" | "underpass" | "pedestrian-path" | "promenade";

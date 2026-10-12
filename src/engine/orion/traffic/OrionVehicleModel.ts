@@ -1,10 +1,12 @@
-import { BLEND_NORMAL, BoundingBox, Color, Entity, Mat4, MeshInstance, Quat, Script, StandardMaterial, Vec3, type GraphNode, type Material, type Mesh, type RenderComponent } from "playcanvas";
+import { Asset, BLEND_NONE, BLEND_NORMAL, BoundingBox, Color, Entity, Mat4, MeshInstance, Quat, SHADERLANGUAGE_GLSL, Script, StandardMaterial, Vec3, type AppBase, type GraphNode, type Material, type Mesh, type RenderComponent, type Texture } from "playcanvas";
 
-import { cameraLens, distanceFromCamera, readPlayerPose } from "../player/PlayerPose";
+import { cameraLens, distanceFromCamera, needsPosing, readPlayerPose } from "../player/PlayerPose";
 import { LOD_PROFILES, projectedPixels, selectLod } from "../rendering/lod/LodPolicy";
 import { buildMesh, compactGeometry, isMergeable, mergeGeometry, mergeMeshInstances } from "../rendering/MeshMerge";
 import { DOOR_NODE, DRIVER_SIDE, GLASS_NODE, NOT_SIDE_GLASS, SEAT_LATERAL } from "./Carjack";
+import { BodyDamage, isLoosePart, type CrashHit } from "./BodyDamage";
 import type { OrionVehicle } from "./OrionVehicle";
+import { buildOf } from "./VehicleDamage";
 import { createLodEntities, groupByMaterial, requestVehicleLods, type LodEntities } from "./VehicleLod";
 import {
 	BRAKE_LIGHT_MATERIAL,
@@ -12,12 +14,16 @@ import {
 	HIDDEN_BRAND_NODE,
 	HIDDEN_MATERIAL,
 	HIDDEN_NODE,
+	modelKey,
 	PAINT_MATERIAL,
 	SIREN_MATERIAL,
+	VEHICLE_MODEL_BASE,
 	WHEEL_NODE,
 	type VehicleModelSpec,
 } from "./VehicleModels";
 
+/** A damaged car stays at full detail (its dents and glass) within this distance of the player. */
+const DAMAGED_FULL_DETAIL = 140;
 /** Past this distance from the player the detailed body is hidden (the car still drives). */
 // Beyond the furthest a car can be before it is recycled (600), so a body never vanishes in play.
 const DETAIL_DISTANCE = 650;
@@ -27,6 +33,13 @@ const PITCH_PER_ACCEL = 0.35;
 const ROLL_PER_LATERAL_ACCEL = 0.45;
 const BODY_SMOOTHING = 5;
 const FLASH_SECONDS = 0.28;
+/** Body tilt changes smaller than this (degrees) aren't worth a transform update. */
+const BODY_TILT_EPSILON = 0.02;
+let nextModelSlot = 0;
+
+/** Materials a vehicle is really meant to be seen through; any other blended one is drawn solid. */
+const SEE_THROUGH_MATERIAL = /glass|window|windscreen|windshield|decal|light|lamp|optic|lens|beacon|siren|transp/i;
+
 /** A wheel node whose pivot is further than this from its mesh centre gets re-pivoted. */
 const PIVOT_TOLERANCE = 0.02;
 /**
@@ -76,9 +89,9 @@ const BATCH_AABB_SIZE = 20;
 let batchGroupCount = 0;
 
 /**
- * Merged rigid-body geometry per model file. Every car using a model has identical parts, so
- * the merge is done once and the meshes shared; each car only adds its own mesh instances
- * (with its own paint and lamp materials).
+ * Merged rigid-body geometry per model (file and variant, see modelKey). Every car using a model
+ * has identical parts, so the merge is done once and the meshes shared; each car only adds its
+ * own mesh instances (with its own paint and lamp materials).
  */
 const mergedBodies = new Map<string, { signature: string; meshes: Mesh[] }>();
 /** Axles split into single wheels, per model file and side; shared by every car of that model. */
@@ -87,6 +100,47 @@ const splitWheels = new Map<string, Mesh>();
 interface BatchHandle {
 	meshInstance: MeshInstance;
 	batchGroupId: number;
+}
+
+/**
+ * Paint masked by the picture's alpha, for a model whose one texture covers the whole car (see
+ * VehicleModelSpec.paintMap): the colour tints only the texels the alpha marks as paint (0.5;
+ * anything else is 1), so chrome, lamps and the cabin keep their own colours. The engine's own
+ * diffuse chunk with that one change. GLSL only: on WebGPU the engine translates it.
+ */
+const PAINT_MASK_DIFFUSE = `
+uniform vec3 material_diffuse;
+void getAlbedo() {
+	dAlbedo = material_diffuse.rgb;
+	#ifdef STD_DIFFUSE_TEXTURE
+		vec4 paintSample = texture2DBias({STD_DIFFUSE_TEXTURE_NAME}, {STD_DIFFUSE_TEXTURE_UV}, textureBias);
+		float paint = clamp(2.0 - 2.0 * paintSample.a, 0.0, 1.0);
+		dAlbedo = {STD_DIFFUSE_TEXTURE_DECODE}(paintSample) * mix(vec3(1.0), dAlbedo, paint);
+	#endif
+}
+`;
+/** The engine version the chunk above follows. */
+const PAINT_MASK_CHUNKS_VERSION = "2.22";
+
+/** The pictures `paintMap` names, loaded once per app and shared by every car using them. */
+const paintMaps = new WeakMap<AppBase, Map<string, Promise<Texture | null>>>();
+
+function loadPaintMap(app: AppBase, file: string): Promise<Texture | null> {
+	let loads = paintMaps.get(app);
+	if (!loads) paintMaps.set(app, (loads = new Map()));
+	let pending = loads.get(file);
+	if (!pending) {
+		// Colour data, so sRGB; mipmapped like the models' own textures.
+		const asset = new Asset(`vehicle-paint-${file}`, "texture", { url: `${VEHICLE_MODEL_BASE}/${file}` }, { srgb: true, mipmaps: true });
+		pending = new Promise((resolve) => {
+			asset.ready(() => resolve(asset.resource as Texture));
+			asset.once("error", () => resolve(null));
+		});
+		app.assets.add(asset);
+		app.assets.load(asset);
+		loads.set(file, pending);
+	}
+	return pending;
 }
 
 /**
@@ -119,6 +173,12 @@ export class OrionVehicleModel extends Script {
 	private brakeLit: boolean | null = null;
 	private pitch = 0;
 	private roll = 0;
+	/** The body tilt last written to the entity: only rewritten when it has really moved. */
+	private shownPitch = Number.NaN;
+	private shownRoll = Number.NaN;
+	/** Spreads the off-screen updates of the fleet across frames. */
+	private readonly slot = nextModelSlot++;
+	private readonly forward = new Vec3();
 	private lastSpeed = 0;
 	private flashTimer = 0;
 	private readonly spin = new Quat();
@@ -138,6 +198,10 @@ export class OrionVehicleModel extends Script {
 	/** A burnt shell's paint differs from the colours baked into LOD3. */
 	private burnt = false;
 	private destroyed = false;
+	/** Dents, glass, paint wear and loose panels (made on the first crash). */
+	private damage: BodyDamage | null = null;
+	private model: Entity | null = null;
+	private lastHeading: number | null = null;
 
 	public update(dt: number) {
 		if (!this.ready) {
@@ -173,7 +237,19 @@ export class OrionVehicleModel extends Script {
 		this.lastSpeed = speed;
 		const level = this.chooseLod(position.x, position.z);
 		if (level !== this.lodLevel) this.applyLod(level);
+		// Out of view, the tilt, the wheels and the swinging loose panels can't be seen: left
+		// alone, the car's whole hierarchy stays clean and the engine skips it each frame.
+		if (!needsPosing(position.x, position.z, this.app.frame, this.slot)) return;
 		this.animateBody(dt, speed, acceleration);
+		if (this.damage) {
+			const forward = (this.entity.parent as Entity | null)?.getWorldTransform().getZ(this.forward);
+			const heading = forward ? Math.atan2(forward.x, forward.z) : 0;
+			let turn = this.lastHeading === null ? 0 : heading - this.lastHeading;
+			if (turn > Math.PI) turn -= Math.PI * 2;
+			if (turn < -Math.PI) turn += Math.PI * 2;
+			this.lastHeading = heading;
+			this.damage.update(dt, acceleration, dt > 0 ? turn / dt : 0);
+		}
 		// Simplified levels carry the wheels baked in; there's nothing separate to spin.
 		if (this.lodLevel === 0) this.spinWheels(dt, speed);
 		this.updateLights(dt);
@@ -200,13 +276,14 @@ export class OrionVehicleModel extends Script {
 		this.radius = localBounds(this.entity, visibleInstances).halfExtents.length();
 		this.mergeRigidParts(model);
 		this.batchModel(model);
+		this.model = model;
 		this.ready = true;
 		this.on("destroy", () => {
 			this.destroyed = true;
 		});
 
 		const spec = this.spec;
-		const cacheKey = spec.keepPaint ? spec.file : `${spec.file}|${this.paint}`;
+		const cacheKey = spec.keepPaint ? modelKey(spec) : `${modelKey(spec)}|${this.paint}`;
 		requestVehicleLods(this.app.graphicsDevice, cacheKey, lodGroups, model.getWorldTransform(), this.radius, fit.getLocalScale().x)
 			.then((meshes) => {
 				if (!meshes || this.destroyed) return;
@@ -224,7 +301,10 @@ export class OrionVehicleModel extends Script {
 		if (driver === "player" || driver === "held") return 0;
 		const profile = LOD_PROFILES.vehicle;
 		const player = readPlayerPose();
-		if (Math.hypot(x - player.x, z - player.z) < profile.fullDetailWithin) return 0;
+		const distance = Math.hypot(x - player.x, z - player.z);
+		if (distance < profile.fullDetailWithin) return 0;
+		// The simplified levels are built from the undamaged car: a wreck keeps its dents in view.
+		if (this.damage?.damaged && distance < DAMAGED_FULL_DETAIL) return 0;
 		const lens = cameraLens();
 		const pixels = projectedPixels(this.radius, distanceFromCamera(x, z), lens.fov, lens.viewportHeight);
 		const level = selectLod(pixels, this.lodLevel, profile);
@@ -241,6 +321,14 @@ export class OrionVehicleModel extends Script {
 		const full = level === 0;
 		if (this.mergedBody) this.mergedBody.enabled = full;
 		this.setBatchVisible(full);
+		// The simplified levels carry the wheels baked in. Wheels left out of the batch (a lorry's
+		// sixteen tyres and rims) were still drawn on top of them: twice the wheels, a draw call each.
+		for (const wheel of this.wheels) {
+			for (const render of wheel.pivot.findComponents("render") as RenderComponent[]) {
+				if (render.batchGroupId !== -1) continue;
+				for (const instance of render.meshInstances) if (instance.visible !== full) instance.visible = full;
+			}
+		}
 		const lods = this.lodEntities;
 		if (!lods) return;
 		lods.levels.forEach((entity, index) => {
@@ -264,8 +352,9 @@ export class OrionVehicleModel extends Script {
 		const spec = this.spec;
 		if (!spec) return;
 		const wheelPivots = new Set<GraphNode>(this.wheels.map((wheel) => wheel.pivot));
+		// Panels that can hang loose after a crash stay separate too (see BodyDamage).
 		const keepsOwnNode = (node: GraphNode) => (
-			wheelPivots.has(node) || DOOR_NODE.test(node.name) || (GLASS_NODE.test(node.name) && !NOT_SIDE_GLASS.test(node.name))
+			wheelPivots.has(node) || DOOR_NODE.test(node.name) || isLoosePart(node) || (GLASS_NODE.test(node.name) && !NOT_SIDE_GLASS.test(node.name))
 		);
 		const movable = (node: GraphNode | null) => {
 			for (let current = node; current && current !== model; current = current.parent) {
@@ -293,14 +382,14 @@ export class OrionVehicleModel extends Script {
 		model.addChild(body);
 		const lists = [...groups.values()];
 		const signature = lists.map((list) => `${list.length}:${list.reduce((sum, instance) => sum + instance.mesh.vertexBuffer.numVertices, 0)}`).join(",");
-		let cached = mergedBodies.get(spec.file);
+		let cached = mergedBodies.get(modelKey(spec));
 		if (!cached || cached.signature !== signature) {
 			const frame = body.getWorldTransform();
 			const meshes = lists.map((list) => mergeMeshInstances(this.app.graphicsDevice, list, frame));
 			// The cache holds its own reference, so the meshes outlive any one car.
 			for (const mesh of meshes) mesh.incRefCount();
 			cached = { signature, meshes };
-			mergedBodies.set(spec.file, cached);
+			mergedBodies.set(modelKey(spec), cached);
 		}
 		const meshes = cached.meshes;
 		body.addComponent("render", {
@@ -438,6 +527,31 @@ export class OrionVehicleModel extends Script {
 	}
 
 	/** Repaints the body: a colour for a burnt-out shell, null to put the original back. */
+	/** A crash, as the body takes it (see BodyDamage). */
+	public crash(hit: CrashHit) {
+		if (!this.ready || !this.model) return;
+		this.vehicle ??= ((this.entity.parent as Entity | null)?.script?.get("orionVehicle") ?? null) as OrionVehicle | null;
+		const vehicle = this.vehicle;
+		const car = this.entity.parent as Entity | null;
+		if (!vehicle || !car) return;
+		this.damage ??= new BodyDamage(
+			this.app,
+			car,
+			this.mergedBody,
+			this.model,
+			buildOf(vehicle.style),
+			() => this.paintMaterials,
+			() => vehicle.carjack,
+			this.batchGroupId,
+		);
+		this.damage.hit(hit);
+	}
+
+	/** Back to factory condition: dents out, glass in, paint fresh, panels shut. */
+	public resetDamage() {
+		this.damage?.reset();
+	}
+
 	public repaint(colour: string | null) {
 		this.burnt = colour !== null;
 		for (const material of this.paintMaterials) {
@@ -512,6 +626,20 @@ export class OrionVehicleModel extends Script {
 			if (!material || !(material instanceof StandardMaterial)) continue;
 			const name = material.name ?? "";
 
+			// A body exported as see-through: drawn blended it writes no depth and its triangles
+			// aren't sorted, so the far side painted over the near one — the ambulance showed its
+			// mirrored far-side lettering and far-side tyres through "missing" panels. Only glass,
+			// decals and lamps are meant to be seen through.
+			if (material.blendType !== BLEND_NONE && !SEE_THROUGH_MATERIAL.test(name)) {
+				const clone = cloneOf(material);
+				clone.blendType = BLEND_NONE;
+				clone.depthWrite = true;
+				clone.opacity = 1;
+				clone.opacityMap = null;
+				clone.update();
+				instance.material = clone;
+			}
+
 			if (BRAKE_LIGHT_MATERIAL.test(name)) {
 				const clone = cloneOf(material);
 				if (!this.brakeMaterials.includes(clone)) this.brakeMaterials.push(clone);
@@ -530,6 +658,7 @@ export class OrionVehicleModel extends Script {
 				const clone = cloneOf(material);
 				if (!this.paintMaterials.includes(clone)) this.paintMaterials.push(clone);
 				if (!spec.keepPaint) clone.diffuse = new Color().fromString(this.paint);
+				if (spec.paintMap !== undefined) this.replacePicture(clone, spec.paintMap);
 				// A lacquer layer over the base coat is what makes car paint read as car paint.
 				clone.clearCoat = 1;
 				clone.clearCoatGloss = 0.92;
@@ -537,6 +666,21 @@ export class OrionVehicleModel extends Script {
 				instance.material = clone;
 			}
 		}
+	}
+
+	/** Swaps a livery painted into the paint material's picture for the spec's plain one. */
+	private replacePicture(material: StandardMaterial, file: string | null) {
+		// Flat paint until the plain picture arrives, and for good where there's none.
+		material.diffuseMap = null;
+		material.opacityMap = null;
+		if (file === null) return;
+		material.getShaderChunks(SHADERLANGUAGE_GLSL).set("diffusePS", PAINT_MASK_DIFFUSE);
+		material.shaderChunksVersion = PAINT_MASK_CHUNKS_VERSION;
+		void loadPaintMap(this.app, file).then((texture) => {
+			if (!texture || this.destroyed) return;
+			material.diffuseMap = texture;
+			material.update();
+		});
 	}
 
 	private findWheels(model: Entity) {
@@ -700,6 +844,11 @@ export class OrionVehicleModel extends Script {
 		const blend = 1 - Math.exp(-BODY_SMOOTHING * dt);
 		this.pitch += (targetPitch - this.pitch) * blend;
 		this.roll += (targetRoll - this.roll) * blend;
+		// Setting a transform dirties the car and everything in it for the frame's hierarchy
+		// sync; a parked car rewriting the same zero tilt cost every one of its nodes, every frame.
+		if (Math.abs(this.pitch - this.shownPitch) < BODY_TILT_EPSILON && Math.abs(this.roll - this.shownRoll) < BODY_TILT_EPSILON) return;
+		this.shownPitch = this.pitch;
+		this.shownRoll = this.roll;
 		this.entity.setLocalEulerAngles(this.pitch, 0, this.roll);
 	}
 
@@ -780,8 +929,9 @@ function simplifyGlass(instances: MeshInstance[]) {
 /** Hides brand marks and pre-blurred rims; returns the instances that stay visible. */
 function hideUnwanted(model: Entity, instances: MeshInstance[], spec: VehicleModelSpec | null): MeshInstance[] {
 	const hidden = new Set<MeshInstance>();
+	const extraNode = spec?.hideNode;
 	model.forEach((node) => {
-		if (HIDDEN_NODE.test(node.name) || HIDDEN_BRAND_NODE.test(node.name)) {
+		if (HIDDEN_NODE.test(node.name) || HIDDEN_BRAND_NODE.test(node.name) || extraNode?.test(node.name)) {
 			for (const instance of collectMeshInstances(node as Entity)) hidden.add(instance);
 		}
 	});

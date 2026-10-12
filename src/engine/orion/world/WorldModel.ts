@@ -1,4 +1,4 @@
-import type { Vector3Tuple } from "../properties/Properties";
+import type { Vector3Tuple } from "./Vector";
 
 export type DistrictKind =
 	| "downtown"

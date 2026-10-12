@@ -17,7 +17,10 @@ export const PlayerController = memo(function PlayerController({ cameraEntity }:
 	return (
 		<Entity name="player" position={[8, 0.65, 16]}>
 			<Collision type="capsule" radius={0.45} height={1.8} />
-			<RigidBody type="dynamic" mass={70} linearDamping={0.02} angularDamping={1} angularFactor={[0, 0, 0]} />
+			{/* No friction: the controller sets the velocity itself every frame, and friction against
+			    the ground took a fifth of it back each step — the character never reached its pace
+			    and its speed shook frame to frame (the clips' playback follows that speed). */}
+			<RigidBody type="dynamic" mass={70} linearDamping={0.02} angularDamping={1} angularFactor={[0, 0, 0]} friction={0} restitution={0} />
 			<PlayerVisual />
 			<Script
 				script={OrionThirdPersonController}

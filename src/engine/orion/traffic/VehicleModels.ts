@@ -28,8 +28,23 @@ export interface VehicleModelSpec {
 	keepPaint?: boolean;
 	/** Overrides for material-name matching when a model uses unusual names. */
 	paintMaterial?: RegExp;
+	/**
+	 * For a model whose livery is painted into the paint material's own picture: what replaces
+	 * that picture. `null` paints the body one flat colour. A file name (under /models/vehicles/)
+	 * is the same picture with the livery taken out, paint left a neutral grey, and its alpha
+	 * marking which texels are paint — only those take the colour (see PAINT_MASK_DIFFUSE).
+	 */
+	paintMap?: string | null;
+	/**
+	 * A second use of a file the city already draws (a police car out of uniform), told apart by
+	 * name: what's built from the model per file (its merged body, its simplified levels) is built
+	 * per variant instead, since hidden parts change the geometry.
+	 */
+	variant?: string;
 	/** Extra material names to hide on this model, on top of HIDDEN_MATERIAL. */
 	hideMaterial?: RegExp;
+	/** Node names to hide on this model (a light bar, a push bar), on top of HIDDEN_NODE. */
+	hideNode?: RegExp;
 	/**
 	 * Materials to keep even though HIDDEN_MATERIAL would hide them: a livery drawn as "decals"
 	 * of plain words (TAXI, AMBULANCE) is paint, not a maker's mark.
@@ -292,6 +307,43 @@ export const VEHICLE_MODELS: readonly VehicleModelSpec[] = [
 			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
 		},
 	},
+	// Out of livery: two of the models above as plain cars, for the missions.
+	{
+		// The taxi's sedan in plain paint. Its yellow is painted into the one texture that covers
+		// the whole car, so the paint goes on a copy with the yellow made neutral and the chequer
+		// band painted out (scripts/prepare-civic-sedan.mjs); the TAXI lettering, being decals, is
+		// hidden like anything else's.
+		file: "civic-taxi.glb",
+		variant: "plain",
+		styles: ["sedan"],
+		length: 4.7,
+		paintMaterial: /^taxi$/,
+		paintMap: "civic-sedan-paint.png",
+		seat: { forward: 0.37, lateral: 0.38, rootAboveRoad: 0.25, scale: 0.56 },
+		credit: {
+			author: "Comrade1280",
+			licence: "CC-BY-4.0",
+			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
+		},
+	},
+	{
+		// The Phoenix out of uniform: light bar and push bar off, and the black-and-white livery,
+		// POLICE and all, painted into its body texture, replaced by flat paint. A quick 90s sedan
+		// for the races and the garage.
+		file: "phoenix-93-interceptor.glb",
+		variant: "plain",
+		styles: ["luxury"],
+		length: 4.94,
+		yawOffset: 180,
+		paintMap: null,
+		hideNode: /lightbar|bullbar/i,
+		seat: { forward: 0.07, lateral: 0.36, rootAboveRoad: 0.2, scale: 0.6 },
+		credit: {
+			author: "Daniel Zhabotinsky",
+			licence: "CC-BY-4.0",
+			source: "https://sketchfab.com/3d-models/phoenix-93-interceptor-low-poly-model-ac4a91cb1b184ebd82c598c1bc54ba3d",
+		},
+	},
 	// Example — uncomment and edit once the file is in public/models/vehicles/:
 	// {
 	// 	file: "sports-coupe.glb",
@@ -324,6 +376,11 @@ export const HIDDEN_NODE = /blur/i;
 export const HIDDEN_BRAND_NODE = /logo|badge|emblem|wordmark|nameplate/i;
 /** Node names that usually mean a wheel assembly (spun as a unit). */
 export const WHEEL_NODE = /wheel|tyre|tire/i;
+
+/** What's built from a model is keyed by this: per file, and per variant of the same file. */
+export function modelKey(spec: VehicleModelSpec): string {
+	return spec.variant ? `${spec.file}#${spec.variant}` : spec.file;
+}
 
 /** Picks this car's model deterministically, so a given car always looks the same. */
 export function pickVehicleModel(style: VehicleStyle, seed: number): VehicleModelSpec | null {

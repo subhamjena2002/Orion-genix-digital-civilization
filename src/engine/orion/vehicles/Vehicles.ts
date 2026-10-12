@@ -1,5 +1,5 @@
 import type { LodAssetSet, RegisteredAsset } from "../assets/AssetRegistry";
-import type { Vector3Tuple } from "../properties/Properties";
+import type { Vector3Tuple } from "../world/Vector";
 
 export type VehicleCategory = "compact" | "sedan" | "luxury" | "sports" | "utility" | "service" | "truck" | "transit" | "motorcycle";
 

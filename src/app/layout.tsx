@@ -1,7 +1,8 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Orbitron } from "next/font/google";
 import { GoogleTag } from "@/components/GoogleTag";
 import { ServiceWorker } from "@/components/ServiceWorker";
+import { SITE_DESCRIPTION, SITE_KEYWORDS, SITE_NAME, SITE_TITLE, SITE_URL } from "./site";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -14,30 +15,58 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+/** The display face for the landing page: headlines, the wordmark, big numbers. */
+const orbitron = Orbitron({
+  variable: "--font-orbitron",
+  subsets: ["latin"],
+  weight: ["600", "800", "900"],
+});
+
 export const metadata: Metadata = {
-  title: "OrionGenix | World 001",
-  description: "Explore a persistent digital world in the making.",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: SITE_TITLE,
+    template: `%s | ${SITE_NAME}`,
+  },
+  description: SITE_DESCRIPTION,
+  keywords: SITE_KEYWORDS,
+  applicationName: SITE_NAME,
+  category: "games",
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    siteName: SITE_NAME,
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    url: "/",
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: { index: true, follow: true, "max-image-preview": "large", "max-snippet": -1, "max-video-preview": -1 },
+  },
+  formatDetection: { telephone: false },
 };
 
-/**
- * A game, not a document: no pinch or double-tap zoom stealing a thumb from the controls, and
- * drawn edge to edge under a landscape phone's notch (the HUD keeps clear via the safe-area
- * insets).
- */
+/** Zoom stays on for the site; the game page turns it off for the controls (see play/page). */
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-  viewportFit: "cover",
-  themeColor: "#08090a",
+  themeColor: "#050507",
+  colorScheme: "dark",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${orbitron.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
         {children}

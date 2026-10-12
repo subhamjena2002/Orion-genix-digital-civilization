@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { QUALITY_LEVELS, QualityGovernor, startingLevel } from "./QualityGovernor";
+import { NATIVE_SHARPNESS, QUALITY_LEVELS, QualityGovernor, startingLevel } from "./QualityGovernor";
 
 const LEVELS = QUALITY_LEVELS.length;
 
@@ -105,7 +105,7 @@ describe("QUALITY_LEVELS", () => {
 	it("renders at native resolution at every level but the last-resort one", () => {
 		for (const level of QUALITY_LEVELS.slice(0, -1)) {
 			expect(level.renderScale).toBe(1);
-			expect(level.sharpness).toBe(0);
+			expect(level.sharpness).toBe(NATIVE_SHARPNESS);
 		}
 		const rescue = QUALITY_LEVELS[QUALITY_LEVELS.length - 1];
 		expect(rescue.renderScale).toBeLessThan(1);

@@ -3,7 +3,6 @@ import { BoundingBox, type AppBase, type ContainerResource, type Entity, type Re
 
 import { GUNSHIP_MODEL } from "../aircraft/GunshipModel";
 import { JET_MODEL } from "../aircraft/JetModel";
-import { getBuildingDefinition, ORION_BUILDING_MAP } from "../buildings/Buildings";
 import { VEHICLE_MODEL_BASE, VEHICLE_MODELS } from "../traffic/VehicleModels";
 
 /**
@@ -30,14 +29,8 @@ const DRAWN_FRAMES = 3;
 const SPECK_SIZE = 0.002;
 
 export function modelsToPrewarm(): string[] {
+	// Buildings aren't here: they're built in code (CityBuilding) on a few shared materials.
 	const urls = new Set<string>();
-	for (const placement of ORION_BUILDING_MAP) {
-		if (placement.renderMode !== "asset") continue;
-		const definition = getBuildingDefinition(placement.buildingDefinitionId);
-		if (!definition) continue;
-		urls.add(definition.assetPath);
-		for (const prop of definition.yardProps) urls.add(prop.assetPath);
-	}
 	for (const spec of VEHICLE_MODELS) urls.add(`${VEHICLE_MODEL_BASE}/${spec.file}`);
 	urls.add(TRAIN_MODEL);
 	urls.add(GUNSHIP_MODEL);

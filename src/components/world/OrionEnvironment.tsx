@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Environment } from "@playcanvas/react/components";
 import { useApp, useTexture } from "@playcanvas/react/hooks";
-import { Asset, EnvLighting, type Texture } from "playcanvas";
+import { Asset, EnvLighting, type Scene, type Texture } from "playcanvas";
 import { ORION_ASSET_PATHS } from "@/engine/orion/assets/AssetPaths";
 import { applyEnvironmentFog, ORION_ACTIVE_TIME_OF_DAY, ORION_ENVIRONMENT_PROFILES } from "@/engine/orion/rendering/Environment";
 
@@ -41,6 +41,14 @@ export function OrionEnvironment({ onReady }: Readonly<{ onReady?: () => void }>
 		const lightingSource = EnvLighting.generateLightingSource(source);
 		const atlasTexture = EnvLighting.generateAtlas(lightingSource);
 		lightingSource.destroy();
+		// The sky itself, from the full-resolution photo. Left to the lighting atlas, the visible sky
+		// was drawn from its ~512 px reflection level: clouds filling half the screen came out
+		// stretched twenty-odd times, and the whole picture read as blurred. Twice the photo's own
+		// face size on desktop (smoother filtering), its own size on phones (memory).
+		const phone = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+		const faceSize = Math.min(2048, Math.round((source.width / 4) * (phone ? 1 : 2)));
+		const sky = EnvLighting.generateSkyboxCubemap(source, faceSize);
+		showSky(app.scene, sky);
 
 		const asset = new Asset("orion-env-atlas", "texture");
 		asset.resource = atlasTexture;
@@ -51,6 +59,8 @@ export function OrionEnvironment({ onReady }: Readonly<{ onReady?: () => void }>
 		setAtlasAsset(asset);
 
 		return () => {
+			if (app.scene.skybox === sky) showSky(app.scene, null);
+			sky.destroy();
 			atlasTexture.destroy();
 			setAtlasAsset(null);
 		};
@@ -70,4 +80,9 @@ export function OrionEnvironment({ onReady }: Readonly<{ onReady?: () => void }>
 			exposure={profile.exposure}
 		/>
 	);
+}
+
+/** The sky drawn behind everything (the lighting comes from the atlas). */
+function showSky(scene: Scene, sky: Texture | null): void {
+	scene.skybox = sky;
 }

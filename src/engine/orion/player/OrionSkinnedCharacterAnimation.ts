@@ -30,6 +30,8 @@ const CLIP_SPEED: Readonly<Record<Exclude<MovementState, "Idle">, number>> = { W
 const MIN_RATE = 0.75;
 const MAX_RATE = 1.6;
 const BLEND_SECONDS = 0.25;
+/** Walk to run and back: a longer blend, started in step (see enterState). */
+const GAIT_BLEND_SECONDS = 0.35;
 const RATE_SMOOTHING = 8;
 /**
  * A held pose (a seated driver) stops being evaluated once it has blended in: dozens of
@@ -97,7 +99,8 @@ export class OrionSkinnedCharacterAnimation extends Script {
 		if (nextState !== this.currentState) {
 			anim.playing = true;
 			this.heldFor = 0;
-			this.enterState(nextState, BLEND_SECONDS);
+			const gaitChange = isGait(this.currentState) && isGait(nextState);
+			this.enterState(nextState, gaitChange ? GAIT_BLEND_SECONDS : BLEND_SECONDS, gaitChange);
 		}
 
 		if (forced) {
@@ -128,6 +131,14 @@ export class OrionSkinnedCharacterAnimation extends Script {
 	 * update, putting those bones back to rest while a movement clip plays.
 	 */
 	public postUpdate() {
+		this.restoreUnkeyedBones();
+	}
+
+	/**
+	 * See postUpdate. Public so the player's body can run it right before it copies this rig's
+	 * pose (its own postUpdate can come first, which would copy the stale bones for a frame).
+	 */
+	public restoreUnkeyedBones() {
 		const layer = this.animRoot?.anim?.baseLayer;
 		if (!this.ready || !layer) return;
 		const targets = this.unkeyed[layer.activeState as MovementState];
@@ -183,7 +194,12 @@ export class OrionSkinnedCharacterAnimation extends Script {
 		this.ready = true;
 	}
 
-	private enterState(state: ClipState, blend: number) {
+	/**
+	 * `inStep` carries the stride over: walking into a run (or easing back) starts the new clip at
+	 * the same point of its cycle, so the same foot is forward in both. Starting it from the top
+	 * crossed the legs over halfway through the blend, a hop and a scissor on every change of pace.
+	 */
+	private enterState(state: ClipState, blend: number, inStep = false) {
 		const layer = this.animRoot?.anim?.baseLayer;
 		this.currentState = state;
 		if (!layer) return;
@@ -193,8 +209,19 @@ export class OrionSkinnedCharacterAnimation extends Script {
 			layer.activeStateCurrentTime = SEATED_CLIP_TIME;
 			return;
 		}
+		if (inStep) {
+			const progress = layer.activeStateProgress;
+			const phase = Number.isFinite(progress) ? progress - Math.floor(progress) : 0;
+			// transitionOffset only applies strictly between 0 and 1.
+			layer.transition(state, blend, Math.min(0.999, Math.max(0.001, phase)));
+			return;
+		}
 		layer.transition(state, blend);
 	}
+}
+
+function isGait(state: ClipState): boolean {
+	return state === "Walk" || state === "Run";
 }
 
 function resolveState(current: MovementState, speed: number): MovementState {

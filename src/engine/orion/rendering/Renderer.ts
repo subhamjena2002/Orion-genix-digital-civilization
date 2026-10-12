@@ -7,10 +7,17 @@ export const ORION_RENDERING = {
 	// nothing and doubles depth precision over 0.1 (less z-fighting on markings and decals).
 	cameraNearClip: 0.2,
 	cameraFarClip: 800,
-	// Kept deliberately low: the HDRI environment atlas contributes most of the scene's
-	// ambient/reflected light, so full-strength directionals on top blow the albedo out.
-	keyLightIntensity: 1.05,
-	fillLightIntensity: 0.22,
+	// Kept moderate: the HDRI environment atlas adds the sky's own ambient and reflections, so
+	// full-strength directionals on top blow the albedo out.
+	keyLightIntensity: 1.15,
+	// About half the sun, from the opposite side (see OrionCanvas): the faces turned away from the
+	// sun stay in daylight instead of falling to the sky's dim blue ambient.
+	fillLightIntensity: 0.55,
+	// A low afternoon sun: warm on the plaster. White sunlight under a blue sky left the pastel
+	// walls a cold grey.
+	keyLightColor: "#ffe6c2",
+	// Sunlight bounced back off the city: a softer, slightly warm white, not the sky's blue.
+	fillLightColor: "#fff1e0",
 } as const;
 
 /** Beyond 2x the extra fill cost outweighs any visible sharpness gain. */

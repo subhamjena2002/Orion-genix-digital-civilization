@@ -11,7 +11,7 @@ import { Knockdown } from "../characters/Knockdown";
 import { RestPose } from "../characters/RestPose";
 import { crashEffects } from "../traffic/CrashEffects";
 import { registerTrafficAgent, unregisterTrafficAgent, type TrafficAgent } from "../traffic/TrafficAgents";
-import { readPlayerPose } from "../player/PlayerPose";
+import { inCameraView, needsPosing, readPlayerPose } from "../player/PlayerPose";
 import { POLICE_UNIFORM } from "./Police";
 import { readWanted, reportCrime, spotted } from "./Wanted";
 
@@ -40,6 +40,10 @@ const HIT_SECONDS = 0.45;
  * The cap isn't parented to the head bone (bone axes and baked scale differ per model);
  * instead it's a sibling that follows the bone's world position every frame.
  */
+/** Idle clips play only this close and in view. */
+const ANIMATION_RANGE = 90;
+let nextOfficerSlot = 0;
+
 export class OrionPoliceOfficer extends Script {
 	public static scriptName = "orionPoliceOfficer";
 
@@ -100,6 +104,9 @@ export class OrionPoliceOfficer extends Script {
 		this.trySetup();
 	}
 
+	/** Spreads the unseen officers' occasional updates across frames. */
+	private readonly slot = nextOfficerSlot++;
+
 	public update(dt: number) {
 		if (!this.ready) {
 			this.trySetup();
@@ -114,12 +121,18 @@ export class OrionPoliceOfficer extends Script {
 			if (this.hitTimer <= 0) this.model?.anim?.baseLayer?.transition("Idle", 0.2);
 		}
 		// Every officer on a post is a lookout: a wanted player walking or driving past is seen.
+		const here = this.entity.getPosition();
 		if (readWanted().stars > 0) {
 			const player = readPlayerPose();
-			const here = this.entity.getPosition();
 			if (Math.hypot(player.x - here.x, player.z - here.z) < LOOKOUT_RANGE) spotted(player.x, player.z);
 		}
 		this.time += dt;
+		// Unseen, the glance and the cap aren't worth turning the whole skeleton for, and the
+		// idle clip is paused (as the crowd's is): the officer's hierarchy stays clean.
+		const anim = this.model?.anim;
+		const seen = inCameraView(here.x, here.z, ANIMATION_RANGE);
+		if (anim && anim.playing !== seen) anim.playing = seen;
+		if (!needsPosing(here.x, here.z, this.app.frame, this.slot)) return;
 		const glance = Math.sin((this.time / GLANCE_PERIOD) * Math.PI * 2) * GLANCE_DEGREES;
 		this.entity.setEulerAngles(0, this.yaw + glance, 0);
 

@@ -12,11 +12,13 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "OrionGenix",
     short_name: "OrionGenix",
-    description: "Explore a persistent digital world in the making.",
-    start_url: "/",
+    description: "Free open-world action in your browser: steal cars, fly jets and gunships, win street races.",
+    // Installed, it opens straight into the game rather than the landing page.
+    start_url: "/play",
+    categories: ["games", "entertainment"],
     display: "fullscreen",
     orientation: "landscape",
-    background_color: "#162128",
+    background_color: "#050507",
     theme_color: "#08090a",
     icons: [
       {

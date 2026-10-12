@@ -1,81 +1,62 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
-import type { PropertyRecord } from "@/engine/orion/properties/Properties";
 import { CombatHud } from "./CombatHud";
 import { DrivingHud } from "./DrivingHud";
 import { DrowningOverlay } from "./DrowningOverlay";
 import { FlightHud } from "./FlightHud";
+import { enterFullscreen, useFullscreen } from "./fullscreen";
 import { LandscapeMode } from "./LandscapeMode";
-import { SelectionPanel } from "./SelectionPanel";
+import { MissionHud } from "./MissionHud";
+import { MissionLog } from "./MissionLog";
 import { TouchControls } from "./TouchControls";
 import { useTouchDevice } from "./useTouchDevice";
 import { WorldContext } from "./WorldContext";
 import { WorldHeader } from "./WorldHeader";
 import { WorldMap } from "./WorldMap";
 
-interface OrionHUDProps {
-	property: PropertyRecord | null;
-	onAcquire: (propertyId: string) => void;
-	onOffer: (propertyId: string) => void;
-	onClear: () => void;
+/**
+ * On a laptop or desktop, the first click into the game — the one that takes the mouse for
+ * looking round — takes the page full screen too. Once only: leave with Esc and it stays left,
+ * with the header button to go back in.
+ */
+function useFullscreenOnFirstClick(enabled: boolean) {
+	useEffect(() => {
+		if (!enabled) return;
+		const first = (event: PointerEvent) => {
+			if (!(event.target instanceof HTMLCanvasElement)) return;
+			window.removeEventListener("pointerdown", first, true);
+			void enterFullscreen();
+		};
+		window.addEventListener("pointerdown", first, true);
+		return () => window.removeEventListener("pointerdown", first, true);
+	}, [enabled]);
 }
 
-export function OrionHUD({
-	property,
-	onAcquire,
-	onOffer,
-	onClear,
-}: Readonly<OrionHUDProps>) {
-	const [offerNotice, setOfferNotice] = useState(false);
+export function OrionHUD() {
 	const touch = useTouchDevice();
-
-	useEffect(() => {
-		function handleKeyDown(event: KeyboardEvent) {
-			if (event.key === "Escape") {
-				setOfferNotice(false);
-				onClear();
-			}
-		}
-
-		window.addEventListener("keydown", handleKeyDown);
-		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [onClear]);
-
-	function handleOffer(propertyId: string) {
-		onOffer(propertyId);
-		setOfferNotice(true);
-	}
+	const { fullscreen } = useFullscreen();
+	useFullscreenOnFirstClick(!touch);
 
 	return (
-		<div id="world" data-input={touch ? "touch" : "mouse"} className="pointer-events-none absolute inset-0 z-10 flex flex-col text-[#f1ede2]">
+		<div id="world" data-input={touch ? "touch" : "mouse"} data-fullscreen={fullscreen ? "true" : "false"} className="pointer-events-none absolute inset-0 z-10 flex flex-col text-[#f1ede2]">
 			<DrowningOverlay />
 			<WorldHeader />
 
 			<div className="relative flex-1 p-5 sm:p-8">
-				{/* Under everything else in the HUD, so a panel or the open map sits over the buttons. */}
+				{/* Under everything else in the HUD, so the open map sits over the buttons. */}
 				{touch ? <TouchControls /> : null}
 
 				<div className="orion-hud-map absolute bottom-5 left-5 flex flex-col gap-3 sm:bottom-8 sm:left-8">
 					<WorldMap />
+					<MissionLog />
 					{touch ? null : <WorldContext />}
 				</div>
 
-				{property ? (
-					<div className="absolute bottom-5 right-5 flex max-w-[calc(100%-2.5rem)] flex-col items-end sm:bottom-8 sm:right-8">
-						<SelectionPanel property={property} onAcquire={onAcquire} onOffer={handleOffer} onClear={onClear} />
-						{offerNotice ? (
-							<div role="status" className="orion-notice orion-surface pointer-events-auto mt-3 flex items-center gap-2 px-3.5 py-2.5 text-[11.5px] text-[var(--oi-text-secondary)]">
-								<span className="orion-badge-dot" aria-hidden="true" />
-								Offer submitted to the Orion market.
-							</div>
-						) : null}
-					</div>
-				) : null}
-
 				<DrivingHud touch={touch} />
 				<CombatHud />
+				<MissionHud />
 				<FlightHud touch={touch} />
 				{touch ? <LandscapeMode /> : null}
 			</div>

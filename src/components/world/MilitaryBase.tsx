@@ -17,7 +17,7 @@ import {
 import { memo, useEffect, useMemo, useState } from "react";
 
 import { addSolidBody, localBounds } from "@/engine/orion/rendering/ModelBounds";
-import { AIRFIELD_LAYOUT } from "@/engine/orion/world/Airfield";
+import { AIRFIELD_BOUNDS, AIRFIELD_LAYOUT } from "@/engine/orion/world/Airfield";
 import {
 	ACCESS_ROAD,
 	BASE,
@@ -31,6 +31,7 @@ import {
 } from "@/engine/orion/world/MilitaryBase";
 
 import { Gunship } from "./Gunship";
+import { cullBatchGroup } from "./useDistanceCull";
 import { ParkedVehicle } from "./Vehicles";
 
 type Vec3Tuple = [number, number, number];
@@ -38,6 +39,8 @@ type Vec3Tuple = [number, number, number];
 const KIT = "/models/military/military-base-kit.glb";
 /** The terrain plane, and the yard laid a hair above it. */
 const GROUND_Y = -0.65;
+/** The compound's walls, towers and kit aren't drawn from further than this (metres). */
+const SET_PIECE_DRAW_DISTANCE = 300;
 const YARD_THICKNESS = 0.04;
 const PAD_THICKNESS = 0.06;
 const GROUND_TOP = GROUND_Y + PAD_THICKNESS;
@@ -88,6 +91,16 @@ export const MilitaryBase = memo(function MilitaryBase({ asphaltDiffuse, asphalt
 			}
 			if (!WALK_THROUGH_PIECES.has(placement.piece)) cleanups.push(addSolidBody(holder, false));
 			placed.push(holder);
+		}
+		// Seen from across the city the compound is a smudge on the horizon: its batch isn't drawn
+		// from further than this. The batch holds the airfield's wall and towers too, so the box
+		// takes in the whole airfield, not just the base.
+		if (group) {
+			const minX = Math.min(BASE.centre[0] - BASE.size[0] / 2, AIRFIELD_BOUNDS.minX);
+			const maxX = Math.max(BASE.centre[0] + BASE.size[0] / 2, AIRFIELD_BOUNDS.maxX);
+			const minZ = Math.min(BASE.centre[1] - BASE.size[1] / 2, AIRFIELD_BOUNDS.minZ);
+			const maxZ = Math.max(BASE.centre[1] + BASE.size[1] / 2, AIRFIELD_BOUNDS.maxZ);
+			cleanups.push(cullBatchGroup(app, group.id, { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2, halfX: (maxX - minX) / 2, halfZ: (maxZ - minZ) / 2 }, SET_PIECE_DRAW_DISTANCE));
 		}
 		return () => {
 			for (const cleanup of cleanups) cleanup();

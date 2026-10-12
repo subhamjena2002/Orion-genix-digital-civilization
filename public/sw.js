@@ -77,12 +77,14 @@ self.addEventListener("message", (event) => {
 async function warm(urls) {
 	const assets = await caches.open(ASSET_CACHE);
 	const statics = await caches.open(STATIC_CACHE);
-	// The page itself loaded before the worker existed too; without it an offline start fails.
+	// The pages loaded before the worker existed too; without them an offline start fails. The
+	// installed app starts at /play (the game); / is the landing page in front of it.
 	const pages = await caches.open(PAGE_CACHE);
-	if (!(await pages.match("/"))) {
+	for (const path of ["/play", "/"]) {
+		if (await pages.match(path)) continue;
 		try {
-			const page = await fetch("/", { cache: "force-cache" });
-			if (page.ok) await store(pages, "/", page);
+			const page = await fetch(path, { cache: "force-cache" });
+			if (page.ok) await store(pages, path, page);
 		} catch {
 			// Offline; the next online start caches it.
 		}

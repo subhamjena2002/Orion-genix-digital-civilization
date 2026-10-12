@@ -86,6 +86,11 @@ export function writeCameraView(x: number, z: number, forwardX: number, forwardZ
 	view.known = true;
 }
 
+/** Where the camera is and which way it faces (for the minimap, which turns with the view). */
+export function readCameraView(): Readonly<{ x: number; z: number; forwardX: number; forwardZ: number; known: boolean }> {
+	return view;
+}
+
 /** Distance from the camera to (x, z). */
 export function distanceFromCamera(x: number, z: number): number {
 	return view.known ? Math.hypot(x - view.x, z - view.z) : Math.hypot(x - pose.x, z - pose.z);

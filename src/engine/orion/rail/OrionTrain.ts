@@ -4,6 +4,7 @@ import { applyDamage, damageablesNear } from "../combat/CombatWorld";
 import { nextCombatId, type DamageEvent, type DamageSourceRef } from "../combat/Damage";
 import { localBounds } from "../rendering/ModelBounds";
 import { drivableCars } from "../traffic/Carjack";
+import { needsPosing } from "../player/PlayerPose";
 import { distanceFromRail, RAIL_TOP_Y, railPoseAt, railWrap } from "./RailLine";
 import {
 	CARRIAGE_COUNT,
@@ -85,6 +86,9 @@ export class OrionTrain extends Script {
 			const centre = this.front - CARRIAGE_LENGTH / 2 - index * (CARRIAGE_LENGTH + CARRIAGE_GAP);
 			const leading = railPoseAt(centre + BOGIE_INSET);
 			const trailing = railPoseAt(centre - BOGIE_INSET);
+			// A carriage nobody can see is placed only now and then: moving it re-syncs its whole
+			// model (some 190 nodes) for the frame.
+			if (carriage.fitted && !needsPosing((leading.x + trailing.x) / 2, (leading.z + trailing.z) / 2, this.app.frame, index)) return;
 			carriage.root.setPosition((leading.x + trailing.x) / 2, RAIL_TOP_Y, (leading.z + trailing.z) / 2);
 			carriage.root.setEulerAngles(0, Math.atan2(leading.x - trailing.x, leading.z - trailing.z) * (180 / Math.PI), 0);
 		});
@@ -134,11 +138,16 @@ export class OrionTrain extends Script {
 	 * clear, people and the player are run down. The train does not slow for any of it.
 	 */
 	private clearTheLine() {
-		this.samples.length = 0;
+		// Reused from frame to frame: the strike check runs every frame for the life of the game.
+		let count = 0;
 		for (let back = 0; back <= TRAIN_LENGTH; back += STRIKE_SAMPLE_STEP) {
 			const pose = railPoseAt(this.front - back);
-			this.samples.push({ x: pose.x, z: pose.z });
+			const sample = this.samples[count] ?? (this.samples[count] = { x: 0, z: 0 });
+			sample.x = pose.x;
+			sample.z = pose.z;
+			count++;
 		}
+		this.samples.length = count;
 		const nose = railPoseAt(this.front);
 		const heading = (nose.heading * Math.PI) / 180;
 		this.strike.directionX = Math.sin(heading);
@@ -146,8 +155,13 @@ export class OrionTrain extends Script {
 		this.source.x = nose.x;
 		this.source.z = nose.z;
 
+		const middle = railPoseAt(this.front - TRAIN_LENGTH / 2);
+		const near = TRAIN_LENGTH / 2 + STRIKE_REACH + 12;
 		for (const car of drivableCars()) {
 			const position = car.entity.getPosition();
+			// Most of the city's cars are nowhere near the train: one subtraction rules them out
+			// before the per-segment distance to the track.
+			if (Math.abs(position.x - middle.x) > near || Math.abs(position.z - middle.z) > near) continue;
 			if (distanceFromRail(position.x, position.z) > TRAIN_STRIKE_HALF_WIDTH + car.halfWidth) continue;
 			if (!this.underTheTrain(position.x, position.z, car.halfLength)) continue;
 			car.struckByTrain(this.strike.directionX * STRIKE_IMPULSE, this.strike.directionZ * STRIKE_IMPULSE);

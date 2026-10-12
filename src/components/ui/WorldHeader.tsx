@@ -1,6 +1,10 @@
 "use client";
 
+import { enterFullscreen, exitFullscreen, useFullscreen } from "./fullscreen";
+
 export function WorldHeader() {
+	const { fullscreen, supported } = useFullscreen();
+
 	return (
 		<header className="orion-topbar pointer-events-auto flex items-center justify-between gap-8 px-5 py-4 sm:px-8">
 			<div className="flex min-w-0 items-center gap-3">
@@ -27,6 +31,21 @@ export function WorldHeader() {
 					<span className="orion-status-dot" aria-hidden="true" />
 					Live
 				</span>
+				{supported ? (
+					<button
+						type="button"
+						className="orion-icon-button orion-focus"
+						aria-label={fullscreen ? "Leave full screen" : "Full screen"}
+						title={fullscreen ? "Leave full screen (Esc)" : "Full screen"}
+						onClick={() => void (fullscreen ? exitFullscreen() : enterFullscreen())}
+					>
+						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+							{fullscreen
+								? <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
+								: <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />}
+						</svg>
+					</button>
+				) : null}
 				<button type="button" className="orion-icon-button orion-focus" aria-label="Notifications">
 					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
 						<path d="M6 8a6 6 0 0 1 12 0c0 4.5 1.5 6 2 7H4c.5-1 2-2.5 2-7Z" />

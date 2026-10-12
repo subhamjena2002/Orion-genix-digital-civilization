@@ -2,6 +2,11 @@ import { Entity, Quat, Script, Vec3 } from "playcanvas";
 
 import { modelsToPrewarm, prewarmModels } from "../rendering/ModelPrewarm";
 import { resetWorld } from "../world/WorldReset";
+import { emitGameEvent } from "../missions/GameEvents";
+import { pavedHeightAt } from "../roads/RoadNetwork";
+import { terrainHeightAt } from "../world/Mountains";
+import { takeTeleport } from "./Teleport";
+import { controlsHeld } from "./ControlHold";
 import { writeFlightHud } from "../aircraft/FlightHud";
 import { GUNSHIP_WEAPONS } from "../aircraft/GunshipWeapons";
 import { NO_INPUT } from "../aircraft/HelicopterFlight";
@@ -15,6 +20,8 @@ import { damageablesNear } from "../combat/CombatWorld";
 import { setBusted, setWasted } from "../combat/CombatHud";
 import { PlayerCombat, type CombatContext, type CombatInput } from "../combat/PlayerCombat";
 import { playerRig } from "./PlayerRig";
+import { CharacterLight } from "./CharacterLight";
+import { angleDelta, stepLean, stepTurn, type LeanState, type TurnState, type TurnTuning } from "./Locomotion";
 import { bloodMaterial } from "../characters/Knockdown";
 import { engineAudio } from "../audio/EngineAudio";
 import { policeSirens } from "../audio/PoliceSirens";
@@ -54,10 +61,15 @@ const DRIVE_CAMERA_HEIGHT = 1.55;
 const DRIVE_CAMERA_PITCH = 11;
 /** Seconds after the mouse stops before the camera swings back behind the car. */
 const CAMERA_RECENTRE_DELAY = 1.2;
+/** Behind the wheel the camera comes back sooner: the road ahead matters more than the view. */
+const DRIVE_RECENTRE_DELAY = 0.7;
+/** Mouse travel (px) within about this long (s) that counts as looking round, not a twitch. */
+const LOOK_INTENT_PIXELS = 10;
+const LOOK_INTENT_WINDOW = 0.25;
 const CAMERA_RECENTRE_RATE = 2.2;
 /** How far the camera leans into a slide, as a share of the drift angle. */
-const DRIFT_LOOK = 0.55;
-const MAX_DRIFT_LOOK = 40;
+const DRIFT_LOOK = 0.3;
+const MAX_DRIFT_LOOK = 15;
 /** Field of view widens with speed. */
 const FOV_PER_SPEED = 0.32;
 const MAX_FOV_BOOST = 20;
@@ -104,8 +116,14 @@ const WASTED_SECONDS = 4;
 const RESPAWN_CLEAR_RADIUS = 60;
 /** A click that moved the mouse less than this (px) is an attack, not a drag-to-look. */
 const CLICK_SLOP = 6;
-/** How quickly the character turns to face the aim while shooting or swinging. */
-const AIM_TURN_RESPONSE = 20;
+/**
+ * How the body swings round (see Locomotion): to the aim while shooting or swinging, and to the
+ * direction of travel walking and running — a running turn is a little wider, as it carries more
+ * momentum.
+ */
+const AIM_TURN: TurnTuning = { smoothTime: 0.06, maxRate: 900 };
+const WALK_TURN: TurnTuning = { smoothTime: 0.12, maxRate: 600 };
+const RUN_TURN: TurnTuning = { smoothTime: 0.15, maxRate: 540 };
 /** Touch stick: pushed this far it walks at full pace, and at the rim it runs. */
 const STICK_FULL_WALK = 0.6;
 const STICK_RUN = 0.9;
@@ -171,6 +189,14 @@ export class OrionThirdPersonController extends Script {
 	private yaw = 0;
 	private pitch = 22;
 	private characterYaw = 0;
+	/** The facing's turn, carried between frames so it eases in and out (see Locomotion). */
+	private readonly turn: TurnState = { yaw: 0, rate: 0 };
+	/** The body's lean into turns and changes of pace. */
+	private readonly lean: LeanState = { roll: 0, pitch: 0 };
+	private lastForwardSpeed = 0;
+	private readonly facingRotation = new Quat();
+	private readonly leanRotation = new Quat();
+	private readonly leanScratch = new Quat();
 	private cameraPosition = new Vec3();
 	private readonly cameraTarget = new Vec3();
 	private readonly desiredCameraPosition = new Vec3();
@@ -218,6 +244,8 @@ export class OrionThirdPersonController extends Script {
 	private beatsLanded = 0;
 	private doorCloseTimer = 0;
 	private sinceMouse = 99;
+	/** Recent mouse travel, px, fading over LOOK_INTENT_WINDOW: how much the player is looking round. */
+	private lookActivity = 0;
 	private interactPressed = false;
 	private readonly carPoint = new Vec3();
 	private readonly seatScratch = new Vec3();
@@ -228,6 +256,7 @@ export class OrionThirdPersonController extends Script {
 	private prewarmProps: Entity[] = [];
 	private prewarmTimer = 0;
 	private cancelModelPrewarm: (() => void) | null = null;
+	private characterLight: CharacterLight | null = null;
 
 	private isPointerLocked() {
 		return document.pointerLockElement === this.app.graphicsDevice.canvas;
@@ -345,6 +374,7 @@ export class OrionThirdPersonController extends Script {
 		this.baseFarClip = this.camera.camera?.farClip ?? 800;
 		this.baseNearClip = this.camera.camera?.nearClip ?? 0.2;
 		this.prewarmEffects();
+		this.characterLight = new CharacterLight(this.app);
 		this.on("destroy", this.destroy, this);
 	}
 
@@ -373,7 +403,10 @@ export class OrionThirdPersonController extends Script {
 
 		this.yaw -= this.mouseX * this.mouseSensitivity;
 		this.pitch = Math.max(-12, Math.min(68, this.pitch - this.mouseY * this.mouseSensitivity));
-		this.sinceMouse = this.mouseX !== 0 || this.mouseY !== 0 ? 0 : this.sinceMouse + dt;
+		// Only a deliberate look holds the camera off recentring: a resting hand or a touchpad
+		// sends a pixel or two now and then, which kept the driving camera stuck at an angle.
+		this.lookActivity = this.lookActivity * Math.exp(-dt / LOOK_INTENT_WINDOW) + Math.abs(this.mouseX) + Math.abs(this.mouseY);
+		this.sinceMouse = this.lookActivity > LOOK_INTENT_PIXELS ? 0 : this.sinceMouse + dt;
 		this.mouseX = 0;
 		this.mouseY = 0;
 
@@ -385,6 +418,8 @@ export class OrionThirdPersonController extends Script {
 			this.bust();
 			return;
 		}
+		const teleport = takeTeleport();
+		if (teleport) this.teleport(teleport.x, teleport.z, teleport.yaw);
 
 		const interact = this.interactPressed;
 		this.interactPressed = false;
@@ -485,14 +520,26 @@ export class OrionThirdPersonController extends Script {
 		// Shooting or swinging turns the character to where the camera aims; otherwise they turn
 		// towards the direction of travel, and hold the last facing when idle.
 		const combat = this.runCombat(dt, true);
+		// Something else turned the body since last frame (getting out of a car, a respawn): the
+		// turn starts from there, at rest.
+		if (Math.abs(angleDelta(this.turn.yaw, this.characterYaw)) > 0.01) this.turn.rate = 0;
+		this.turn.yaw = this.characterYaw;
 		if (combat?.faceAim) {
-			const angleDelta = ((this.yaw - this.characterYaw + 540) % 360) - 180;
-			this.characterYaw += angleDelta * (1 - Math.exp(-AIM_TURN_RESPONSE * dt));
+			stepTurn(this.turn, this.yaw, dt, AIM_TURN);
 		} else if (axisLength > 0) {
 			const targetFacing = Math.atan2(this.desiredVelocity.x, this.desiredVelocity.z) * 180 / Math.PI;
-			const angleDelta = ((targetFacing - this.characterYaw + 540) % 360) - 180;
-			this.characterYaw += angleDelta * (1 - Math.exp(-this.turnResponse * dt));
+			stepTurn(this.turn, targetFacing, dt, running ? RUN_TURN : WALK_TURN);
+		} else {
+			this.turn.rate = 0;
 		}
+		this.characterYaw = this.turn.yaw;
+		// Weight: leaning into the turn, forward pushing off and back pulling up.
+		const facingRadians = this.characterYaw * Math.PI / 180;
+		const groundSpeed = Math.hypot(this.currentVelocity.x, this.currentVelocity.z);
+		const forwardSpeed = this.currentVelocity.x * Math.sin(facingRadians) + this.currentVelocity.z * Math.cos(facingRadians);
+		const forwardAccel = (forwardSpeed - this.lastForwardSpeed) / dt;
+		this.lastForwardSpeed = forwardSpeed;
+		stepLean(this.lean, this.turn.rate, groundSpeed, submerged ? 0 : forwardAccel, dt);
 		this.applyFacing();
 
 		const position = this.entity.getPosition();
@@ -639,6 +686,7 @@ export class OrionThirdPersonController extends Script {
 				this.characterYaw = car.heading;
 				car.driver = "player";
 				this.doorCloseTimer = CARJACK.doorCloseSeconds;
+				emitGameEvent({ type: "vehicleEntered", id: car.entity.name, kind: "car", police: car.police });
 			}
 		}
 		this.applyFacing();
@@ -649,6 +697,11 @@ export class OrionThirdPersonController extends Script {
 	private updateDriving() {
 		const car = this.car;
 		if (!car) return;
+		if (controlsHeld()) {
+			// On the grid: engine running, handbrake on, until the lights go green.
+			car.setDriveInput(0, 0, true);
+			return;
+		}
 		const pressed = (...codes: string[]) => codes.some((code) => this.keys.has(code));
 		let throttle = Number(pressed("KeyW", "ArrowUp")) - Number(pressed("KeyS", "ArrowDown"));
 		let steer = Number(pressed("KeyA", "ArrowLeft")) - Number(pressed("KeyD", "ArrowRight"));
@@ -692,6 +745,8 @@ export class OrionThirdPersonController extends Script {
 		if (blast > 0.002 && this.camera) {
 			this.camera.translate((Math.random() - 0.5) * blast, (Math.random() - 0.5) * blast, (Math.random() - 0.5) * blast);
 		}
+		// The player's own light comes from wherever the camera now looks from.
+		if (this.camera) this.characterLight?.follow(this.camera);
 	}
 
 	private followCar(dt: number) {
@@ -720,8 +775,8 @@ export class OrionThirdPersonController extends Script {
 		const speed = Math.hypot(car.velocityX, car.velocityZ);
 		writeVehicleState(true, speed, false, car.integrity, car.condition === "burning");
 
-		if (this.sinceMouse > CAMERA_RECENTRE_DELAY) {
-			// Sit behind the car, leaning towards where it's actually travelling in a slide.
+		if (this.sinceMouse > DRIVE_RECENTRE_DELAY) {
+			// Sit behind the car, leaning a little towards where it's actually travelling in a slide.
 			let follow = car.heading;
 			if (speed > 3 && car.currentSpeed > 0) {
 				const travel = (Math.atan2(car.velocityX, car.velocityZ) * 180) / Math.PI;
@@ -784,6 +839,7 @@ export class OrionThirdPersonController extends Script {
 		this.mode = "onFoot";
 		writePlayerAction("");
 		writeVehicleState(false, 0, false);
+		emitGameEvent({ type: "vehicleExited", id: car.entity.name, kind: "car" });
 	}
 
 	private turnTowards(yaw: number, dt: number) {
@@ -820,6 +876,7 @@ export class OrionThirdPersonController extends Script {
 		writePlayerAction("Sitting");
 		writeVehicleState(false, 0, false);
 		writeFlightHud({ nearGunship: false, flying: true });
+		emitGameEvent({ type: "vehicleEntered", id: gunship.entity.name, kind: "gunship", police: false });
 		return true;
 	}
 
@@ -845,6 +902,7 @@ export class OrionThirdPersonController extends Script {
 		this.setFlightLens(false);
 		this.applyFacing();
 		writePlayerAction("");
+		emitGameEvent({ type: "vehicleExited", id: gunship.entity.name, kind: "gunship" });
 	}
 
 	/** Stick, keys and touch to the gunship; weapon picks and the trigger too. */
@@ -938,6 +996,7 @@ export class OrionThirdPersonController extends Script {
 		writePlayerAction("Sitting");
 		writeVehicleState(false, 0, false);
 		writeFlightHud({ nearJet: false, nearGunship: false, flying: true, aircraft: "jet" });
+		emitGameEvent({ type: "vehicleEntered", id: jet.entity.name, kind: "jet", police: false });
 		return true;
 	}
 
@@ -965,6 +1024,7 @@ export class OrionThirdPersonController extends Script {
 		this.setFlightLens(false);
 		this.applyFacing();
 		writePlayerAction("");
+		emitGameEvent({ type: "vehicleExited", id: jet.entity.name, kind: "jet" });
 	}
 
 	/**
@@ -1104,6 +1164,7 @@ export class OrionThirdPersonController extends Script {
 		this.jet?.setControls(NO_JET_INPUT, false);
 		clearWanted();
 		setWasted(true);
+		emitGameEvent({ type: "playerDied" });
 		writePlayerAction("Death");
 		this.currentVelocity.set(0, 0, 0);
 		if (this.entity.rigidbody) this.entity.rigidbody.linearVelocity = this.currentVelocity;
@@ -1117,6 +1178,7 @@ export class OrionThirdPersonController extends Script {
 		this.wastedTimer = WASTED_SECONDS;
 		clearWanted();
 		setBusted(true);
+		emitGameEvent({ type: "playerBusted" });
 		writePlayerAction("");
 		this.currentVelocity.set(0, 0, 0);
 		if (this.entity.rigidbody) this.entity.rigidbody.linearVelocity = this.currentVelocity;
@@ -1134,9 +1196,36 @@ export class OrionThirdPersonController extends Script {
 		writePlayerAction("");
 	}
 
+	/** Somewhere else at once (a mission retried from its start): out of any vehicle, on foot there. */
+	private teleport(x: number, z: number, yaw: number) {
+		if (this.gunship) this.leaveGunship(this.gunship);
+		if (this.jet) this.leaveJet(this.jet);
+		const car = this.car;
+		if (car) {
+			car.setDriveInput(0, 0, true);
+			if (car.driver === "player" || car.driver === "held") car.driver = "parked";
+			this.leaveCar(car);
+		}
+		this.drownTimer = 0;
+		const y = (pavedHeightAt(x, z) ?? terrainHeightAt(x, z)) + CAPSULE_HALF_HEIGHT + 0.05;
+		this.carPoint.set(x, y, z);
+		this.entity.setPosition(this.carPoint);
+		this.entity.rigidbody?.teleport(this.carPoint);
+		this.currentVelocity.set(0, 0, 0);
+		if (this.entity.rigidbody) {
+			this.entity.rigidbody.linearVelocity = this.currentVelocity;
+			this.entity.rigidbody.angularVelocity = this.currentVelocity;
+		}
+		this.characterYaw = yaw;
+		this.yaw = yaw;
+		this.applyFacing();
+		writePlayerPose(x, y, z, yaw, 0, 0);
+	}
+
 	private updateDrowning(submerged: boolean, dt: number) {
 		this.drownTimer = submerged ? this.drownTimer + dt : 0;
 		if (this.drownTimer >= ORION_OCEAN.drownSeconds) {
+			emitGameEvent({ type: "playerDied" });
 			this.respawn();
 		}
 	}
@@ -1173,7 +1262,21 @@ export class OrionThirdPersonController extends Script {
 
 	private applyFacing() {
 		this.visual ??= this.entity.findByName(PLAYER_VISUAL_NAME) as Entity | null;
-		this.visual?.setLocalEulerAngles(0, this.characterYaw, 0);
+		if (!this.visual) return;
+		// Leaning is for running about; anywhere else the body stands (or sits) straight.
+		if (this.mode !== "onFoot") {
+			this.lean.roll = 0;
+			this.lean.pitch = 0;
+			this.lastForwardSpeed = 0;
+		}
+		// Tipped about the feet (the visual's origin), in the body's own frame: pitch about its
+		// right-left axis, roll about its forward axis.
+		this.facingRotation.setFromEulerAngles(0, this.characterYaw, 0);
+		this.leanRotation.setFromAxisAngle(Vec3.RIGHT, this.lean.pitch);
+		this.leanScratch.setFromAxisAngle(Vec3.BACK, this.lean.roll);
+		this.leanRotation.mul(this.leanScratch);
+		this.facingRotation.mul(this.leanRotation);
+		this.visual.setLocalRotation(this.facingRotation);
 	}
 
 	private isGrounded() {
@@ -1265,6 +1368,8 @@ export class OrionThirdPersonController extends Script {
 
 	public destroy() {
 		this.cancelModelPrewarm?.();
+		this.characterLight?.destroy();
+		this.characterLight = null;
 		for (const prop of this.prewarmProps) prop.destroy();
 		this.prewarmProps = [];
 		const canvas = this.app.graphicsDevice.canvas;

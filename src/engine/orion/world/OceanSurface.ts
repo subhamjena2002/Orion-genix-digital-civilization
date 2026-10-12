@@ -1,5 +1,6 @@
 import {
 	ADDRESS_REPEAT,
+	BLEND_NORMAL,
 	Color,
 	FILTER_LINEAR,
 	FILTER_LINEAR_MIPMAP_LINEAR,
@@ -96,10 +97,18 @@ export function createWaveNormalMap(device: GraphicsDevice): Texture {
 export function createOceanMaterial(waves: Texture): StandardMaterial {
 	const material = new StandardMaterial();
 	material.name = "ocean";
-	material.diffuse = new Color(0.035, 0.12, 0.16);
+	// Clear tropical water: see-through enough that the sand under the shallows shows turquoise and
+	// the seabed further out makes it deep blue (see Ocean's seabed). Opaque, it was a near-black
+	// sheet from street level. Reflections stay at full strength however clear it is.
+	material.diffuse = new Color(0.02, 0.27, 0.42);
+	material.emissive = new Color(0.0, 0.045, 0.06);
+	material.blendType = BLEND_NORMAL;
+	material.opacity = 0.74;
+	material.opacityFadesSpecular = false;
+	material.depthWrite = true;
 	material.useMetalness = true;
 	material.metalness = 0;
-	material.gloss = 0.86;
+	material.gloss = 0.9;
 	material.normalMap = waves;
 	material.bumpiness = 0.55;
 	material.normalMapTiling = new Vec2(OCEAN_SPAN / SWELL_TILE, OCEAN_SPAN / SWELL_TILE);
@@ -139,4 +148,17 @@ export class OrionOcean extends Script {
 		material.normalDetailMapOffset = this.ripple;
 		material.update();
 	}
+}
+
+/** The sea floor under open water: dark blue-green, what deep water shows through the surface. */
+export function createSeabedMaterial(): StandardMaterial {
+	const material = new StandardMaterial();
+	material.name = "seabed";
+	material.diffuse = new Color(0.01, 0.07, 0.1);
+	material.emissive = new Color(0.006, 0.05, 0.075);
+	material.useMetalness = true;
+	material.metalness = 0;
+	material.gloss = 0;
+	material.update();
+	return material;
 }

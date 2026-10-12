@@ -22,6 +22,7 @@ import type { SimplifyLevel } from "../rendering/lod/Simplify";
 import { keepVisible } from "../rendering/lod/HiddenSurface";
 import { simplifyInBackground, visibilityInBackground } from "../rendering/lod/SimplifyClient";
 import { shadowOnlyLayer } from "../rendering/ShadowOnlyLayer";
+import { averageColour, releasedAverageColour } from "../rendering/TextureBudget";
 import { BRAKE_LIGHT_MATERIAL, HEADLIGHT_MATERIAL, SIREN_MATERIAL } from "./VehicleModels";
 
 /**
@@ -331,30 +332,10 @@ function averageOf(texture: Texture | null): readonly [number, number, number] {
 	if (!texture) return [1, 1, 1];
 	const cached = textureAverages.get(texture);
 	if (cached) return cached;
-	let average: readonly [number, number, number] = [0.6, 0.6, 0.6];
-	try {
-		const source = texture.getSource(0) as CanvasImageSource | null;
-		if (source && typeof OffscreenCanvas !== "undefined") {
-			const canvas = new OffscreenCanvas(8, 8);
-			const context = canvas.getContext("2d");
-			if (context) {
-				context.drawImage(source, 0, 0, 8, 8);
-				const pixels = context.getImageData(0, 0, 8, 8).data;
-				let r = 0;
-				let g = 0;
-				let b = 0;
-				for (let i = 0; i < pixels.length; i += 4) {
-					r += pixels[i];
-					g += pixels[i + 1];
-					b += pixels[i + 2];
-				}
-				const count = (pixels.length / 4) * 255;
-				average = [r / count, g / count, b / count];
-			}
-		}
-	} catch {
-		// Unreadable (e.g. compressed) textures fall back to a mid grey.
-	}
+	// Once a model texture is on the GPU its bitmap is let go (TextureBudget), its average kept.
+	// Unreadable (e.g. compressed) textures fall back to a mid grey.
+	const source = texture.getSource(0) as CanvasImageSource | null;
+	const average = (source ? averageColour(source) : releasedAverageColour(texture)) ?? [0.6, 0.6, 0.6];
 	textureAverages.set(texture, average);
 	return average;
 }

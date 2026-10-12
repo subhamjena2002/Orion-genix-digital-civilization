@@ -1,4 +1,4 @@
-import { BLEND_NORMAL, Entity, Mat4, Quat, StandardMaterial, Vec3, type MeshInstance } from "playcanvas";
+import { BLEND_NORMAL, Entity, Mat4, Quat, StandardMaterial, Vec3, type Material, type MeshInstance } from "playcanvas";
 
 import { broadcastDisturbance } from "../combat/CombatWorld";
 import type { ClipState } from "../player/OrionSkinnedCharacterAnimation";
@@ -258,6 +258,25 @@ export class CarjackRig {
 			const spin = new Vec3(Math.random() * 720, Math.random() * 720, Math.random() * 720);
 			this.car.app.root.addChild(shard);
 			this.shards.push({ entity: shard, velocity, spin, age: 0 });
+		}
+	}
+
+	/**
+	 * Throws bits off the car from a crash: glass or paint chips and trim, out along (dirX, dirZ)
+	 * and up, falling to the road and gone after a moment (the same pieces a smashed window throws).
+	 */
+	public spray(origin: Vec3, dirX: number, dirZ: number, count: number, material: Material, size: number) {
+		for (let i = 0; i < count; i++) {
+			const piece = new Entity("crash-debris");
+			piece.addComponent("render", { type: "box", material, castShadows: false });
+			const s = size * (0.4 + Math.random());
+			piece.setLocalScale(s, s * (0.15 + Math.random() * 0.4), s * (0.5 + Math.random()));
+			piece.setPosition(origin.x + (Math.random() - 0.5) * 0.6, origin.y + (Math.random() - 0.5) * 0.4, origin.z + (Math.random() - 0.5) * 0.6);
+			const push = 1.5 + Math.random() * 3.5;
+			const velocity = new Vec3(dirX * push + (Math.random() - 0.5) * 2.5, 1 + Math.random() * 2.5, dirZ * push + (Math.random() - 0.5) * 2.5);
+			const spin = new Vec3(Math.random() * 900, Math.random() * 900, Math.random() * 900);
+			this.car.app.root.addChild(piece);
+			this.shards.push({ entity: piece, velocity, spin, age: 0 });
 		}
 	}
 

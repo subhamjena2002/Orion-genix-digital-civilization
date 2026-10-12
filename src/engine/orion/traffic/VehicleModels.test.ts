@@ -1,6 +1,9 @@
+import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { HIDDEN_BRAND_NODE, HIDDEN_MATERIAL, VEHICLE_MODELS } from "./VehicleModels";
+import { MISSIONS } from "../missions/MissionCatalog";
+import { HIDDEN_BRAND_NODE, HIDDEN_MATERIAL, modelKey, pickVehicleModel, VEHICLE_MODELS } from "./VehicleModels";
+import type { VehicleStyle } from "./Vehicles";
 
 /**
  * Models in the tree that are recognisably a real manufacturer's car — now none.
@@ -37,6 +40,24 @@ describe("vehicle models", () => {
 		for (const node of ["Plane_gemballa logo_0", "HoodBadge_Badge_224", "BumperRBadge_Chrome_42"]) {
 			expect(HIDDEN_BRAND_NODE.test(node), node).toBe(true);
 		}
+	});
+
+	it("gives every car a mission spawns or rewards a real model", () => {
+		const styles = new Set<string>();
+		for (const mission of MISSIONS) {
+			const spawns = [...(mission.spawns ?? []), ...mission.objectives.flatMap((objective) => objective.spawns ?? [])];
+			for (const spawn of spawns) if (spawn.type === "vehicle") styles.add(spawn.style);
+			for (const vehicle of mission.reward.vehicles ?? []) styles.add(vehicle.style);
+		}
+		for (const style of styles) expect(pickVehicleModel(style as VehicleStyle, 1), style).not.toBeNull();
+	});
+
+	it("ships each plain-paint picture, and keeps variants of one file apart", () => {
+		for (const model of VEHICLE_MODELS) {
+			if (typeof model.paintMap === "string") expect(existsSync(`public/models/vehicles/${model.paintMap}`), model.paintMap).toBe(true);
+		}
+		const keys = VEHICLE_MODELS.map(modelKey);
+		expect(new Set(keys).size).toBe(keys.length);
 	});
 
 	it("leaves ordinary bodywork alone", () => {

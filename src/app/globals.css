@@ -65,6 +65,11 @@ body {
   background: linear-gradient(to bottom, rgba(8, 9, 10, 0.92), rgba(8, 9, 10, 0.55) 70%, transparent);
 }
 
+/* Full screen on a laptop: the game gets every pixel, the site header goes. */
+#world[data-fullscreen="true"] .orion-topbar {
+  display: none;
+}
+
 .orion-brand-mark {
   display: grid;
   place-items: center;
@@ -348,7 +353,7 @@ body {
      animates `transform` and would otherwise clobber the centering. */
   position: fixed;
   inset: 0;
-  width: min(900px, calc(100vw - 4rem));
+  width: min(1120px, calc(100vw - 4rem));
   height: fit-content;
   margin: auto;
   border: 1px solid var(--oi-border-strong);
@@ -363,10 +368,125 @@ body {
 
 .orion-map-corner .orion-map-frame {
   height: 190px;
+  cursor: pointer;
+  /* A round radar, as the game's corner map. */
+  clip-path: circle(48% at 50% 50%);
+  background: #3f7f99;
 }
 
 .orion-map-expanded .orion-map-frame {
-  height: min(560px, 60vh);
+  position: relative;
+  height: min(680px, calc(100dvh - 9rem));
+}
+
+@media (max-height: 560px) {
+  .orion-map-legend,
+  .orion-map-hint {
+    display: none;
+  }
+}
+
+.orion-map-canvas {
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.orion-map-canvas:active {
+  cursor: grabbing;
+}
+
+.orion-map-legend {
+  position: absolute;
+  top: 0.9rem;
+  left: 0.9rem;
+  border-radius: 12px;
+  background: rgba(20, 24, 28, 0.78);
+  padding: 0.7rem 0.85rem;
+  color: #f1ede2;
+  font-size: 11.5px;
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+.orion-map-legend-title {
+  margin-bottom: 0.45rem;
+  color: #ff8fd0;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.orion-map-legend ul {
+  display: grid;
+  gap: 0.32rem;
+}
+
+.orion-map-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.orion-map-legend-route {
+  display: inline-block;
+  width: 16px;
+  height: 4px;
+  border-radius: 2px;
+  background: #ff4fb8;
+  box-shadow: 0 0 0 1.5px #ffffff;
+}
+
+.orion-map-zoom {
+  position: absolute;
+  top: 0.9rem;
+  right: 0.9rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.orion-map-zoom button {
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 10px;
+  background: rgba(20, 24, 28, 0.78);
+  color: #f1ede2;
+  font-size: 16px;
+  font-weight: 600;
+  transition: background 160ms ease;
+}
+
+.orion-map-zoom button:hover {
+  background: rgba(20, 24, 28, 0.95);
+}
+
+.orion-map-hint {
+  position: absolute;
+  bottom: 0.7rem;
+  left: 50%;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: rgba(20, 24, 28, 0.7);
+  padding: 0.3rem 0.8rem;
+  color: rgba(241, 237, 226, 0.85);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.orion-map-target-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #ffd2ec;
+}
+
+.orion-map-target-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
 }
 
 .orion-map-footer {
@@ -851,6 +971,10 @@ body {
   height: 124px;
 }
 
+#world[data-input="touch"] .orion-map-legend {
+  display: none;
+}
+
 #world[data-input="touch"] .orion-map-corner .orion-map-footer {
   padding: 0.3rem 0.55rem;
 }
@@ -1242,6 +1366,317 @@ body {
   color: #7fb3ff;
 }
 
+/* ---------- Missions: briefing, objective line, passed / failed, cash, mission list ---------- */
+
+.orion-cash {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #9fe0a8;
+  text-shadow: 0 1px 0 rgb(0 0 0 / 80%), 0 0 10px rgb(0 0 0 / 55%);
+}
+
+.orion-mission-brief {
+  position: absolute;
+  left: 50%;
+  bottom: 9rem;
+  width: min(30rem, calc(100% - 2rem));
+  transform: translateX(-50%);
+  border: 1px solid var(--oi-border-strong);
+  border-radius: 14px;
+  background: var(--oi-surface-2);
+  box-shadow: var(--oi-shadow-elevated);
+  padding: 1rem 1.15rem 1.1rem;
+  backdrop-filter: blur(8px);
+  animation: orion-mission-rise 260ms ease-out both;
+}
+
+.orion-mission-title {
+  margin-top: 0.2rem;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--oi-accent-strong);
+}
+
+.orion-mission-text {
+  margin-top: 0.45rem;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: var(--oi-text-primary);
+}
+
+.orion-mission-reward {
+  margin-top: 0.55rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  color: #9fe0a8;
+}
+
+.orion-mission-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+
+.orion-mission-button {
+  min-height: 2.25rem;
+  border: 1px solid var(--oi-border-strong);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 0.35rem 0.95rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--oi-text-secondary);
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.orion-mission-button:hover {
+  border-color: var(--oi-accent);
+  color: var(--oi-accent-strong);
+}
+
+.orion-mission-button.is-primary {
+  border-color: var(--oi-accent);
+  background: var(--oi-accent-soft);
+  color: var(--oi-accent-strong);
+}
+
+.orion-mission-objective {
+  position: absolute;
+  left: 50%;
+  bottom: 7.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: calc(100% - 2rem);
+  transform: translateX(-50%);
+  text-align: center;
+}
+
+.orion-mission-objective-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #ffffff;
+  text-shadow: 0 1px 0 rgb(0 0 0 / 85%), 0 0 12px rgb(0 0 0 / 70%);
+}
+
+.orion-mission-chip {
+  border: 1px solid var(--oi-border-strong);
+  border-radius: 999px;
+  background: rgba(10, 11, 12, 0.6);
+  padding: 0.1rem 0.55rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.8rem;
+  color: var(--oi-accent-strong);
+  text-shadow: none;
+}
+
+.orion-mission-chip.is-urgent {
+  border-color: #c9312a;
+  color: #ff8a80;
+}
+
+.orion-mission-warning {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #ff8a80;
+  text-shadow: 0 1px 0 rgb(0 0 0 / 85%);
+}
+
+.orion-mission-result {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  width: max-content;
+  max-width: calc(100% - 2rem);
+  transform: translateX(-50%);
+  text-align: center;
+  animation: orion-mission-rise 420ms ease-out both;
+}
+
+.orion-mission-result-title {
+  font-size: clamp(2rem, 6vw, 3.6rem);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: 0 2px 0 rgb(0 0 0 / 70%), 0 0 24px rgb(0 0 0 / 60%);
+}
+
+.orion-mission-result.is-passed .orion-mission-result-title {
+  color: #f2c14e;
+}
+
+.orion-mission-result.is-failed .orion-mission-result-title {
+  color: #c9312a;
+}
+
+.orion-mission-result-detail {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #ffffff;
+  text-shadow: 0 1px 0 rgb(0 0 0 / 85%), 0 0 10px rgb(0 0 0 / 60%);
+}
+
+.orion-mission-result.is-passed .orion-mission-result-detail {
+  color: #9fe0a8;
+}
+
+.orion-race-countdown {
+  position: absolute;
+  left: 50%;
+  top: 34%;
+  transform: translate(-50%, -50%);
+  font-size: clamp(4rem, 14vw, 9rem);
+  font-weight: 800;
+  line-height: 1;
+  color: #ffffff;
+  text-shadow: 0 3px 0 rgb(0 0 0 / 70%), 0 0 30px rgb(0 0 0 / 60%);
+  animation: orion-countdown-pop 900ms ease-out both;
+}
+
+.orion-race-countdown.is-go {
+  color: #7fe08f;
+}
+
+@keyframes orion-countdown-pop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.6);
+  }
+  25% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes orion-mission-rise {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+  }
+}
+
+.orion-mission-log-toggle {
+  align-self: flex-start;
+}
+
+.orion-mission-log {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 30;
+  width: min(34rem, calc(100% - 2rem));
+  max-height: calc(100% - 4rem);
+  overflow-y: auto;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--oi-border-strong);
+  border-radius: 16px;
+  background: var(--oi-surface-raised);
+  box-shadow: var(--oi-shadow-elevated);
+  padding: 1rem 1.15rem;
+  backdrop-filter: blur(10px);
+}
+
+.orion-mission-log-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.orion-mission-log-summary {
+  margin-top: 0.2rem;
+  font-size: 0.85rem;
+  color: var(--oi-text-secondary);
+}
+
+.orion-mission-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.85rem;
+}
+
+.orion-mission-log-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--oi-border-subtle);
+  border-radius: 10px;
+  padding: 0.6rem 0.75rem;
+}
+
+.orion-mission-log-item.is-available {
+  border-color: var(--oi-accent);
+  background: var(--oi-accent-soft);
+}
+
+.orion-mission-log-item.is-locked {
+  opacity: 0.5;
+}
+
+.orion-mission-log-title {
+  font-weight: 600;
+  color: var(--oi-text-primary);
+}
+
+.orion-mission-log-item.is-passed .orion-mission-log-title::after {
+  content: " ✓";
+  color: var(--oi-positive);
+}
+
+.orion-mission-log-detail {
+  margin-top: 0.1rem;
+  font-size: 0.78rem;
+  color: var(--oi-text-secondary);
+}
+
+/* Touch: the controls own the bottom of the screen, so missions talk from the top. */
+#world[data-input="touch"] .orion-mission-objective {
+  top: calc(var(--touch-top) + 0.25rem);
+  bottom: auto;
+}
+
+#world[data-input="touch"] .orion-mission-brief {
+  bottom: auto;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-height: calc(100% - 2 * var(--touch-top));
+  overflow-y: auto;
+  animation: none;
+}
+
+#world[data-input="touch"] .orion-mission-result {
+  top: 22%;
+}
+
+#world[data-input="touch"] .orion-mission-log-toggle {
+  padding: 0.25rem 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .orion-wanted.is-searching svg.is-lit {
     animation: none;
@@ -1602,4 +2037,126 @@ body {
 .orion-touch[data-mode="fly"] .orion-touch-exit {
   right: calc(var(--touch-fire) + var(--touch-unit) + var(--touch-gap) * 2);
   bottom: 0;
+}
+
+/* ---------- Loading screen (between Play and the city) ---------- */
+
+.orion-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(60% 50% at 50% 40%, rgba(139, 92, 246, 0.16), transparent 70%),
+    radial-gradient(70% 50% at 50% 110%, rgba(255, 45, 149, 0.22), transparent 70%),
+    #050507;
+  color: #f4f2ff;
+  transition: opacity 600ms ease;
+}
+
+.orion-loading.is-done {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.orion-loading-inner {
+  width: min(520px, 100%);
+}
+
+.orion-loading-wordmark {
+  font-family: var(--font-orbitron), var(--font-geist-sans), sans-serif;
+  font-size: clamp(1.8rem, 6vw, 2.8rem);
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-align: center;
+}
+
+.orion-loading-wordmark span {
+  color: #ff2d95;
+  text-shadow: 0 0 22px rgba(255, 45, 149, 0.7);
+}
+
+.orion-loading-bar {
+  position: relative;
+  height: 8px;
+  margin-top: 2rem;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.orion-loading-bar span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #ff2d95, #ff7a1a 55%, #f7b733);
+  box-shadow: 0 0 18px rgba(255, 45, 149, 0.8);
+  transition: width 350ms ease-out;
+}
+
+.orion-loading-bar span::after {
+  /* A sheen running along the filled part, so the bar never looks frozen between files. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: orion-loading-sheen 1.4s linear infinite;
+}
+
+@keyframes orion-loading-sheen {
+  from {
+    background-position: -40% 0;
+  }
+  to {
+    background-position: 140% 0;
+  }
+}
+
+.orion-loading-status {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.8rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(226, 228, 255, 0.64);
+}
+
+.orion-loading-percent {
+  color: #f7b733;
+  font-weight: 700;
+}
+
+.orion-loading-tip {
+  min-height: 3em;
+  margin-top: 2.2rem;
+  text-align: center;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: rgba(226, 228, 255, 0.5);
+}
+
+.orion-loading.is-error .orion-loading-bar span {
+  background: #f87171;
+  box-shadow: none;
+}
+
+.orion-loading.is-error .orion-loading-status span:first-child {
+  color: #fca5a5;
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orion-loading-bar span::after {
+    animation: none;
+  }
 }

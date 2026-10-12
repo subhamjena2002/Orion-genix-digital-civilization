@@ -1,4 +1,4 @@
-import type { Vector3Tuple } from "../properties/Properties";
+import type { Vector3Tuple } from "./Vector";
 import type { WorldBounds } from "./WorldModel";
 import { ORION_DISTRICTS } from "./WorldModel";
 

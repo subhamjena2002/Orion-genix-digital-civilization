@@ -1,4 +1,4 @@
-import type { Vector3Tuple } from "../properties/Properties";
+import type { Vector3Tuple } from "../world/Vector";
 import type { LodAssetSet } from "../assets/AssetRegistry";
 import { railBlocks } from "../rail/RailLine";
 import { ORION_DISTRICTS, ORION_PARCELS, type DistrictKind, type Zoning } from "../world/WorldModel";

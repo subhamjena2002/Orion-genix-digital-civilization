@@ -1,7 +1,7 @@
 /**
- * The vehicle mix on Orion's streets. Bodies are generic, unbranded shapes built from
- * primitives: everyday hatchbacks and sedans, SUVs, low luxury coupés, three-wheeler autos and
- * police SUVs.
+ * The vehicle mix on Orion's streets. Each style is drawn by a real model where VEHICLE_MODELS has
+ * one, and otherwise by a generic, unbranded body built from primitives: everyday hatchbacks,
+ * SUVs and three-wheeler autos are still those.
  */
 export type VehicleStyle =
 	| "hatchback" | "sedan" | "suv" | "luxury" | "auto" | "police" | "truck" | "militaryWagon"
@@ -24,9 +24,12 @@ export interface VehicleShape {
 
 export const VEHICLE_SHAPES: Readonly<Record<VehicleStyle, VehicleShape>> = {
 	hatchback: { length: 3.8, width: 1.66, bodyHeight: 0.72, clearance: 0.18, cabinLength: 2.1, cabinHeight: 0.62, cabinOffset: -0.2, wheelRadius: 0.3, maxSpeed: 10 },
-	sedan: { length: 4.5, width: 1.76, bodyHeight: 0.66, clearance: 0.17, cabinLength: 2.3, cabinHeight: 0.56, cabinOffset: -0.15, wheelRadius: 0.32, maxSpeed: 11.5 },
+	// The taxi's sedan in plain paint (see VEHICLE_MODELS), at its measured size.
+	sedan: { length: 4.7, width: 1.8, bodyHeight: 0.66, clearance: 0.17, cabinLength: 2.3, cabinHeight: 0.56, cabinOffset: -0.15, wheelRadius: 0.32, maxSpeed: 11.5 },
 	suv: { length: 4.6, width: 1.86, bodyHeight: 0.92, clearance: 0.26, cabinLength: 2.8, cabinHeight: 0.7, cabinOffset: -0.35, wheelRadius: 0.38, maxSpeed: 11 },
-	luxury: { length: 4.6, width: 1.94, bodyHeight: 0.56, clearance: 0.12, cabinLength: 1.9, cabinHeight: 0.46, cabinOffset: -0.25, wheelRadius: 0.34, maxSpeed: 13 },
+	// The Phoenix out of uniform, at its measured size (1.3 m tall without the light bar): the
+	// quick car the races and the garage use.
+	luxury: { length: 4.9, width: 1.9, bodyHeight: 0.62, clearance: 0.15, cabinLength: 2.2, cabinHeight: 0.53, cabinOffset: -0.2, wheelRadius: 0.33, maxSpeed: 13 },
 	auto: { length: 2.7, width: 1.35, bodyHeight: 0.62, clearance: 0.16, cabinLength: 2.0, cabinHeight: 0.95, cabinOffset: -0.2, wheelRadius: 0.22, maxSpeed: 7.5 },
 	police: { length: 4.6, width: 1.86, bodyHeight: 0.92, clearance: 0.26, cabinLength: 2.8, cabinHeight: 0.7, cabinOffset: -0.35, wheelRadius: 0.38, maxSpeed: 11.5 },
 	// A flat-bed lorry: cab at the front over the front axle, a long bed behind it, and the ground
@@ -70,9 +73,10 @@ const AUTO_COLOURS = ["#2e8b3d", "#1c1c1c", "#2e8b3d"];
  * much repetition is bearable rather than what the city wants. Every ordinary car added to
  * VEHICLE_MODELS (a hatchback, a sedan, a taxi) can take its style's line back.
  *
- * `luxury` is deliberately absent: the two supercars that served it were real manufacturers'
- * designs and have been taken out of the build (see reference-assets/README.md). Spawning the
- * style anyway would fall back to a primitive box body, which is worse than a repetitive street.
+ * `luxury` and `sedan` have real models now, but each is one model in plain paint, made for the
+ * missions (the races, the garage, a getaway): a street of them would be one car over and over.
+ * (The two supercars that once served `luxury` were real manufacturers' designs, taken out of the
+ * build: see reference-assets/README.md.)
  */
 const FLEET: readonly [VehicleStyle, number][] = [
 	["truck", 6],

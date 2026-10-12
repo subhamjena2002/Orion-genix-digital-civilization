@@ -1,4 +1,4 @@
-import { RESERVED_SLOTS, type WeaponDefinition } from "./WeaponData";
+import { RESERVED_SLOTS, type WeaponDefinition, type WeaponId } from "./WeaponData";
 
 /** What the player carries of one weapon. */
 export interface CarriedWeapon {
@@ -24,6 +24,8 @@ export class WeaponInventory {
 	private cooldownLeft = 0;
 
 	private readonly startIndex: number;
+	/** Which weapons the player has earned (see missions/Progress); everything, unless told otherwise. */
+	private owns: (id: WeaponId) => boolean = () => true;
 
 	public constructor(definitions: readonly WeaponDefinition[], startWith = definitions[0]?.id) {
 		this.carried = [...definitions]
@@ -51,6 +53,17 @@ export class WeaponInventory {
 
 	public get weapons(): readonly CarriedWeapon[] {
 		return this.carried;
+	}
+
+	/** The weapons the player can actually pick, in slot order. */
+	public get owned(): readonly CarriedWeapon[] {
+		return this.carried.filter((weapon) => this.owns(weapon.definition.id));
+	}
+
+	/** Limits picking to the weapons `owns` says the player has; the starting one always counts. */
+	public setOwnership(owns: (id: WeaponId) => boolean): void {
+		this.owns = owns;
+		if (!this.owns(this.current.definition.id)) this.equip(this.startIndex);
 	}
 
 	/** Bringing a weapon up. */
@@ -81,16 +94,21 @@ export class WeaponInventory {
 	public selectSlot(slot: number): boolean {
 		if (RESERVED_SLOTS.includes(slot)) return false;
 		const index = this.carried.findIndex((weapon) => weapon.definition.slot === slot);
-		if (index < 0 || index === this.index) return false;
+		if (index < 0 || index === this.index || !this.owns(this.carried[index].definition.id)) return false;
 		this.equip(index);
 		return true;
 	}
 
 	/** The next (+1) or previous (-1) weapon, wrapping around. */
 	public cycle(direction: 1 | -1): boolean {
-		if (this.carried.length < 2) return false;
-		this.equip((this.index + direction + this.carried.length) % this.carried.length);
-		return true;
+		const count = this.carried.length;
+		for (let step = 1; step < count; step++) {
+			const index = (this.index + direction * step + count * step) % count;
+			if (!this.owns(this.carried[index].definition.id)) continue;
+			this.equip(index);
+			return true;
+		}
+		return false;
 	}
 
 	public update(dt: number): void {

@@ -87,6 +87,20 @@ export function reportCrime(crime: Crime, x: number, z: number): void {
 	state.searching = false;
 }
 
+/**
+ * Straight to at least `stars` (a mission's alarm going off): the police know where the player
+ * is and are on their way.
+ */
+export function raiseWanted(stars: number, x: number, z: number): void {
+	const target = Math.max(1, Math.min(MAX_STARS, Math.round(stars)));
+	state.heat = Math.max(state.heat, STAR_HEAT[target - 1]);
+	state.stars = Math.max(state.stars, target);
+	state.lastSeenX = x;
+	state.lastSeenZ = z;
+	state.sinceSeen = 0;
+	state.searching = false;
+}
+
 /** A police unit or officer can see the player at (x, z) this frame. */
 export function spotted(x: number, z: number): void {
 	if (state.stars === 0) return;

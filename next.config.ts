@@ -13,6 +13,9 @@ const nextConfig: NextConfig = {
   // The game is one client-side page with no server features, so it ships as plain files in
   // out/ — deployed by Cloudflare as static assets (wrangler.jsonc), not as a server Worker.
   output: "export",
+  // Static files on Cloudflare: no image server to resize on the fly. The landing page's images
+  // are exported at the sizes they're shown (public/landing, WebP).
+  images: { unoptimized: true },
   reactStrictMode: false,
   turbopack: useDebugEngine
     ? undefined

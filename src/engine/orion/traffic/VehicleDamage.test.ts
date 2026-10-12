@@ -6,14 +6,19 @@ import {
 	BLAST_RADIUS,
 	BURNING_BELOW,
 	blastAt,
+	BUILDS,
+	buildOf,
 	burnDown,
 	conditionOf,
 	crashDamage,
 	damageEffect,
+	dentFor,
 	FIRE_DRAIN_PER_SECOND,
+	glassAfter,
 	powerFactor,
 	SMOKING_BELOW,
 	SMOULDER_SECONDS,
+	wear,
 	WRECK_FIRE_SECONDS,
 } from "./VehicleDamage";
 
@@ -23,16 +28,74 @@ describe("crashDamage", () => {
 		expect(crashDamage(2.5)).toBe(0);
 	});
 
-	it("grows with the square of the change in velocity", () => {
+	it("grows faster than the hit", () => {
 		const light = crashDamage(8);
 		const heavy = crashDamage(16);
 		expect(light).toBeGreaterThan(0);
 		expect(heavy).toBeGreaterThan(light * 2);
 	});
 
-	it("writes a car off in one catastrophic hit, and never more than that", () => {
-		expect(crashDamage(28.5)).toBeCloseTo(100);
-		expect(crashDamage(200)).toBe(100);
+	it("never finishes a vehicle in one crash: five or more flat-out hits to set a car alight", () => {
+		const worst = crashDamage(200);
+		expect(worst).toBe(BUILDS.car.maxHitDamage);
+		const toFire = (100 - BURNING_BELOW) / worst;
+		expect(toFire).toBeGreaterThanOrEqual(4.5);
+		expect(toFire).toBeLessThanOrEqual(7);
+		// Ordinary city crashes (~50 km/h into something) take ten or more.
+		expect((100 - BURNING_BELOW) / crashDamage(14)).toBeGreaterThanOrEqual(10);
+	});
+
+	it("is kinder to heavier builds", () => {
+		expect(crashDamage(25, "heavy")).toBeLessThan(crashDamage(25, "van"));
+		expect(crashDamage(25, "van")).toBeLessThan(crashDamage(25, "car"));
+		expect(crashDamage(25, "bus")).toBeLessThan(crashDamage(25, "car"));
+	});
+});
+
+describe("visible damage", () => {
+	it("dents deeper and wider the harder the hit, up to a limit", () => {
+		expect(dentFor(2)).toBeNull();
+		const light = dentFor(8)!;
+		const hard = dentFor(25)!;
+		expect(hard.depth).toBeGreaterThan(light.depth);
+		expect(hard.radius).toBeGreaterThan(light.radius);
+		expect(dentFor(500)!.depth).toBe(BUILDS.car.maxDent);
+	});
+
+	it("dents buses wide and lorries shallow", () => {
+		expect(dentFor(20, "bus")!.radius).toBeGreaterThan(dentFor(20, "car")!.radius);
+		expect(dentFor(20, "heavy")!.depth).toBeLessThan(dentFor(20, "car")!.depth);
+	});
+
+	it("cracks glass before it shatters, and never mends it", () => {
+		expect(glassAfter("intact", 5, 0)).toBe("intact");
+		expect(glassAfter("intact", BUILDS.car.crackDeltaV, 0)).toBe("cracked");
+		expect(glassAfter("intact", 5, BUILDS.car.crackDamage)).toBe("cracked");
+		expect(glassAfter("cracked", 5, BUILDS.car.crackDamage)).toBe("cracked");
+		expect(glassAfter("cracked", BUILDS.car.shatterDeltaV, 30)).toBe("shattered");
+		expect(glassAfter("shattered", 0, 0)).toBe("shattered");
+		// One hard crash crazes it; the next knocks it out. Only a violent one does both at once.
+		expect(glassAfter("intact", BUILDS.car.shatterDeltaV, 15)).toBe("cracked");
+		expect(glassAfter("intact", BUILDS.car.shatterDeltaV * 1.5, 15)).toBe("shattered");
+	});
+
+	it("loses a bus's big windows sooner than a lorry's cab glass", () => {
+		expect(BUILDS.bus.crackDeltaV).toBeLessThan(BUILDS.heavy.crackDeltaV);
+		expect(BUILDS.bus.shatterDamage).toBeLessThan(BUILDS.heavy.shatterDamage);
+	});
+
+	it("knows its fleet", () => {
+		expect(buildOf("bus")).toBe("bus");
+		expect(buildOf("schoolBus")).toBe("bus");
+		expect(buildOf("garbageTruck")).toBe("heavy");
+		expect(buildOf("ambulance")).toBe("van");
+		expect(buildOf("taxi")).toBe("car");
+	});
+
+	it("wears the paint in step with the damage", () => {
+		expect(wear(0)).toBe(0);
+		expect(wear(40)).toBeCloseTo(0.5);
+		expect(wear(200)).toBe(1);
 	});
 });
 

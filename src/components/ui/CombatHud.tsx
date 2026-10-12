@@ -8,6 +8,7 @@ import { MAX_STARS, readWanted } from "@/engine/orion/police/Wanted";
 import { RESERVED_SLOTS } from "@/engine/orion/combat/WeaponData";
 import { usePlayerPose } from "@/components/world/usePlayerPose";
 import { useFlightHud } from "./FlightHud";
+import { CashCounter } from "./MissionHud";
 
 const SLOT_KEYS = [1, 2, 3, 4, 5, 6, 7];
 
@@ -79,6 +80,7 @@ export function CombatHud() {
 			) : null}
 
 			<div className="orion-hud-combat absolute right-5 top-5 flex flex-col items-end gap-2 sm:right-8 sm:top-8">
+				<CashCounter />
 				{!inVehicle ? (
 					<div className="orion-weapon-panel" role="status" aria-label={`${combat.weaponName}${usesAmmo ? `, ${combat.magazine} of ${combat.magazineSize}, ${combat.reserve} spare` : ""}`}>
 						<div className="orion-weapon-slots" aria-hidden="true">

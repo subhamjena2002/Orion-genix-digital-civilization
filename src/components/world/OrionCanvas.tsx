@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useState } from "react";
 
 import {
   Application,
@@ -12,10 +12,9 @@ import { Camera } from "@playcanvas/react/components";
 import type { Entity as PlayCanvasEntity } from "playcanvas";
 import { useApp, usePhysics } from "@playcanvas/react/hooks";
 
-import { DEFAULT_GRAPHICS_SETTINGS } from "@/engine/orion/rendering/GraphicsSettings";
+import { DEFAULT_GRAPHICS_SETTINGS, loadGraphicsSettings } from "@/engine/orion/rendering/GraphicsSettings";
+import { installTextureBudget, textureCapFor, thisDeviceClass } from "@/engine/orion/rendering/TextureBudget";
 import { ORION_CHUNK_MANAGER, ORION_WORLD } from "@/engine/orion/OrionWorld";
-import { usePropertyStore } from "@/engine/orion/properties/PropertyStore";
-import type { PropertyRecord } from "@/engine/orion/properties/Properties";
 import { OrionHUD } from "@/components/ui/OrionHUD";
 import { PlayerController } from "@/components/player/PlayerController";
 import { DistrictScene } from "./DistrictScene";
@@ -23,6 +22,7 @@ import { OrionEnvironment } from "./OrionEnvironment";
 import { RenderPipeline } from "./RenderPipeline";
 import { applyDisplayPixelRatio } from "@/engine/orion/rendering/Renderer";
 import { onPlayerRig, playerRig } from "@/engine/orion/player/PlayerRig";
+import { LoadingScreen } from "./LoadingScreen";
 
 // Module-level so re-renders hand the same arrays back: a fresh literal would make the entity
 // re-apply its starting transform, snapping the camera back for a frame.
@@ -33,7 +33,12 @@ const CAMERA_START: [number, number, number] = [0, 4.5, 7];
  * behind the thing casting it. Side light is what gives buildings and people their shape.
  */
 const KEY_LIGHT_ROTATION: [number, number, number] = [38, 55, 0];
-const FILL_LIGHT_ROTATION: [number, number, number] = [55, 135, 0];
+/**
+ * The fill: straight opposite the sun's bearing, low (28° up), no shadows. Facades turned away
+ * from the sun only had the sky's dim ambient, so a street looked bright one way and murky the
+ * other; lit from behind as well, every side of the city reads in daylight.
+ */
+const FILL_LIGHT_ROTATION: [number, number, number] = [62, 235, 0];
 /**
  * Longest the world stays hidden waiting for the sky. If the HDRI can't load at all, the world is
  * shown anyway (lit by the sun alone) rather than stuck behind the loading screen.
@@ -48,13 +53,57 @@ const ENVIRONMENT_WAIT_MS = 30_000;
  * arrives the stand-in is shown rather than nothing.
  */
 const PLAYER_BODY_WAIT_MS = 45_000;
+/**
+ * Once the sky and the player are in, the screen also waits for the models and textures already
+ * requested to finish — but no longer than this, in case one is stuck on a slow connection.
+ */
+const ASSETS_SETTLE_MS = 15_000;
 
-interface OrionWorldProps {
-  properties: readonly PropertyRecord[];
-  onSelectProperty: (propertyId: string) => void;
+/** Shares of the bar: engine and physics, then the world's files, then the sky and the player. */
+const PHYSICS_SHARE = 0.12;
+const ASSETS_SHARE = 0.72;
+
+/**
+ * How far the game has got: physics, then the share of requested assets (models, textures, the
+ * sky) that have arrived, then the sky's lighting and the player's body. Sampled a few times a
+ * second; the bar never moves backwards as more files are requested.
+ */
+function useLoadProgress(app: ReturnType<typeof useApp> | null, physicsReady: boolean, environmentReady: boolean, playerReady: boolean) {
+  const [state, setState] = useState({ progress: 0.04, assetsSettled: false });
+  useEffect(() => {
+    let best = 0.04;
+    let settledSince = 0;
+    const sample = () => {
+      let requested = 0;
+      let arrived = 0;
+      for (const asset of app?.assets.list() ?? []) {
+        if (asset.loaded) {
+          requested++;
+          arrived++;
+        } else if (asset.loading) {
+          requested++;
+        }
+      }
+      const files = requested === 0 ? 0 : arrived / requested;
+      let target = physicsReady ? PHYSICS_SHARE + ASSETS_SHARE * files : 0.06;
+      if (environmentReady) target += 0.08;
+      if (playerReady) target += 0.08;
+      const pending = requested - arrived;
+      const now = performance.now();
+      if (environmentReady && playerReady && settledSince === 0) settledSince = now;
+      const settled = environmentReady && playerReady && (pending === 0 || now - settledSince > ASSETS_SETTLE_MS);
+      // Short of done, the bar stops just shy of the end.
+      best = Math.max(best, settled ? 1 : Math.min(0.97, target));
+      setState((previous) => (previous.progress === best && previous.assetsSettled === settled ? previous : { progress: best, assetsSettled: settled }));
+    };
+    sample();
+    const id = window.setInterval(sample, 150);
+    return () => window.clearInterval(id);
+  }, [app, physicsReady, environmentReady, playerReady]);
+  return state;
 }
 
-const OrionWorld = memo(function OrionWorld({ properties, onSelectProperty }: Readonly<OrionWorldProps>) {
+const OrionWorld = memo(function OrionWorld() {
   const [cameraEntity, setCameraEntity] = useState<PlayCanvasEntity | null>(null);
   const { isPhysicsLoaded, physicsError } = usePhysics();
   const app = useApp();
@@ -65,6 +114,12 @@ const OrionWorld = memo(function OrionWorld({ properties, onSelectProperty }: Re
   const [playerReady, setPlayerReady] = useState(() => playerRig() !== null);
 
   useEffect(() => (app ? applyDisplayPixelRatio(app) : undefined), [app]);
+  // Before any model loads (their fetches start in passive effects): caps their textures and
+  // lets go of each bitmap once it's on the GPU.
+  useLayoutEffect(() => {
+    if (!app) return;
+    return installTextureBudget(app, textureCapFor(thisDeviceClass(!loadGraphicsSettings().adaptiveQuality)));
+  }, [app]);
   useEffect(() => {
     const timer = window.setTimeout(markEnvironmentReady, ENVIRONMENT_WAIT_MS);
     return () => window.clearTimeout(timer);
@@ -80,23 +135,32 @@ const OrionWorld = memo(function OrionWorld({ properties, onSelectProperty }: Re
     };
   }, []);
 	const activeChunks = ORION_CHUNK_MANAGER.update([0, 0, 0]);
+  const load = useLoadProgress(app, isPhysicsLoaded, environmentReady, playerReady);
 
   if (physicsError) {
-    return <SceneMessage label="Physics could not be initialized" error />;
+    return <LoadingScreen progress={load.progress} label="The physics engine couldn't start. Try reloading, or another browser." error />;
   }
 
   if (!isPhysicsLoaded) {
-    return <SceneMessage label="Loading physics" />;
+    return <LoadingScreen progress={load.progress} label="Starting the engine" />;
   }
 
   if (activeChunks.length === 0) {
-    return <SceneMessage label="No world chunk available" error />;
+    return <LoadingScreen progress={load.progress} label="The world couldn't be found. Try reloading." error />;
   }
+
+  const label = load.assetsSettled
+    ? "Ready"
+    : !environmentReady
+      ? "Loading the city"
+      : !playerReady
+        ? "Loading your character"
+        : "Finishing up";
 
   return (
     <>
       <OrionEnvironment onReady={markEnvironmentReady} />
-      {environmentReady ? (playerReady ? null : <SceneMessage label="Loading character" />) : <SceneMessage label="Loading environment" />}
+      <LoadingScreen progress={load.progress} label={label} done={load.assetsSettled} />
 
       <Entity ref={setCameraEntity} name="third-person-camera" position={CAMERA_START}>
         <Camera
@@ -120,6 +184,7 @@ const OrionWorld = memo(function OrionWorld({ properties, onSelectProperty }: Re
         <Light
           type="directional"
           intensity={ORION_WORLD.rendering.keyLightIntensity}
+          color={ORION_WORLD.rendering.keyLightColor}
           castShadows
           shadowDistance={DEFAULT_GRAPHICS_SETTINGS.shadowDistance}
           numCascades={DEFAULT_GRAPHICS_SETTINGS.shadowCascades}
@@ -130,10 +195,10 @@ const OrionWorld = memo(function OrionWorld({ properties, onSelectProperty }: Re
       </Entity>
 
       <Entity name="fill-light" rotation={FILL_LIGHT_ROTATION}>
-        <Light type="directional" intensity={ORION_WORLD.rendering.fillLightIntensity} />
+        <Light type="directional" intensity={ORION_WORLD.rendering.fillLightIntensity} color={ORION_WORLD.rendering.fillLightColor} />
       </Entity>
 
-      <DistrictScene properties={properties} onSelectProperty={onSelectProperty} />
+      <DistrictScene />
 
       {cameraEntity ? <PlayerController cameraEntity={cameraEntity} /> : null}
       {cameraEntity ? <RenderPipeline camera={cameraEntity} /> : null}
@@ -141,18 +206,7 @@ const OrionWorld = memo(function OrionWorld({ properties, onSelectProperty }: Re
   );
 });
 
-function SceneMessage({ label, error = false }: Readonly<{ label: string; error?: boolean }>) {
-  return (
-    <div className={`absolute inset-0 z-20 flex items-center justify-center ${error ? "bg-[#211919]" : "bg-[#162128]"}`}>
-      <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-[#d5d1c6]">{label}</p>
-    </div>
-  );
-}
-
 export default function OrionCanvas() {
-  const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
-  const { properties, acquireProperty, makeOffer } = usePropertyStore(ORION_WORLD.properties);
-  const selectedProperty = properties.find((property) => property.id === selectedPropertyId) ?? null;
 
   return (
     <main className="orion-game relative h-dvh w-screen overflow-hidden bg-[#162128]">
@@ -161,18 +215,10 @@ export default function OrionCanvas() {
         resolutionMode="AUTO"
         usePhysics
       >
-        <OrionWorld
-          properties={properties}
-          onSelectProperty={setSelectedPropertyId}
-        />
+        <OrionWorld />
       </Application>
 
-      <OrionHUD
-        property={selectedProperty}
-        onAcquire={acquireProperty}
-        onOffer={makeOffer}
-        onClear={() => setSelectedPropertyId(null)}
-      />
+      <OrionHUD />
     </main>
   );
 }

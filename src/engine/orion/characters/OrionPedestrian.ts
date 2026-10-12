@@ -10,7 +10,7 @@ import { inCameraView, needsPosing, readPlayerPose } from "../player/PlayerPose"
 import { mergeCharacterMaterials } from "../rendering/CharacterMerge";
 import { fixSkinnedBounds } from "../rendering/SkinnedBounds";
 import { applySmoothShading } from "../rendering/SmoothShading";
-import { pavementCorner, ROAD_GRID, roadWidthAt } from "../roads/RoadNetwork";
+import { pavedHeightAt, pavementCorner, ROAD_GRID, roadWidthAt } from "../roads/RoadNetwork";
 import { crashEffects } from "../traffic/CrashEffects";
 import { registerTrafficAgent, unregisterTrafficAgent, type TrafficAgent } from "../traffic/TrafficAgents";
 import { redRemaining, signalGroup } from "../traffic/TrafficSignals";
@@ -18,7 +18,10 @@ import { Knockdown } from "./Knockdown";
 import { RestPose } from "./RestPose";
 import { NpcBrain, paceFor, runsThisFrame, updateInterval, type NpcState } from "./NpcBrain";
 import { reportCrime } from "../police/Wanted";
+import { fireAtPlayer, nextShotDelay, type PoliceGun } from "../police/PoliceFire";
+import { terrainHeightAt } from "../world/Mountains";
 import type { PedestrianPalette } from "./Pedestrians";
+import { emitGameEvent } from "../missions/GameEvents";
 
 /** Beyond this the pedestrian is recycled to a junction near the player. */
 const RECYCLE_DISTANCE = 190;
@@ -61,6 +64,13 @@ const CROSSING_MARGIN = 3;
 const STATE_BLEND_SECONDS = 0.3;
 
 const HEALTH = 100;
+
+/** A mission's hostile notices the player this close. */
+const HOSTILE_AGGRO = 26;
+/** An armed hostile keeps shooting from range; closer than this they use their fists. */
+const HOSTILE_MELEE_RANGE = 2.5;
+const HOSTILE_GUN: PoliceGun = { weapon: "pistol", interval: 1.05, damage: 9, carDamage: 4, accuracy: 0.42, range: 45 };
+const STOW_Y = -400;
 const BODY_RADIUS = 0.3;
 const BODY_HEIGHT = 1.8;
 /** A pedestrian who fights back punches like this. */
@@ -134,6 +144,11 @@ export class OrionPedestrian extends Script {
 	public speed = 1.3;
 	public seed = 1;
 	public palette: PedestrianPalette | null = null;
+	/**
+	 * A mission's hostile (see missions/MissionActors): out of the world until a mission puts
+	 * them somewhere to stand guard, then fighting the player on sight.
+	 */
+	public missionSlot = -1;
 
 	private random: () => number = Math.random;
 	private ready = false;
@@ -183,17 +198,33 @@ export class OrionPedestrian extends Script {
 	private hips: GraphNode | null = null;
 	private stain: Entity | null = null;
 	private stainTimer = 0;
+	private stowed = false;
+	private hostile: Hostile | null = null;
+
+	/** In the world and alive (for a mission's target blips). */
+	public get standing(): boolean {
+		return !this.stowed && this.health.alive;
+	}
+
+	public get x(): number {
+		return this.posX;
+	}
+
+	public get z(): number {
+		return this.posZ;
+	}
 
 	public initialize() {
 		this.random = mulberry32(this.seed);
 		this.sideX = this.random() < 0.5 ? -1 : 1;
 		this.sideZ = this.random() < 0.5 ? -1 : 1;
-		// Most people run from trouble; about one in six will square up to whoever hit them.
-		this.brain = new NpcBrain(this.random() < 0.17 ? 0.85 : 0.05, this.random);
+		// Most people run from trouble; about one in six will square up to whoever hit them. A
+		// mission's hostiles always do.
+		this.brain = new NpcBrain(this.missionSlot >= 0 ? 1 : this.random() < 0.17 ? 0.85 : 0.05, this.random);
 		this.agent = registerTrafficAgent("person", 0.3);
 		this.agent.onStruck = (velocityX, velocityZ) => this.struck(velocityX, velocityZ);
 		this.knockdown = new Knockdown(this.entity, this.app);
-		const isAlive = () => this.health.alive && this.ready;
+		const isAlive = () => this.health.alive && this.ready && !this.stowed;
 		this.body = {
 			id: this.source.id,
 			kind: "person",
@@ -218,7 +249,15 @@ export class OrionPedestrian extends Script {
 			this.knockdown?.destroy();
 			this.stain?.destroy();
 		});
-		this.recycleNearPlayer();
+		if (this.missionSlot >= 0) {
+			missionPeople.set(this.entity.name, this);
+			this.on("destroy", () => {
+				if (missionPeople.get(this.entity.name) === this) missionPeople.delete(this.entity.name);
+			});
+			this.stow();
+		} else {
+			this.recycleNearPlayer();
+		}
 		this.trySetup();
 	}
 
@@ -227,6 +266,7 @@ export class OrionPedestrian extends Script {
 			this.trySetup();
 			if (!this.ready) return;
 		}
+		if (this.stowed) return;
 		this.updateStain(dt);
 		if (this.knockdown?.active) {
 			this.updateKnockedDown(dt);
@@ -245,6 +285,10 @@ export class OrionPedestrian extends Script {
 		if (!runsThisFrame(this.app.frame, this.agent?.id ?? 0, interval)) return;
 		const step = Math.min(this.accumulated, 0.25);
 		this.accumulated = 0;
+		if (this.hostile) {
+			this.updateHostile(step, this.hostile);
+			return;
+		}
 
 		const threat = this.brain.threat;
 		if (threat?.attackable) this.brain.trackThreat(player.x, player.z);
@@ -333,8 +377,12 @@ export class OrionPedestrian extends Script {
 
 		const pace = paceFor(state) * (this.limping ? LIMP_PACE : 1);
 		const step = this.speed * pace * (fleeing ? 1 : speedFactor) * dt;
+		// Waiting at the kerb is judged at walking pace, standing or not. Judged at the standing
+		// pace (none), the wait ended the moment it began, so they flipped between walking and
+		// waiting every update — the clip restarting each time, frozen mid-stride at the crossing.
+		const walkingStep = this.speed * paceFor("PATROL") * (this.limping ? LIMP_PACE : 1) * dt;
 		// People running for their lives don't wait for the lights.
-		const waiting = pace > 0 && !fleeing && this.mustWaitToCross(baseX, baseZ, dirX, dirZ, step);
+		const waiting = (pace > 0 || this.waitingAtCrossing) && !fleeing && this.mustWaitToCross(baseX, baseZ, dirX, dirZ, Math.max(step, walkingStep));
 		if (waiting !== this.waitingAtCrossing) {
 			this.waitingAtCrossing = waiting;
 			this.brain.setWaiting(waiting);
@@ -515,14 +563,16 @@ export class OrionPedestrian extends Script {
 			this.health.damage(this.health.current);
 			this.brain.onDamaged(threat, true);
 			if (byPlayer) reportCrime("murder", event.x, event.z);
+			emitGameEvent({ type: "personKilled", id: this.entity.name, byPlayer });
 			this.dieWhereLying(event);
 			return;
 		}
 		const zone = bodyZone(event.y, this.posY, BODY_HEIGHT);
-		const killed = this.health.damage(zoneDamage(event.amount, event.type, zone));
+		const killed = this.health.damage(zoneDamage(event.amount, event.type, zone) / (this.hostile?.toughness ?? 1));
 		if (byPlayer) reportCrime(killed ? "murder" : "assault", event.x, event.z);
 		this.brain.onDamaged(threat, killed);
 		if (killed) {
+			emitGameEvent({ type: "personKilled", id: this.entity.name, byPlayer });
 			this.die(event, zone);
 			return;
 		}
@@ -701,8 +751,117 @@ export class OrionPedestrian extends Script {
 		this.walkOnAsSomeoneNew();
 	}
 
+	// ---- A mission's hostile ---------------------------------------------------------------------
+
+	/** Into the world for a mission: on their feet at (x, z), standing guard. */
+	public placeForMission(x: number, z: number, armed: boolean, toughness = 1) {
+		this.stowed = false;
+		for (const child of this.entity.children) (child as Entity).enabled = true;
+		this.resetBody();
+		this.hostile = { armed, engaged: false, shotTimer: 0.6, toughness: Math.max(1, toughness) };
+		this.offGraph = true;
+		this.freeX = x;
+		this.freeZ = z;
+		this.heading = null;
+		this.moveTo(x, groundAt(x, z), z, 0, 0);
+		this.entity.setPosition(this.posX, this.posY, this.posZ);
+		this.publishBody();
+		this.setClip("Idle", true);
+	}
+
+	/** The mission's over: the living leave at once, the dead once their body's cleared. */
+	public releaseFromMission() {
+		if (this.health.alive || !this.knockdown?.active) this.stow();
+	}
+
+	/** Out of the world again: the mission's over, or they've been lying dead long enough. */
+	public stow() {
+		this.stowed = true;
+		this.hostile = null;
+		this.punch.cancel();
+		for (const child of this.entity.children) (child as Entity).enabled = false;
+		this.posX = 1e6;
+		this.posZ = 1e6;
+		if (this.agent) {
+			this.agent.x = 1e6;
+			this.agent.z = 1e6;
+			this.agent.speed = 0;
+		}
+		this.entity.setPosition(0, STOW_Y, 0);
+		if (this.body) {
+			this.body.x = 1e6;
+			this.body.z = 1e6;
+			damageableMoved(this.body);
+		}
+	}
+
+	/**
+	 * Guarding until the player comes close (or anyone starts trouble), then fighting: the armed
+	 * hold their ground and shoot, the rest close in with their fists. Never recycled: they're
+	 * the mission's until it's over.
+	 */
+	private updateHostile(dt: number, hostile: Hostile) {
+		const player = readPlayerPose();
+		const distance = Math.hypot(player.x - this.posX, player.z - this.posZ);
+		if (!hostile.engaged && (distance < HOSTILE_AGGRO || this.brain.threat !== null)) hostile.engaged = true;
+		if (hostile.engaged) {
+			this.brain.trackThreat(player.x, player.z);
+			if (!hostile.armed || distance < HOSTILE_MELEE_RANGE) this.brain.provoke({ id: -1, x: player.x, z: player.z, attackable: true });
+		}
+		const threat = this.brain.threat;
+		const state = this.brain.update(dt, threat ? Math.hypot(threat.x - this.posX, threat.z - this.posZ) : Infinity);
+		this.posY = groundAt(this.freeX, this.freeZ);
+
+		if (state === "RUN" || state === "ATTACK" || state === "HIT") {
+			this.setClip(this.limping && state === "RUN" ? "Walk" : clipFor(state));
+			this.updateOffGraph(dt, state);
+		} else {
+			// Standing: on guard, or holding ground and shooting.
+			this.punch.cancel();
+			this.setClip("Idle");
+			const heading = hostile.engaged ? Math.atan2(player.x - this.freeX, player.z - this.freeZ) * 180 / Math.PI : this.heading ?? 0;
+			this.moveTo(this.freeX, this.posY, this.freeZ, heading, dt);
+		}
+		if (hostile.engaged && hostile.armed && state !== "HIT" && distance >= HOSTILE_MELEE_RANGE) {
+			hostile.shotTimer -= dt;
+			if (hostile.shotTimer <= 0) {
+				hostile.shotTimer = nextShotDelay(HOSTILE_GUN);
+				fireAtPlayer(this.app, this.posX, this.posY + 1.4, this.posZ, HOSTILE_GUN, null, this.source, this.event);
+			}
+		}
+		this.publishBody();
+		const anim = this.animRoot?.anim;
+		if (anim && !anim.playing) anim.playing = true;
+	}
+
+	/** Back on their feet, whole and calm: the knockdown, wounds and stains all cleared. */
+	private resetBody() {
+		const wasDown = Boolean(this.knockdown?.active) || this.wound !== "none" || this.limping;
+		this.knockdown?.reset();
+		this.stain?.destroy();
+		this.stain = null;
+		this.health.reset();
+		this.brain.reset();
+		this.staggerLean = 0;
+		this.wound = "none";
+		this.limping = false;
+		this.restoreBody();
+		if (this.agent) this.agent.alive = true;
+		this.entity.setEulerAngles(0, 0, 0);
+		this.punch.cancel();
+		const anim = this.animRoot?.anim;
+		if (anim) anim.speed = 1;
+		if (wasDown) this.restartClips();
+	}
+
 	/** Someone new walks on: back on their feet at a junction away from the player. */
 	private walkOnAsSomeoneNew() {
+		if (this.missionSlot >= 0) {
+			// A mission's people don't come back as someone else: they leave the world.
+			this.resetBody();
+			this.stow();
+			return;
+		}
 		const wasDown = Boolean(this.knockdown?.active) || this.wound !== "none" || this.limping;
 		this.knockdown?.reset();
 		this.stain?.destroy();
@@ -944,4 +1103,53 @@ function mulberry32(seed: number) {
 		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
 		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 	};
+}
+
+interface Hostile {
+	armed: boolean;
+	/** Seen the player (or been hit): fighting from now on. */
+	engaged: boolean;
+	shotTimer: number;
+	/** Divides the damage they take: a hardened crew member soaks up more rounds. */
+	toughness: number;
+}
+
+/** Paved ground where there is some, else the hillside. */
+function groundAt(x: number, z: number): number {
+	return pavedHeightAt(x, z) ?? terrainHeightAt(x, z);
+}
+
+// Mission hostiles (people with a missionSlot: see missions/MissionActors).
+
+/** By id (the entity's name, as the missions know them). */
+const missionPeople = new Map<string, OrionPedestrian>();
+
+/** Puts a mission's hostile into the world; false if there's no such person. */
+export function placeMissionHostile(id: string, x: number, z: number, armed: boolean, toughness = 1): boolean {
+	const person = missionPeople.get(id);
+	if (!person) return false;
+	person.placeForMission(x, z, armed, toughness);
+	return true;
+}
+
+/**
+ * Takes a mission's people out of the world again. The dead lie where they fell until their
+ * body is cleared away like anyone's (see walkOnAsSomeoneNew).
+ */
+export function releaseMissionHostiles(ids: Iterable<string>): void {
+	for (const id of ids) missionPeople.get(id)?.releaseFromMission();
+}
+
+/** Where a mission's people still standing are, for the map: fills `out`, returns how many. */
+export function missionHostileMarkers(out: { id: string; x: number; z: number }[]): number {
+	let count = 0;
+	for (const [id, person] of missionPeople) {
+		if (!person.standing) continue;
+		const slot = out[count] ?? (out[count] = { id, x: 0, z: 0 });
+		slot.id = id;
+		slot.x = person.x;
+		slot.z = person.z;
+		count++;
+	}
+	return count;
 }
