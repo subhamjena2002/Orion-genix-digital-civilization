@@ -5,8 +5,9 @@ import type { ClipState } from "../player/OrionSkinnedCharacterAnimation";
 import { inCameraView, readPlayerPose } from "../player/PlayerPose";
 import { carHalfHeight, carRoofHeight } from "./CarMeshes";
 import type { OrionVehicle } from "./OrionVehicle";
-import type { DriverSeat } from "./VehicleModels";
+import type { DoorSwing, DriverSeat } from "./VehicleModels";
 import { VEHICLE_SHAPES, type VehicleStyle } from "./Vehicles";
+import { playAt } from "../audio/SoundBank";
 
 /**
  * Carjacking: every car has a seated driver, and the player can smash the driver's window,
@@ -166,6 +167,8 @@ export class CarjackRig {
 	private driverSeat: { position: Vec3; rotation: Quat; scale: Vec3 } | null = null;
 	/** Seat measured from a real car model; replaces the style default. */
 	private seat: [number, number, number] | null = null;
+	private doorSwing: DoorSwing | null = null;
+	private readonly doorAxis = new Vec3();
 	/** Scale of the seated figure (a low cabin seats a smaller one; see DriverSeat). */
 	public seatScale = 1;
 	private handSeated = false;
@@ -235,6 +238,7 @@ export class CarjackRig {
 		}
 
 		const origin = this.toWorld(this.side * this.car.halfWidth, -this.car.halfHeight + 0.95, this.seatForward() + 0.2, new Vec3());
+		playAt("glass", origin.x, origin.y, origin.z, { level: 0.9 });
 		const right = this.entity.right;
 		const material = shardMaterial();
 		for (let i = 0; i < SHARD_COUNT; i++) {
@@ -351,9 +355,15 @@ export class CarjackRig {
 
 	/** 0 = shut, 1 = fully open. */
 	public setDoorOpen(amount: number) {
-		const angle = Math.max(0, Math.min(1, amount)) * DOOR_OPEN_DEGREES;
+		const angle = Math.max(0, Math.min(1, amount)) * (this.doorSwing?.degrees ?? DOOR_OPEN_DEGREES);
 		if (angle === this.doorAngle) return;
 		const parts = this.doorParts ?? this.captureDoor();
+		// The latch as the door starts to open, the slam as it shuts.
+		if (parts.length > 0 && (this.doorAngle === 0) !== (angle === 0)) {
+			const at = this.entity.getPosition();
+			if (angle > 0) playAt("door", at.x, at.y, at.z, { level: 0.45, rate: 1.12 });
+			else playAt("door", at.x, at.y, at.z, { level: 0.85 });
+		}
 		this.doorAngle = angle;
 		if (angle === 0) {
 			for (const part of parts) {
@@ -363,7 +373,14 @@ export class CarjackRig {
 			this.doorParts = null;
 			return;
 		}
-		this.spin.setFromAxisAngle(Vec3.UP, -this.side * angle);
+		if (this.doorSwing) {
+			// The axis is given for the left (+X) door: mirrored across for the right.
+			const [ax, ay, az] = this.doorSwing.axis;
+			this.entity.getWorldTransform().transformVector(this.doorAxis.set(ax * this.side, ay, az), this.doorAxis).normalize();
+			this.spin.setFromAxisAngle(this.doorAxis, this.side * angle);
+		} else {
+			this.spin.setFromAxisAngle(Vec3.UP, -this.side * angle);
+		}
 		for (const part of parts) {
 			this.scratch.sub2(part.worldPosition, this.doorHinge);
 			this.spin.transformVector(this.scratch, this.scratch);
@@ -414,6 +431,11 @@ export class CarjackRig {
 	}
 
 	/** A seat measured by hand on the model (see VehicleModelSpec.seat). */
+	/** A model whose doors open some other way than swinging out (see VehicleModelSpec.doorSwing). */
+	public setDoorSwing(swing: DoorSwing | undefined) {
+		this.doorSwing = swing ?? null;
+	}
+
 	public setSeat(seat: DriverSeat) {
 		this.handSeated = true;
 		this.seat = [seat.lateral, seat.rootAboveRoad - this.car.halfHeight, seat.forward];
@@ -565,7 +587,9 @@ export class CarjackRig {
 			});
 		}
 		if (parts.length > 0) {
-			this.toWorld(this.side * this.car.halfWidth, 0, front, this.doorHinge);
+			const hinge = this.doorSwing?.hinge;
+			if (hinge) this.toWorld(this.side * hinge[0], hinge[1] - this.car.halfHeight, hinge[2], this.doorHinge);
+			else this.toWorld(this.side * this.car.halfWidth, 0, front, this.doorHinge);
 		}
 		this.doorParts = parts;
 		return parts;

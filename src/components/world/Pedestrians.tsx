@@ -31,7 +31,7 @@ const MISSION_HOSTILES: readonly PedestrianSpawn[] = [
 	...new Set(MISSIONS
 		.flatMap((mission) => [...(mission.spawns ?? []), ...mission.objectives.flatMap((objective) => objective.spawns ?? [])])
 		.flatMap((spawn) => spawn.type === "hostile" ? [spawn.id] : [])),
-].map((id, index) => ({ id, assetPath: HOSTILE_MODEL.path, scale: HOSTILE_MODEL.scale, speed: 1.3, seed: 7717 * (index + 1), palette: HOSTILE_PALETTE }));
+].map((id, index) => ({ id, assetPath: HOSTILE_MODEL.path, scale: HOSTILE_MODEL.scale, speed: 1.3, walkSpeed: 1.5, seed: 7717 * (index + 1), palette: HOSTILE_PALETTE }));
 
 /** A mission's hostiles (see OrionPedestrian.placeForMission). */
 export const MissionHostiles = memo(function MissionHostiles() {
@@ -53,6 +53,7 @@ function PedestrianVisual({ person, missionSlot = -1 }: Readonly<{ person: Pedes
 				script={OrionPedestrian}
 				asset={asset}
 				speed={person.speed}
+				walkSpeed={person.walkSpeed}
 				seed={person.seed}
 				palette={person.palette}
 				missionSlot={missionSlot}

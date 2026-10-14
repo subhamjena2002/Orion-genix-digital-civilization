@@ -2160,3 +2160,53 @@ body {
     animation: none;
   }
 }
+
+/* ---------- Sound settings ---------- */
+
+.orion-sound-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.5rem);
+  z-index: 30;
+  width: min(17rem, calc(100vw - 2rem));
+  border: 1px solid var(--oi-border-strong);
+  border-radius: 12px;
+  background: var(--oi-surface-raised);
+  box-shadow: var(--oi-shadow-elevated);
+  padding: 0.85rem 0.95rem;
+  backdrop-filter: blur(10px);
+}
+
+.orion-sound-row {
+  display: grid;
+  grid-template-columns: 4.2rem 1fr 2rem;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.7rem;
+  font-size: 0.82rem;
+  color: var(--oi-text-secondary);
+}
+
+.orion-sound-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--oi-accent);
+}
+
+.orion-sound-row output {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--oi-text-primary);
+}
+
+.orion-sound-mute {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+  font-size: 0.82rem;
+  color: var(--oi-text-primary);
+}
+
+.orion-sound-mute input {
+  accent-color: var(--oi-accent);
+}

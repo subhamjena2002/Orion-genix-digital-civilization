@@ -262,6 +262,8 @@ function cornerSpeed(x: number, z: number, point: readonly [number, number], aft
 }
 
 type Phase = "leg" | "turn";
+/** How far (m) before a junction traffic starts signalling the turn it's about to take. */
+const SIGNAL_DISTANCE = 35;
 
 /**
  * Who is driving: the traffic AI, nobody (stopped for a carjack), the player, or nobody
@@ -543,6 +545,20 @@ export class OrionVehicle extends Script {
 
 	public get isBraking(): boolean {
 		return this.braking;
+	}
+
+	/**
+	 * Which way the car is signalling: +1 left, -1 right, 0 not at all. Traffic signals from
+	 * SIGNAL_DISTANCE before a junction it's turning at until it's through the turn; the player's
+	 * car, police on a call and mission cars don't.
+	 */
+	public get turnSignal(): number {
+		if (this.manual || this.driver !== "ai" || this.stowed || this.burnedOut) return 0;
+		// Nose along (dx, dz), +X of the car its left: a left turn swings the heading that way.
+		const side = this.dz * this.nextDx - this.dx * this.nextDz;
+		if (side === 0) return 0;
+		if (this.phase === "turn") return side;
+		return this.legLength - this.distance < SIGNAL_DISTANCE ? side : 0;
 	}
 
 	/** Degrees per second, positive when turning left. */
@@ -2393,20 +2409,6 @@ function pickFire(engine: OrionVehicle): OrionVehicle | null {
 		}
 	}
 	return best;
-}
-
-/** Positions of fire engines on a call, for the map. Returns how many were written. */
-export function fireEngineMarkers(out: { x: number; z: number }[]): number {
-	let count = 0;
-	for (const car of drivableCars()) {
-		if (!car.onCall) continue;
-		const position = car.entity.getPosition();
-		if (out.length <= count) out.push({ x: 0, z: 0 });
-		out[count].x = position.x;
-		out[count].z = position.z;
-		count++;
-	}
-	return count;
 }
 
 

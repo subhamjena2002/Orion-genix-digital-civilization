@@ -27,9 +27,9 @@ export const VEHICLE_SHAPES: Readonly<Record<VehicleStyle, VehicleShape>> = {
 	// The taxi's sedan in plain paint (see VEHICLE_MODELS), at its measured size.
 	sedan: { length: 4.7, width: 1.8, bodyHeight: 0.66, clearance: 0.17, cabinLength: 2.3, cabinHeight: 0.56, cabinOffset: -0.15, wheelRadius: 0.32, maxSpeed: 11.5 },
 	suv: { length: 4.6, width: 1.86, bodyHeight: 0.92, clearance: 0.26, cabinLength: 2.8, cabinHeight: 0.7, cabinOffset: -0.35, wheelRadius: 0.38, maxSpeed: 11 },
-	// The Phoenix out of uniform, at its measured size (1.3 m tall without the light bar): the
-	// quick car the races and the garage use.
-	luxury: { length: 4.9, width: 1.9, bodyHeight: 0.62, clearance: 0.15, cabinLength: 2.2, cabinHeight: 0.53, cabinOffset: -0.2, wheelRadius: 0.33, maxSpeed: 13 },
+	// The Vesper GT (see VEHICLE_MODELS), at its built size: the supercar the races and the
+	// garage use.
+	luxury: { length: 4.6, width: 2.0, bodyHeight: 0.6, clearance: 0.11, cabinLength: 1.9, cabinHeight: 0.43, cabinOffset: -0.2, wheelRadius: 0.35, maxSpeed: 13 },
 	auto: { length: 2.7, width: 1.35, bodyHeight: 0.62, clearance: 0.16, cabinLength: 2.0, cabinHeight: 0.95, cabinOffset: -0.2, wheelRadius: 0.22, maxSpeed: 7.5 },
 	police: { length: 4.6, width: 1.86, bodyHeight: 0.92, clearance: 0.26, cabinLength: 2.8, cabinHeight: 0.7, cabinOffset: -0.35, wheelRadius: 0.38, maxSpeed: 11.5 },
 	// A flat-bed lorry: cab at the front over the front axle, a long bed behind it, and the ground
@@ -73,10 +73,10 @@ const AUTO_COLOURS = ["#2e8b3d", "#1c1c1c", "#2e8b3d"];
  * much repetition is bearable rather than what the city wants. Every ordinary car added to
  * VEHICLE_MODELS (a hatchback, a sedan, a taxi) can take its style's line back.
  *
- * `luxury` and `sedan` have real models now, but each is one model in plain paint, made for the
- * missions (the races, the garage, a getaway): a street of them would be one car over and over.
- * (The two supercars that once served `luxury` were real manufacturers' designs, taken out of the
- * build: see reference-assets/README.md.)
+ * `luxury` is the Vesper GT: a handful of them, in the luxury paints, so a supercar turns up now
+ * and then rather than on every corner. `sedan` (the taxi out of livery) is still kept for the
+ * missions. (The two supercars that once served `luxury` were real manufacturers' designs, taken
+ * out of the build: see reference-assets/README.md.)
  */
 const FLEET: readonly [VehicleStyle, number][] = [
 	["truck", 6],
@@ -88,6 +88,7 @@ const FLEET: readonly [VehicleStyle, number][] = [
 	["bus", 3],
 	["schoolBus", 2],
 	["garbageTruck", 2],
+	["luxury", 4],
 	// Ambulances wait outside the hospitals and fire trucks only turn out to fires: neither
 	// drives around in ordinary traffic (see Hospital and FireService).
 ];

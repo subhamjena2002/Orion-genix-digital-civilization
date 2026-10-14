@@ -1,7 +1,10 @@
 import { audioBus, type Placement } from "../audio/AudioBus";
+import { LoopVoice } from "../audio/SoundBank";
 
 /**
- * The gunship's sound, synthesised like everything else the game plays:
+ * The gunship's sound: a recorded military helicopter's rotor, looped, its speed and level
+ * following the rotor's spin-up and the collective; a little synthesised turbine whine under it.
+ * Until the recording has loaded, the rotor is synthesised too:
  *  - blade slap: a thud each time a blade passes (four blades, so four a revolution), made by
  *    pulsing band-passed noise at the blade-passing rate;
  *  - the turbines' whine, rising with rotor speed;
@@ -26,12 +29,14 @@ export class GunshipAudio {
 	private rumbleGain: GainNode | null = null;
 	private readonly placement: Placement = { gain: 0, pan: 0, muffle: 20000, distance: 0 };
 	private sources: AudioScheduledSourceNode[] = [];
+	private readonly rotorLoop = new LoopVoice("rotor", 0.08, "vehicles");
+	private readonly heard: Placement = { gain: 0, pan: 0, muffle: 20000, distance: 0 };
 
 	private start(): boolean {
 		if (this.started) return true;
 		const bus = audioBus();
 		const context = bus.ensure();
-		const master = bus.master;
+		const master = bus.channel("vehicles");
 		if (!context || !master) return false;
 		this.started = true;
 
@@ -108,22 +113,31 @@ export class GunshipAudio {
 			// Stopped (parked, or wrecked): silent at once, not after a fade.
 			this.output.gain.cancelScheduledValues(now);
 			this.output.gain.setValueAtTime(0, now);
+			this.rotorLoop.set(0, this.heard);
 			return;
 		}
+		// The recorded rotor: from inside, centred and close; outside, placed in the world.
+		this.heard.gain = inside ? 0.6 : Math.min(1, place.gain * 2.2);
+		this.heard.pan = inside ? 0 : place.pan;
+		this.heard.muffle = inside ? 12000 : Math.max(500, place.muffle);
+		this.heard.distance = place.distance;
+		this.rotorLoop.set(1.4 * Math.min(1, rotor * 1.3) * (0.75 + 0.25 * load), this.heard, 0.55 + 0.45 * rotor);
+		const recorded = this.rotorLoop.ready;
 		this.output.gain.setTargetAtTime(level * Math.min(1, rotor * 1.4), now, smooth);
 		this.panner?.pan.setTargetAtTime(inside ? 0 : place.pan, now, smooth);
 		this.muffle?.frequency.setTargetAtTime(inside ? 9000 : Math.max(400, place.muffle), now, smooth);
 		// Slaps get harder with blade loading (collective).
-		const slap = rotor * (0.35 + 0.65 * load);
+		const slap = recorded ? 0 : rotor * (0.35 + 0.65 * load);
 		this.slapBase?.gain.setTargetAtTime(slap * 0.7, now, smooth);
 		this.slapDepth?.gain.setTargetAtTime(slap * 0.6, now, smooth);
 		this.pulse?.frequency.setTargetAtTime(Math.max(0.5, ROTOR_HZ * BLADES * rotor), now, smooth);
 		this.whine?.frequency.setTargetAtTime(300 + 900 * rotor, now, smooth);
 		this.whineGain?.gain.setTargetAtTime(0.018 * rotor, now, smooth);
-		this.rumbleGain?.gain.setTargetAtTime(0.9 * rotor * (0.5 + 0.5 * load), now, smooth);
+		this.rumbleGain?.gain.setTargetAtTime((recorded ? 0.25 : 0.9) * rotor * (0.5 + 0.5 * load), now, smooth);
 	}
 
 	public destroy(): void {
+		this.rotorLoop.stop();
 		for (const source of this.sources) {
 			try {
 				source.stop();

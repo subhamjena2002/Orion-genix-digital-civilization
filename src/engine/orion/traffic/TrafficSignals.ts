@@ -67,6 +67,17 @@ export function redRemaining(group: number, axis: TrafficAxis, time = trafficClo
 	return t < GREEN_SECONDS + AMBER_SECONDS ? 0 : SIGNAL_CYCLE_SECONDS - t;
 }
 
+/**
+ * What a signal's countdown display shows: the colour it's on and the whole seconds left before
+ * it changes (rounded up, so it reads 1 in its last second, never 0).
+ */
+export function signalCountdown(group: number, axis: TrafficAxis, time = trafficClock()): { colour: SignalColour; seconds: number } {
+	const t = (phaseTime(group, time) - (axis === "ns" ? 0 : HALF_CYCLE) + SIGNAL_CYCLE_SECONDS) % SIGNAL_CYCLE_SECONDS;
+	if (t < GREEN_SECONDS) return { colour: "green", seconds: Math.ceil(GREEN_SECONDS - t) };
+	if (t < GREEN_SECONDS + AMBER_SECONDS) return { colour: "amber", seconds: Math.ceil(GREEN_SECONDS + AMBER_SECONDS - t) };
+	return { colour: "red", seconds: Math.ceil(SIGNAL_CYCLE_SECONDS - t) };
+}
+
 /** Unit direction for each of the four travel headings. */
 export const HEADINGS: readonly (readonly [number, number])[] = [[1, 0], [0, 1], [-1, 0], [0, -1]];
 

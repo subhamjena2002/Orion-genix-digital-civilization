@@ -15,9 +15,6 @@ export const metadata: Metadata = {
  * Keep in step with CREDITS.md when art is added or replaced.
  */
 const ATTRIBUTED = [
-	{ work: "Generic civil service vehicles pack (taxi, vans, trucks, buses, ambulance, fire truck, police sedan)", author: "Comrade1280", url: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465" },
-	{ work: "Phoenix '93 Interceptor – low poly model", author: "Daniel Zhabotinsky", url: "https://sketchfab.com/3d-models/phoenix-93-interceptor-low-poly-model-ac4a91cb1b184ebd82c598c1bc54ba3d" },
-	{ work: "Military estate wagon", author: "Axel Roman (DeathCoreBoy1)", url: "https://sketchfab.com/3d-models/dcb-k-133byat-unbranded-1a37570f3bbf4c31b6c8c1f89fdf3724" },
 	{ work: "Casual male character (rigged)", author: "ijiklvn", url: "https://sketchfab.com/3d-models/casual-male-char-rigged-9034a1acc95e494592441a057d319953" },
 	{ work: "Modular military base, low poly", author: "Salah3D", url: "https://sketchfab.com/3d-models/modular-militry-base-low-poly-game-ready-cc96aa9f48b547df8844074bf14e63fe" },
 	{ work: "Combat helicopter (the OG-1 Gunship)", author: "Muhamad Mirza Arrafi", url: "https://sketchfab.com/3d-models/boeing-ah-64d-apache-combat-helicopter-c3b58008c46b45048fdd7dd283a3c8c8" },
@@ -27,6 +24,7 @@ const ATTRIBUTED = [
 const THANKS = [
 	{ work: "City and suburban props", author: "Kenney", licence: "CC0" },
 	{ work: "Textures and the sky (Kloofendal 48d Partly Cloudy)", author: "Poly Haven", licence: "CC0" },
+	{ work: "Engines, weapons, crashes, sirens and city sounds (GameAudioGDC bundles)", author: "Sonniss and its contributing studios", licence: "Royalty-free" },
 ] as const;
 
 export default function Credits() {

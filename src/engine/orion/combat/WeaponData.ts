@@ -22,7 +22,13 @@ export type WeaponId = "fists" | "sword" | "pistol" | "ar" | "shotgun" | "rocket
  */
 export type WeaponType = "unarmed" | "melee" | "hitscan" | "projectile";
 
-export type SoundId = "punch" | "swing" | "slash" | "pistol" | "rifle" | "shotgun" | "rocket" | "explosion" | "empty" | "reload" | "equip" | "impact" | "crash";
+/**
+ * `impact` is a bullet striking a vehicle (metal); `bulletHit` one striking a wall, `bulletGround`
+ * the street, `bulletGlass` a window, `bulletFlesh` a person.
+ */
+export type SoundId =
+	| "punch" | "swing" | "slash" | "pistol" | "rifle" | "shotgun" | "rocket" | "explosion" | "empty" | "reload" | "equip"
+	| "impact" | "bulletHit" | "bulletGround" | "bulletGlass" | "bulletFlesh" | "crash";
 export type MuzzleEffect = "none" | "pistol" | "rifle" | "shotgun" | "rocket";
 export type ImpactEffect = "punch" | "blade" | "bullet" | "explosion";
 /** Player animation clips (see OrionSkinnedCharacterAnimation). */

@@ -31,7 +31,7 @@ export function formatClock(seconds: number): string {
 	return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
 
-/** What a mission pays, as lines: "$1,500", "Shotgun", "Red Phoenix in your garage". */
+/** What a mission pays, as lines: "$1,500", "Shotgun", "Red Vesper in your garage". */
 export function rewardLines(reward: MissionReward): string[] {
 	const lines: string[] = [];
 	if (reward.cash) lines.push(formatCash(reward.cash));

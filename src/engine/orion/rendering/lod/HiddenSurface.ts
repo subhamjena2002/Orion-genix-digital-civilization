@@ -42,16 +42,6 @@ void main() {
 	colour = vec4(float(triangleId & 255u), float((triangleId >> 8) & 255u), float((triangleId >> 16) & 255u), 255.0) / 255.0;
 }`;
 
-/** Whether this environment can run the ID render. */
-export function canComputeVisibility(): boolean {
-	if (typeof OffscreenCanvas === "undefined") return false;
-	try {
-		return new OffscreenCanvas(1, 1).getContext("webgl2") !== null;
-	} catch {
-		return false;
-	}
-}
-
 /**
  * Per input, a flag per triangle: 1 if seen from any direction. Returns null if WebGL2 isn't
  * available here, or the model has more triangles than the ID encoding holds.

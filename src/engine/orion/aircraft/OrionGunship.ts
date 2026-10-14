@@ -506,7 +506,7 @@ export class OrionGunship extends Script {
 		const effects = crashEffects(this.app);
 		if (index === 0) {
 			effects.muzzleFlash(muzzle[0], muzzle[1], muzzle[2], dx, dy, dz, "rifle");
-			combatAudio().play("rifle", muzzle[0], muzzle[1], muzzle[2], 1.5);
+			combatAudio().play("rifle", muzzle[0], muzzle[1], muzzle[2], 1.5, true);
 		}
 		this.from.set(muzzle[0], muzzle[1], muzzle[2]);
 		this.to.set(muzzle[0] + dx * CANNON.range, muzzle[1] + dy * CANNON.range, muzzle[2] + dz * CANNON.range);
@@ -548,7 +548,7 @@ export class OrionGunship extends Script {
 		const [dx, dy, dz] = scatter(nose[0], nose[1], nose[2], ROCKETS.spread * DEG);
 		this.projectiles?.fire(start[0], start[1], start[2], dx, dy, dz, ROCKETS_SPEC, this.pilotSource, this.id);
 		crashEffects(this.app).muzzleFlash(start[0], start[1], start[2], dx, dy, dz, "rocket");
-		combatAudio().play("rocket", start[0], start[1], start[2], 1.1);
+		combatAudio().play("rocket", start[0], start[1], start[2], 1.1, true);
 	}
 
 	private launchMissile(rail: number) {
@@ -577,7 +577,7 @@ export class OrionGunship extends Script {
 			targetZ: target?.z ?? 0,
 			trail: new EmissionAccumulator(),
 		});
-		combatAudio().play("rocket", start.x, start.y, start.z, 1.4);
+		combatAudio().play("rocket", start.x, start.y, start.z, 1.4, true);
 	}
 
 	private updateMissiles(dt: number) {

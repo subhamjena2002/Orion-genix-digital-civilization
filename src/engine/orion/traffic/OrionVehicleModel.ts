@@ -34,6 +34,13 @@ const PITCH_PER_ACCEL = 0.35;
 const ROLL_PER_LATERAL_ACCEL = 0.45;
 const BODY_SMOOTHING = 5;
 const FLASH_SECONDS = 0.28;
+/** The active wing: rises over this speed range (m/s) by this much (m), and stands up this far (degrees) as an air brake when braking above this speed; how quickly it moves. */
+const WING_RISE_FROM = 14;
+const WING_RISE_OVER = 16;
+const WING_LIFT = 0.12;
+const WING_AIRBRAKE_SPEED = 18;
+const WING_AIRBRAKE_DEGREES = 28;
+const WING_SPEED = 5;
 /** Body tilt changes smaller than this (degrees) aren't worth a transform update. */
 const BODY_TILT_EPSILON = 0.02;
 let nextModelSlot = 0;
@@ -171,9 +178,17 @@ export class OrionVehicleModel extends Script {
 	private paintMaterials: StandardMaterial[] = [];
 	private brakeMaterials: StandardMaterial[] = [];
 	private sirenMaterials: StandardMaterial[] = [];
+	/** Each side's indicator lamps (left, right), and the flash state they're showing. */
+	private readonly indicatorMaterials: [StandardMaterial[], StandardMaterial[]] = [[], []];
+	private indicatorLit: [boolean, boolean] = [false, false];
+	private indicatorTimer = 0;
 	private brakeLit: boolean | null = null;
 	private pitch = 0;
 	private roll = 0;
+	/** The rear wing that moves (see VehicleModelSpec.activeWing): its rest pose and where it is. */
+	private wing: { entity: Entity; position: Vec3; rotation: Quat; lift: number; tilt: number } | null = null;
+	private readonly wingTurn = new Quat();
+	private readonly wingRotation = new Quat();
 	/** The crash lurch on top of the driving lean (see BodyJolt), while it's still moving. */
 	private readonly jolt = new BodyJolt();
 	private jolting = false;
@@ -226,6 +241,7 @@ export class OrionVehicleModel extends Script {
 			this.vehicle ??= ((this.entity.parent as Entity | null)?.script?.get("orionVehicle") ?? null) as OrionVehicle | null;
 			if (this.vehicle) {
 				this.vehicle.carjack.setSeat(this.spec.seat);
+				this.vehicle.carjack.setDoorSwing(this.spec.doorSwing);
 				this.seatGiven = true;
 			}
 		}
@@ -264,6 +280,7 @@ export class OrionVehicleModel extends Script {
 		}
 		// Simplified levels carry the wheels baked in; there's nothing separate to spin.
 		if (this.lodLevel === 0) this.spinWheels(dt, speed);
+		if (this.wing && this.lodLevel === 0) this.animateWing(dt, speed);
 		this.updateLights(dt);
 	}
 
@@ -281,6 +298,9 @@ export class OrionVehicleModel extends Script {
 		this.measureCabin(visibleInstances);
 		this.prepareMaterials(visibleInstances);
 		this.findWheels(model);
+		const wingPattern = this.spec.activeWing;
+		const wing = wingPattern ? (model.find((node) => wingPattern.test(node.name))[0] as Entity | undefined) : undefined;
+		if (wing) this.wing = { entity: wing, position: wing.getLocalPosition().clone(), rotation: wing.getLocalRotation().clone(), lift: 0, tilt: 0 };
 		if (this.police && this.spec.lightBarNode) this.splitLightBar(model, this.spec.lightBarNode);
 		if (this.police && this.sirenMaterials.length === 0) this.addLightBar(visibleInstances);
 		// Grouped before merging hides the originals: the simplified levels are the whole car.
@@ -367,6 +387,7 @@ export class OrionVehicleModel extends Script {
 		// Panels that can hang loose after a crash stay separate too (see BodyDamage).
 		const keepsOwnNode = (node: GraphNode) => (
 			wheelPivots.has(node) || DOOR_NODE.test(node.name) || isLoosePart(node) || (GLASS_NODE.test(node.name) && !NOT_SIDE_GLASS.test(node.name))
+			|| (spec.activeWing?.test(node.name) ?? false)
 		);
 		const movable = (node: GraphNode | null) => {
 			for (let current = node; current && current !== model; current = current.parent) {
@@ -660,7 +681,13 @@ export class OrionVehicleModel extends Script {
 				instance.material = clone;
 			}
 
-			if (BRAKE_LIGHT_MATERIAL.test(name)) {
+			const indicator = INDICATOR_MATERIAL.exec(name);
+			if (indicator) {
+				const clone = cloneOf(material);
+				const list = this.indicatorMaterials[indicator[1] === "left" ? 0 : 1];
+				if (!list.includes(clone)) list.push(clone);
+				instance.material = clone;
+			} else if (BRAKE_LIGHT_MATERIAL.test(name)) {
 				const clone = cloneOf(material);
 				if (!this.brakeMaterials.includes(clone)) this.brakeMaterials.push(clone);
 				instance.material = clone;
@@ -875,6 +902,28 @@ export class OrionVehicleModel extends Script {
 		this.entity.setLocalEulerAngles(pitch, 0, roll);
 	}
 
+	/**
+	 * The active wing: it rises out of the deck as the speed builds, and under hard braking at
+	 * speed it stands up on its pivot as an air brake.
+	 */
+	private animateWing(dt: number, speed: number) {
+		const wing = this.wing;
+		if (!wing) return;
+		const scaleBack = 1 / (this.fit?.getLocalScale().x || 1);
+		const fast = Math.abs(speed);
+		const lift = Math.min(1, Math.max(0, (fast - WING_RISE_FROM) / WING_RISE_OVER)) * WING_LIFT;
+		const tilt = this.vehicle?.isBraking && fast > WING_AIRBRAKE_SPEED ? WING_AIRBRAKE_DEGREES : 0;
+		const blend = 1 - Math.exp(-WING_SPEED * dt);
+		const nextLift = wing.lift + (lift - wing.lift) * blend;
+		const nextTilt = wing.tilt + (tilt - wing.tilt) * blend;
+		if (Math.abs(nextLift - wing.lift) < 1e-4 && Math.abs(nextTilt - wing.tilt) < 0.05) return;
+		wing.lift = nextLift;
+		wing.tilt = nextTilt;
+		wing.entity.setLocalPosition(wing.position.x, wing.position.y + wing.lift * scaleBack, wing.position.z);
+		this.wingTurn.setFromEulerAngles(wing.tilt, 0, 0);
+		wing.entity.setLocalRotation(this.wingRotation.mul2(wing.rotation, this.wingTurn));
+	}
+
 	private spinWheels(dt: number, speed: number) {
 		if (this.wheels.length === 0) return;
 		const steer = (this.vehicle?.steerAngle ?? 0) * DEG;
@@ -896,6 +945,7 @@ export class OrionVehicleModel extends Script {
 	}
 
 	private updateLights(dt: number) {
+		this.updateIndicators(dt);
 		const braking = this.vehicle?.isBraking ?? false;
 		if (braking !== this.brakeLit) {
 			this.brakeLit = braking;
@@ -922,7 +972,35 @@ export class OrionVehicleModel extends Script {
 			material.update();
 		});
 	}
+
+	/** Flashes the side the car is turning to (see OrionVehicle.turnSignal). */
+	private updateIndicators(dt: number) {
+		const [left, right] = this.indicatorMaterials;
+		if (left.length === 0 && right.length === 0) return;
+		const signal = this.vehicle?.turnSignal ?? 0;
+		if (signal === 0) this.indicatorTimer = 0;
+		else this.indicatorTimer += dt;
+		// Lit at once when the signal starts, as a real flasher is.
+		const on = signal !== 0 && this.indicatorTimer % INDICATOR_CYCLE < INDICATOR_CYCLE / 2;
+		const lit: [boolean, boolean] = [on && signal > 0, on && signal < 0];
+		for (const side of [0, 1] as const) {
+			if (lit[side] === this.indicatorLit[side]) continue;
+			for (const material of this.indicatorMaterials[side]) {
+				material.emissive = lit[side] ? INDICATOR_ON : INDICATOR_OFF;
+				material.emissiveIntensity = lit[side] ? 4 : 1;
+				material.update();
+			}
+		}
+		this.indicatorLit = lit;
+	}
 }
+
+/** Indicator flashes: on for half of each cycle (s), about 90 a minute as the regulations ask. */
+const INDICATOR_CYCLE = 0.66;
+const INDICATOR_ON = new Color(1, 0.55, 0.08);
+const INDICATOR_OFF = new Color(0.05, 0.02, 0);
+/** Lamps named by scripts/build-vehicles.mjs, one material per side of the car. */
+const INDICATOR_MATERIAL = /^indicator_(left|right)$/;
 
 /** How see-through converted glass is. */
 const GLASS_OPACITY = 0.35;

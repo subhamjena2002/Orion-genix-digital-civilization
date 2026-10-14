@@ -25,7 +25,7 @@ export class JetAudio {
 		if (this.started) return true;
 		const bus = audioBus();
 		const context = bus.ensure();
-		const master = bus.master;
+		const master = bus.channel("vehicles");
 		if (!context || !master) return false;
 		this.started = true;
 

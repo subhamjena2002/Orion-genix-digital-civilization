@@ -12,7 +12,7 @@ import type { Checkpoint, MissionDefinition, MissionSpawn } from "./MissionDirec
  *
  * Two arcs. The story: a car job, a police car, a gang, a time trial, a jet and a gunship. The
  * street races, open once the first job's done: a city circuit, a highway sprint and a hill climb
- * against three other drivers. Timings are set from the cars' measured pace (the Phoenix tops
+ * against three other drivers. Timings are set from the cars' measured pace (the Vesper tops
  * 60 m/s, the sedan pulls about 4 m/s²) so each clock leaves room for a clean run and not much more.
  */
 
@@ -135,13 +135,13 @@ const JET_STAND = STANDS[1];
 
 // ---- Street races ---------------------------------------------------------------------------------
 
-/** The same three rivals turn up to every race, each in their own Phoenix. */
+/** The same three rivals turn up to every race, each in their own Vesper. */
 const RIVALS: readonly { id: string; colour: string }[] = [
 	{ id: "racer-1", colour: "#f2c14e" },
 	{ id: "racer-2", colour: "#2f7fd6" },
 	{ id: "racer-3", colour: "#2e9e5b" },
 ];
-/** The Phoenix the player races in, waiting on the grid. */
+/** The Vesper the player races in, waiting on the grid. */
 const RACE_CAR = { id: "race-coupe", style: "luxury" as VehicleStyle, colour: "#e8e8e8" };
 
 interface RaceLayout {
@@ -182,7 +182,7 @@ function raceMission(race: RaceLayout, mission: Omit<MissionDefinition, "objecti
 		spawns: [{ type: "vehicle", id: RACE_CAR.id, style: RACE_CAR.style, colour: RACE_CAR.colour, x, z, yaw: race.yaw }, ...racers(race)],
 		protect: [RACE_CAR.id],
 		objectives: [
-			{ kind: "enterVehicle", label: "Get in the white Phoenix on the grid", vehicle: RACE_CAR.id, x, z, timeLimit: 60 },
+			{ kind: "enterVehicle", label: "Get in the white Vesper on the grid", vehicle: RACE_CAR.id, x, z, timeLimit: 60 },
 			{
 				kind: "race",
 				label: "Win the race",
@@ -279,14 +279,14 @@ export const MISSIONS: readonly MissionDefinition[] = [
 		id: "coastal-sprint",
 		title: "Coastal Sprint",
 		giver: { name: "Tomas Quill", x: 372, z: -151 },
-		briefing: "My Phoenix, the sea link, the far end in thirty seconds. Traffic's your problem. Beat the clock and she's yours.",
+		briefing: "My Vesper, the sea link, the far end in thirty seconds. Traffic's your problem. Beat the clock and she's yours.",
 		requires: ["street-sweep"],
-		reward: { cash: 750, vehicles: [{ id: "reward-coupe", style: "luxury", colour: "#b3121b", name: "Red Phoenix" }] },
+		reward: { cash: 750, vehicles: [{ id: "reward-coupe", style: "luxury", colour: "#b3121b", name: "Red Vesper" }] },
 		timed: true,
 		spawns: [{ type: "vehicle", id: "m4-coupe", style: "luxury", colour: "#b3121b", x: 382, z: -163.5, yaw: 90 }],
 		protect: ["m4-coupe"],
 		objectives: [
-			{ kind: "enterVehicle", label: "Get in the red Phoenix", vehicle: "m4-coupe", x: 382, z: -163.5 },
+			{ kind: "enterVehicle", label: "Get in the red Vesper", vehicle: "m4-coupe", x: 382, z: -163.5 },
 			{ kind: "checkpoints", label: "Race the sea link", points: SPRINT_CHECKPOINTS, timeLimit: 30 },
 		],
 	},
@@ -336,9 +336,9 @@ export const MISSIONS: readonly MissionDefinition[] = [
 		id: "ghats-hillclimb",
 		title: "Ghats Hillclimb",
 		giver: { name: "Rosa \"Redline\" Vega", x: -320, z: -9 },
-		briefing: "Up the Ghats, through the tunnel, to the top. They know every bend. Beat them and the gold Phoenix is yours.",
+		briefing: "Up the Ghats, through the tunnel, to the top. They know every bend. Beat them and the gold Vesper is yours.",
 		requires: ["sea-link-showdown"],
-		reward: { cash: 4000, vehicles: [{ id: "reward-gold-coupe", style: "luxury", colour: "#c9a227", name: "Gold Phoenix" }] },
+		reward: { cash: 4000, vehicles: [{ id: "reward-gold-coupe", style: "luxury", colour: "#c9a227", name: "Gold Vesper" }] },
 	}),
 ];
 

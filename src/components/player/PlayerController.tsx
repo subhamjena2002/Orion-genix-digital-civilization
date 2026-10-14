@@ -25,8 +25,8 @@ export const PlayerController = memo(function PlayerController({ cameraEntity }:
 			<Script
 				script={OrionThirdPersonController}
 				camera={cameraEntity}
-				walkSpeed={2}
-				runSpeed={5.5}
+				jogSpeed={3.6}
+				runSpeed={6.2}
 				acceleration={16}
 				braking={22}
 				mouseSensitivity={0.12}

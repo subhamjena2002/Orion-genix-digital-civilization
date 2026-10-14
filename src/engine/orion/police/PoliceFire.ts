@@ -6,6 +6,7 @@ import { applyDamage, damageablesNear } from "../combat/CombatWorld";
 import type { DamageEvent, DamageSourceRef } from "../combat/Damage";
 import { readPlayerPose } from "../player/PlayerPose";
 import { crashEffects } from "../traffic/CrashEffects";
+import { playAt } from "../audio/SoundBank";
 
 /**
  * Police gunfire at the player, from a patrol car's window or an officer on foot: one set of
@@ -15,6 +16,9 @@ import { crashEffects } from "../traffic/CrashEffects";
  * rifles — faster, harder-hitting and more accurate. Every shot is a real hit or a real miss
  * (a tracer and an impact where it lands), never damage out of nowhere.
  */
+
+/** Muzzle velocity (m/s) of the police rounds: they arrive before the sound of the shot. */
+const BULLET_SPEED = 400;
 
 export interface PoliceGun {
 	weapon: "pistol" | "rifle";
@@ -88,15 +92,25 @@ export function fireAtPlayer(
 	effects.tracer(x, y, z, endX, endY, endZ);
 	if (!hit) {
 		effects.impact(endX, Math.max(endY, player.y + 0.05), endZ, -dirX, -dirY, -dirZ, "hard");
+		// A round that misses goes past close: the snap and whizz of it by the player's head, a
+		// moment before the shot's own report arrives from the gun.
+		if (distance > 8) {
+			const by = { level: 0.7, delay: distance / BULLET_SPEED, variation: 0.1 };
+			playAt("whizz", endX, endY, endZ, { ...by, channel: "impacts" });
+			if (gun.weapon === "rifle" && Math.random() < 0.6) playAt("crack", endX, endY, endZ, { ...by, level: 0.5, channel: "impacts" });
+		}
+		combatAudio().play(endY < player.y + 0.3 ? "bulletGround" : "bulletHit", endX, Math.max(endY, player.y + 0.05), endZ, 0.5);
 		return false;
 	}
 	if (playerCar) {
 		playerCar.applyDamage(gun.carDamage);
 		effects.impact(endX, endY, endZ, -dirX, -dirY, -dirZ, "metal");
+		combatAudio().play("impact", endX, endY, endZ, 0.9);
 		// Now and then a round finds the driver through the glass.
 		if (Math.random() > 0.3) return true;
 	} else {
 		effects.impact(endX, endY, endZ, -dirX, -dirY, -dirZ, "flesh");
+		combatAudio().play("bulletFlesh", endX, endY, endZ, 0.9);
 	}
 	const target = damageablesNear(player.x, player.z, 2).find((candidate) => candidate.kind === "player");
 	if (!target) return true;

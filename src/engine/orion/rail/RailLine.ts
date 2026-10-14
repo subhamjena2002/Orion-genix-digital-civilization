@@ -188,11 +188,6 @@ export function railPoseAt(distance: number): RailPose {
 	};
 }
 
-/** How far `to` is ahead of `from` in the direction of travel (always 0..RAIL_LENGTH). */
-export function railAhead(from: number, to: number): number {
-	return railWrap(to - from);
-}
-
 /** The loop as a list of points, for drawing it as one line (the map). */
 export function railPolyline(step = 8): RailPoint[] {
 	const points: RailPoint[] = [];

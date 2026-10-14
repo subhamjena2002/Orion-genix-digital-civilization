@@ -18,8 +18,12 @@ export type ClipState = MovementState | ActionState;
  */
 const WALK_ENTER = 0.5;
 const WALK_EXIT = 0.25;
-const RUN_ENTER = 3.8;
-const RUN_EXIT = 3.2;
+/**
+ * The rig has no jog clip, so the everyday jog (~3.6 m/s) is the run cycle played slower, and
+ * only a slow pace (a light push on the touch stick) walks.
+ */
+const RUN_ENTER = 2.6;
+const RUN_EXIT = 2.2;
 
 /**
  * Ground speed (units/s, at human scale) each clip looks natural at. Playback is scaled from

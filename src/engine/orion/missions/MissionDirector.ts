@@ -92,7 +92,7 @@ export interface RewardVehicle {
 	id: string;
 	style: VehicleStyle;
 	colour: string;
-	/** What the player calls it: "Red Phoenix". */
+	/** What the player calls it: "Red Vesper". */
 	name?: string;
 }
 

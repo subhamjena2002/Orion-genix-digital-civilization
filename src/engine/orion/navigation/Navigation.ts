@@ -151,10 +151,6 @@ export function setObjective(target: Omit<Target, "id" | "kind"> & { kind?: "obj
 	changed();
 }
 
-export function getObjective(): Target | null {
-	return objective;
-}
-
 /** What the GPS leads to: a mission objective first, else the player's waypoint. */
 export function activeTarget(): Target | null {
 	return objective ?? waypoint;

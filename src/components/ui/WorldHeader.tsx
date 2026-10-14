@@ -1,6 +1,7 @@
 "use client";
 
 import { enterFullscreen, exitFullscreen, useFullscreen } from "./fullscreen";
+import { SoundSettings } from "./SoundSettings";
 
 export function WorldHeader() {
 	const { fullscreen, supported } = useFullscreen();
@@ -31,6 +32,7 @@ export function WorldHeader() {
 					<span className="orion-status-dot" aria-hidden="true" />
 					Live
 				</span>
+				<SoundSettings />
 				{supported ? (
 					<button
 						type="button"
