@@ -1,4 +1,5 @@
 import { audioBus, type Placement } from "./AudioBus";
+import { LoopVoice } from "./SoundBank";
 import { drivableCars } from "../traffic/Carjack";
 import type { OrionVehicle } from "../traffic/OrionVehicle";
 import { readWanted } from "../police/Wanted";
@@ -6,10 +7,9 @@ import { readWanted } from "../police/Wanted";
 /**
  * The siren of the nearest patrol car on a chase.
  *
- * A wail: one tone sweeping up and down about every three seconds. It's built as an oscillator
- * whose pitch is swung by a slow second oscillator, entirely on the audio thread, so the sweep
- * is perfectly smooth whatever the frame rate. Synthesised, like every sound in the game; no
- * recording of any real force's siren.
+ * A wail: a recorded siren (a generic electronic wail, no force's own tones), looped over whole
+ * sweeps so the repeat isn't heard. Until it has loaded, a synthesised wail stands in: one tone
+ * swept up and down by a slow second oscillator on the audio thread.
  *
  * One voice is plenty: several sirens at once turn into noise, and the nearest one is the one
  * that tells the player where the danger is.
@@ -33,15 +33,19 @@ interface SirenVoice {
 	panner: StereoPannerNode;
 }
 
+/** The recording's level against the synthesised wail's. */
+const RECORDED_LEVEL = 1.6;
+
 class PoliceSirens {
 	private voice: SirenVoice | null = null;
+	private readonly recorded = new LoopVoice("siren-wail", SMOOTHING, "vehicles");
 	private readonly place: Placement = { gain: 0, pan: 0, muffle: 20000, distance: 0 };
 
 	/** Once a frame, after the listener has moved. */
 	public update(): void {
 		const bus = audioBus();
 		const context = bus.ensure();
-		const master = bus.master;
+		const master = bus.channel("vehicles");
 		if (!context || !master) return;
 
 		let nearest: OrionVehicle | null = null;
@@ -61,11 +65,17 @@ class PoliceSirens {
 		const now = context.currentTime;
 		if (!nearest) {
 			if (this.voice) this.voice.gain.gain.setTargetAtTime(0.0001, now, SMOOTHING * 3);
+			this.recorded.set(0, this.place);
+			return;
+		}
+		const position = nearest.entity.getPosition();
+		const placed = bus.place(position.x, position.y, position.z, this.place);
+		if (this.recorded.ready) {
+			this.recorded.set(LEVEL * RECORDED_LEVEL, placed, 1, 9000);
+			if (this.voice) this.voice.gain.gain.setTargetAtTime(0.0001, now, SMOOTHING);
 			return;
 		}
 		const voice = (this.voice ??= this.createVoice(context, master));
-		const position = nearest.entity.getPosition();
-		const placed = bus.place(position.x, position.y, position.z, this.place);
 		voice.gain.gain.setTargetAtTime(Math.max(0.0001, LEVEL * placed.gain), now, SMOOTHING);
 		voice.panner.pan.setTargetAtTime(placed.pan, now, SMOOTHING);
 		voice.filter.frequency.setTargetAtTime(Math.min(placed.muffle, 5000), now, SMOOTHING);
@@ -73,6 +83,7 @@ class PoliceSirens {
 
 	/** Stops the sound for good. */
 	public dispose(): void {
+		this.recorded.stop();
 		const voice = this.voice;
 		this.voice = null;
 		if (!voice) return;

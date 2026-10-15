@@ -30,6 +30,3 @@ export const JET_GEOMETRY = {
 	/** The front seat: where the pilot's root goes. */
 	seat: [0, 2.95, 4.95] as const,
 };
-
-/** Height of the centre of mass above the ground when parked on its wheels. */
-export const JET_CG_HEIGHT = JET_GEOMETRY.centreOfMass[1] - JET_GEOMETRY.groundY;

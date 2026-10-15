@@ -11,6 +11,8 @@ export interface PedestrianSpawn {
 	/** Uniform scale that brings this particular model to human height. */
 	scale: number;
 	speed: number;
+	/** Ground speed (m/s) this model's walk clip covers at its authored rate (see CHARACTER_MODELS). */
+	walkSpeed: number;
 	/** Seeds this individual's route choices so the crowd doesn't move as one. */
 	seed: number;
 	palette: PedestrianPalette;
@@ -41,15 +43,22 @@ const HUMAN_HEIGHT = 1.8;
  * armature carries a baked 100x scale and measures 4.75, while the women are already authored
  * at real-world 1.8. Scaling both by one shared constant rendered the women at a third size,
  * so the factor has to be per model.
+ *
+ * `walkSpeed` is how fast each pack's walk clip moves over the ground at its authored rate,
+ * measured in game from the planted foot's speed against the body: about 1.0 m/s for the
+ * women's pack (a shorter stride) and 1.5 m/s for the men's. With one 1.5 m/s figure for all,
+ * the women's feet skated forward about a third of the ground they covered.
  */
-const CHARACTER_MODELS: readonly { path: string; nativeHeight: number }[] = [
-	{ path: `${BASE}/citizen-woman-a.glb`, nativeHeight: 1.8 },
-	{ path: `${BASE}/citizen-woman-b.glb`, nativeHeight: 1.8 },
-	{ path: `${BASE}/citizen-woman-suit.glb`, nativeHeight: 1.8 },
-	{ path: `${BASE}/citizen-woman-worker.glb`, nativeHeight: 1.8 },
-	{ path: `${BASE}/citizen-woman-casual.glb`, nativeHeight: 1.8 },
-	{ path: `${BASE}/orion-citizen-casual.glb`, nativeHeight: 4.74 },
-	{ path: `${BASE}/orion-citizen.glb`, nativeHeight: 4.75 },
+const WOMEN_WALK_SPEED = 1.0;
+const MEN_WALK_SPEED = 1.5;
+const CHARACTER_MODELS: readonly { path: string; nativeHeight: number; walkSpeed: number }[] = [
+	{ path: `${BASE}/citizen-woman-a.glb`, nativeHeight: 1.8, walkSpeed: WOMEN_WALK_SPEED },
+	{ path: `${BASE}/citizen-woman-b.glb`, nativeHeight: 1.8, walkSpeed: WOMEN_WALK_SPEED },
+	{ path: `${BASE}/citizen-woman-suit.glb`, nativeHeight: 1.8, walkSpeed: WOMEN_WALK_SPEED },
+	{ path: `${BASE}/citizen-woman-worker.glb`, nativeHeight: 1.8, walkSpeed: WOMEN_WALK_SPEED },
+	{ path: `${BASE}/citizen-woman-casual.glb`, nativeHeight: 1.8, walkSpeed: WOMEN_WALK_SPEED },
+	{ path: `${BASE}/orion-citizen-casual.glb`, nativeHeight: 4.74, walkSpeed: MEN_WALK_SPEED },
+	{ path: `${BASE}/orion-citizen.glb`, nativeHeight: 4.75, walkSpeed: MEN_WALK_SPEED },
 ];
 
 /** How many pedestrians exist at once. They roam and recycle, so this is the on-screen crowd. */
@@ -65,23 +74,50 @@ function mulberry32(seed: number) {
 	};
 }
 
+/**
+ * Every model the same number of times (give or take one), shuffled: picked at random, one
+ * model could fill a third of the street while another hardly appeared.
+ */
+function modelDeck(random: () => number): (typeof CHARACTER_MODELS)[number][] {
+	const deck = Array.from({ length: PEDESTRIAN_POOL_SIZE }, (_, index) => CHARACTER_MODELS[index % CHARACTER_MODELS.length]);
+	for (let i = deck.length - 1; i > 0; i--) {
+		const j = Math.floor(random() * (i + 1));
+		[deck[i], deck[j]] = [deck[j], deck[i]];
+	}
+	return deck;
+}
+
+/** Relative luminance of a #rrggbb colour, 0..1 (gamma ignored: only used to compare). */
+function lightness(hex: string): number {
+	const value = parseInt(hex.slice(1), 16);
+	return (0.2126 * ((value >> 16) & 255) + 0.7152 * ((value >> 8) & 255) + 0.0722 * (value & 255)) / 255;
+}
+
+/** A person's colours. A pale shirt over pale trousers washed the whole figure out to one cream shape, so the trousers go dark then. */
+function outfit(random: () => number): PedestrianPalette {
+	const skin = SKIN_TONES[Math.floor(random() * SKIN_TONES.length)];
+	const shirt = SHIRT_COLOURS[Math.floor(random() * SHIRT_COLOURS.length)];
+	let pants = PANTS_COLOURS[Math.floor(random() * PANTS_COLOURS.length)];
+	const hair = HAIR_COLOURS[Math.floor(random() * HAIR_COLOURS.length)];
+	if (lightness(shirt) > 0.6 && lightness(pants) > 0.6) pants = PANTS_COLOURS[0];
+	return { skin, shirt, pants, hair };
+}
+
 function buildPedestrians(): PedestrianSpawn[] {
 	const random = mulberry32(20260916);
+	const deck = modelDeck(random);
 	return Array.from({ length: PEDESTRIAN_POOL_SIZE }, (_, index) => {
-		const model = CHARACTER_MODELS[Math.floor(random() * CHARACTER_MODELS.length)];
+		const model = deck[index];
 		return {
 		id: `pedestrian-${index}`,
 		assetPath: model.path,
 		scale: HUMAN_HEIGHT / model.nativeHeight,
-		// An unhurried strolling range — people on a pavement, not joggers.
-		speed: 1.05 + random() * 0.45,
+		// An unhurried strolling range around the pace the model's clip was made for, so the
+		// stride is played no more than a little faster or slower than authored.
+		speed: model.walkSpeed * (0.8 + random() * 0.3),
+		walkSpeed: model.walkSpeed,
 		seed: Math.floor(random() * 1_000_000),
-		palette: {
-			skin: SKIN_TONES[Math.floor(random() * SKIN_TONES.length)],
-			shirt: SHIRT_COLOURS[Math.floor(random() * SHIRT_COLOURS.length)],
-			pants: PANTS_COLOURS[Math.floor(random() * PANTS_COLOURS.length)],
-			hair: HAIR_COLOURS[Math.floor(random() * HAIR_COLOURS.length)],
-			},
+		palette: outfit(random),
 		};
 	});
 }

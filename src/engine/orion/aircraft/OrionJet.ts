@@ -619,7 +619,7 @@ export class OrionJet extends Script {
 		const effects = crashEffects(this.app);
 		if (index === 0) {
 			effects.muzzleFlash(muzzle[0], muzzle[1], muzzle[2], dx, dy, dz, "rifle");
-			combatAudio().play("rifle", muzzle[0], muzzle[1], muzzle[2], 1.4);
+			combatAudio().play("rifle", muzzle[0], muzzle[1], muzzle[2], 1.4, true);
 		}
 		this.from.set(muzzle[0], muzzle[1], muzzle[2]);
 		this.to.set(muzzle[0] + dx * JET_CANNON.range, muzzle[1] + dy * JET_CANNON.range, muzzle[2] + dz * JET_CANNON.range);
@@ -680,7 +680,7 @@ export class OrionJet extends Script {
 			targetZ: target?.z ?? 0,
 			trail: new EmissionAccumulator(),
 		});
-		combatAudio().play("rocket", start.x, start.y, start.z, 1.5);
+		combatAudio().play("rocket", start.x, start.y, start.z, 1.5, true);
 	}
 
 	private updateMissiles(dt: number) {

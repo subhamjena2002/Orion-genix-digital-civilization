@@ -13,6 +13,7 @@ import type { Entity as PlayCanvasEntity } from "playcanvas";
 import { useApp, usePhysics } from "@playcanvas/react/hooks";
 
 import { DEFAULT_GRAPHICS_SETTINGS, loadGraphicsSettings } from "@/engine/orion/rendering/GraphicsSettings";
+import { shadowNormalOffset } from "@/engine/orion/rendering/RenderPipeline";
 import { installTextureBudget, textureCapFor, thisDeviceClass } from "@/engine/orion/rendering/TextureBudget";
 import { ORION_CHUNK_MANAGER, ORION_WORLD } from "@/engine/orion/OrionWorld";
 import { OrionHUD } from "@/components/ui/OrionHUD";
@@ -46,6 +47,15 @@ const FILL_LIGHT_ROTATION: [number, number, number] = [62, 235, 0];
 /** Leans the cascade splits towards the camera, where texel density shows most. */
 const SHADOW_CASCADE_DISTRIBUTION = 0.62;
 const SHADOW_CASCADE_BLEND = 0.1;
+/**
+ * Shadow biasing. With the engine's defaults (no normal offset) every surface lit at a grazing
+ * angle shadowed itself in fine diagonal stripes — "shadow acne" — which read as blotchy, cheap
+ * paint on every car and van side. A normal offset sized to the shadow texel removes it (see
+ * shadowNormalOffset; adaptive quality re-applies it when it changes the atlas size); checked
+ * against the parked patrol cars at three times this value that shadows still meet the wheels.
+ */
+const SHADOW_BIAS = 0.02;
+const SHADOW_NORMAL_OFFSET = shadowNormalOffset(DEFAULT_GRAPHICS_SETTINGS.shadowAtlasSize);
 const ENVIRONMENT_WAIT_MS = 30_000;
 /**
  * Longest the world waits for the player's own body (a large model). Until it's ready the player
@@ -191,6 +201,8 @@ const OrionWorld = memo(function OrionWorld() {
           cascadeDistribution={SHADOW_CASCADE_DISTRIBUTION}
           cascadeBlend={SHADOW_CASCADE_BLEND}
           shadowResolution={DEFAULT_GRAPHICS_SETTINGS.shadowAtlasSize}
+          shadowBias={SHADOW_BIAS}
+          normalOffsetBias={SHADOW_NORMAL_OFFSET}
         />
       </Entity>
 

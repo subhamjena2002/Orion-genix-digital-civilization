@@ -63,6 +63,13 @@ export interface VehicleModelSpec {
 	 */
 	seat?: DriverSeat;
 	/**
+	 * How the doors open, where they don't simply swing out on a vertical hinge at the front
+	 * edge (the default): butterfly doors rise up and forward about an axis along the A-pillar.
+	 */
+	doorSwing?: DoorSwing;
+	/** The rear wing's node: raised at speed and tilted up as an air brake under hard braking. */
+	activeWing?: RegExp;
+	/**
 	 * True when the model is recognisably a real manufacturer's car. Hiding its badges is not
 	 * enough to ship it: the body shape is a registered design, so it has to be replaced with an
 	 * original before release. VehicleModels.test.ts keeps a list of the ones still in the tree,
@@ -70,6 +77,16 @@ export interface VehicleModelSpec {
 	 */
 	realBrandDerivative?: boolean;
 	credit: { author: string; licence: "CC0" | "CC-BY-4.0" | "Purchased" | string; source: string };
+}
+
+/** A door's hinge, for the driver's (left, +X) door; the other side is its mirror image. */
+export interface DoorSwing {
+	/** Hinge axis in car space (+Z forward, +Y up, +X the car's left); a positive turn opens it. */
+	axis: readonly [number, number, number];
+	/** A point on the hinge: across from the middle, above the road, forward of the middle. */
+	hinge: readonly [number, number, number];
+	/** How far it opens, degrees. */
+	degrees: number;
 }
 
 export interface DriverSeat {
@@ -86,263 +103,147 @@ export interface DriverSeat {
 	scale?: number;
 }
 
+/** Vehicles made for this project in code: no third-party claim on them. */
+const ORION_ORIGINAL = { author: "OrionGenix", licence: "Original work, made for this project", source: "scripts/build-vehicles.mjs" };
+
 export const VEHICLE_MODELS: readonly VehicleModelSpec[] = [
+	// The city's vehicles: original, generic designs built in code (scripts/build-vehicles.mjs),
+	// each part the game moves its own node, no textures. Every one but the plain sedan wears its
+	// own livery, so keeps its paint.
 	{
-		// A box lorry, unbadged, so there is nothing on it to hide.
-		file: "truck.glb",
-		styles: ["truck"],
-		length: 9.6,
-		// It comes painted; fleet colours would flatten the cab and box to one shade.
-		keepPaint: true,
-		// In the cab over the front wheels, not halfway down the box: the cab runs from 2.6 to
-		// 4.7 m ahead of the middle with its roof 2.38 m up. Right-hand drive.
-		seat: { forward: 3.8, lateral: -0.45, rootAboveRoad: 0.52 },
-		credit: {
-			// UNKNOWN: supplied as a file, not from a page that named its author or terms. Fill
-			// these in before release — an unattributed CC-BY model is a licence breach.
-			author: "unknown — to be confirmed",
-			licence: "unknown — to be confirmed",
-			source: "supplied by the project owner, 2026-09-20",
-		},
+		// A four-door saloon in the fleet's colours.
+		file: "orion-sedan.glb",
+		styles: ["sedan"],
+		length: 4.7,
+		// Left-hand drive, in the front seat.
+		seat: { forward: 0.3, lateral: 0.38, rootAboveRoad: 0.24, scale: 0.6 },
+		credit: ORION_ORIGINAL,
 	},
 	{
-		// An army estate car, star and all. Its materials are called "Material1..3", so none of the
-		// paint and lamp matching finds anything — it keeps its own baked textures, which is what
-		// it wants anyway.
-		file: "military-wagon.glb",
-		styles: ["militaryWagon"],
-		length: 4.8,
-		keepPaint: true,
-		// Left-hand drive; the roof is only 1.67 m up, so a full-size seated figure either put
-		// its head through it or its legs out under the sills.
-		seat: { forward: 0.4, lateral: 0.42, rootAboveRoad: 0.42, scale: 0.68 },
-		credit: {
-			author: "Axel Roman (DeathCoreBoy1)",
-			// From the Sketchfab page below; confirm against the download dialog before release.
-			licence: "CC-BY-4.0 — to be confirmed",
-			source: "https://sketchfab.com/3d-models/dcb-k-133byat-unbranded-1a37570f3bbf4c31b6c8c1f89fdf3724",
-		},
-	},
-	{
-		// A fictional 1990s patrol sedan ("Phoenix" is the modeller's own marque), in a plain
-		// POLICE livery with no real force's name on it. Its brand badges and number plates are
-		// hidden like any other car's (badge sheet and plate materials).
-		file: "phoenix-93-interceptor.glb",
-		styles: ["police"],
-		length: 4.94,
-		// Modelled nose towards -X: without this it drove along tail-lights first.
-		yawOffset: 180,
-		// The livery is the paint.
-		keepPaint: true,
-		lightBarNode: /lightbar/i,
-		// Behind its steering wheel, which is on the left (x +0.35); roof about 1.25 m up.
-		seat: { forward: 0.07, lateral: 0.36, rootAboveRoad: 0.2, scale: 0.6 },
-		credit: {
-			author: "Daniel Zhabotinsky",
-			// Read from the file's own metadata (Sketchfab download).
-			licence: "CC-BY-4.0",
-			source: "https://sketchfab.com/3d-models/phoenix-93-interceptor-low-poly-model-ac4a91cb1b184ebd82c598c1bc54ba3d",
-		},
-	},
-	// The civic fleet: ten generic service vehicles from one pack, split one per file (the pack's
-	// showroom layout dropped, geometry untouched). The author describes them as "completely
-	// trademark claim proof"; the liveries are generic words and numbers, no badges or marques.
-	{
-		// A yellow cab with a chequer band.
-		file: "civic-taxi.glb",
+		// The saloon as a cab: yellow, a chequer band, a lit roof sign.
+		file: "orion-taxi.glb",
 		styles: ["taxi"],
 		length: 4.7,
 		keepPaint: true,
-		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
-		// Left-hand drive, behind the windscreen (glass tops out at 1.26 m).
-		seat: { forward: 0.37, lateral: 0.38, rootAboveRoad: 0.25, scale: 0.56 },
-		keepMaterial: /decal/i,
-		credit: {
-			author: "Comrade1280",
-			licence: "CC-BY-4.0",
-			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
-		},
+		seat: { forward: 0.3, lateral: 0.38, rootAboveRoad: 0.24, scale: 0.6 },
+		credit: ORION_ORIGINAL,
 	},
 	{
-		// A postal van.
-		file: "civic-postal-van.glb",
+		// The saloon as a patrol car: black with white doors, a red and blue light bar
+		// ("siren-red"/"siren-blue", which flash), a push bar and steel wheels.
+		file: "orion-police.glb",
+		styles: ["police"],
+		length: 4.7,
+		keepPaint: true,
+		seat: { forward: 0.3, lateral: 0.38, rootAboveRoad: 0.24, scale: 0.6 },
+		credit: ORION_ORIGINAL,
+	},
+	{
+		// A boxy four-door wagon on a raised chassis: matte olive, a roof rack, a snorkel, a spare
+		// wheel on the back. No markings.
+		file: "orion-wagon.glb",
+		styles: ["militaryWagon"],
+		length: 4.8,
+		keepPaint: true,
+		seat: { forward: 0.5, lateral: 0.42, rootAboveRoad: 0.5, scale: 0.66 },
+		credit: ORION_ORIGINAL,
+	},
+	{
+		// A panel van with a sliding side door, white with a blue band.
+		file: "orion-van.glb",
 		styles: ["van"],
 		length: 5.0,
 		keepPaint: true,
-		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
-		// Right-hand drive, as a mail van is; cab glass from 0.45 to 1.69 m forward.
-		seat: { forward: 1.16, lateral: -0.42, rootAboveRoad: 0.4, scale: 0.76 },
-		keepMaterial: /decal/i,
-		credit: {
-			author: "Comrade1280",
-			licence: "CC-BY-4.0",
-			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
-		},
+		seat: { forward: 1.55, lateral: 0.45, rootAboveRoad: 0.5, scale: 0.75 },
+		credit: ORION_ORIGINAL,
 	},
 	{
-		// A road-service utility truck.
-		file: "civic-road-service-truck.glb",
-		styles: ["serviceTruck"],
-		length: 5.5,
-		keepPaint: true,
-		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
-		// In the cab (glass from -0.1 to 1.43 m forward), up on the truck floor.
-		seat: { forward: 0.8, lateral: 0.45, rootAboveRoad: 0.75, scale: 0.72 },
-		keepMaterial: /decal/i,
-		credit: {
-			author: "Comrade1280",
-			licence: "CC-BY-4.0",
-			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
-		},
-	},
-	{
-		// A tow truck.
-		file: "civic-tow-truck.glb",
-		styles: ["towTruck"],
-		length: 6.5,
-		keepPaint: true,
-		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
-		// In the cab at the front (glass 1.55 to 3.36 m forward), roof about 2.45 m up.
-		seat: { forward: 2.73, lateral: 0.5, rootAboveRoad: 0.9, scale: 0.84 },
-		keepMaterial: /decal/i,
-		credit: {
-			author: "Comrade1280",
-			licence: "CC-BY-4.0",
-			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
-		},
-	},
-	{
-		// A city bus.
-		file: "civic-city-bus.glb",
-		styles: ["bus"],
-		length: 11,
-		keepPaint: true,
-		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
-		// Right behind the windscreen at the front, high above the road.
-		seat: { forward: 4.65, lateral: 0.75, rootAboveRoad: 1, scale: 1 },
-		keepMaterial: /decal/i,
-		credit: {
-			author: "Comrade1280",
-			licence: "CC-BY-4.0",
-			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
-		},
-	},
-	{
-		// A school bus.
-		file: "civic-school-bus.glb",
-		styles: ["schoolBus"],
-		length: 10,
-		keepPaint: true,
-		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
-		// Behind the bonnet, under the windscreen at 3.16 m forward.
-		seat: { forward: 2.73, lateral: 0.7, rootAboveRoad: 0.9, scale: 0.95 },
-		keepMaterial: /decal/i,
-		credit: {
-			author: "Comrade1280",
-			licence: "CC-BY-4.0",
-			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
-		},
-	},
-	{
-		// A refuse truck.
-		file: "civic-garbage-truck.glb",
-		styles: ["garbageTruck"],
-		length: 8.5,
-		keepPaint: true,
-		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
-		// In the high cab over the front axle (glass 2.83 to 4.13 m forward).
-		seat: { forward: 3.6, lateral: 0.55, rootAboveRoad: 1, scale: 0.79 },
-		keepMaterial: /decal/i,
-		credit: {
-			author: "Comrade1280",
-			licence: "CC-BY-4.0",
-			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
-		},
-	},
-	{
-		// An ambulance.
-		file: "civic-ambulance.glb",
+		// The van's cab with a patient compartment behind: beacons, a light bar, a chequered band.
+		file: "orion-ambulance.glb",
 		styles: ["ambulance"],
 		length: 6.5,
 		keepPaint: true,
-		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
-		// In the cab at the front (windscreen at 2.36 m forward); the box behind is the patient compartment.
-		seat: { forward: 1.83, lateral: 0.45, rootAboveRoad: 0.55, scale: 0.81 },
-		keepMaterial: /decal/i,
-		credit: {
-			author: "Comrade1280",
-			licence: "CC-BY-4.0",
-			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
-		},
+		seat: { forward: 2.3, lateral: 0.45, rootAboveRoad: 0.5, scale: 0.75 },
+		credit: ORION_ORIGINAL,
 	},
 	{
-		// A fire engine.
-		file: "civic-fire-truck.glb",
+		// A crew-cab utility truck with tool lockers, a ladder rack and amber beacons.
+		file: "orion-service-truck.glb",
+		styles: ["serviceTruck"],
+		length: 5.5,
+		keepPaint: true,
+		seat: { forward: 1.15, lateral: 0.5, rootAboveRoad: 0.62, scale: 0.7 },
+		credit: ORION_ORIGINAL,
+	},
+	{
+		// A bonneted wrecker: boom, hook and wheel-lift on the back.
+		file: "orion-tow-truck.glb",
+		styles: ["towTruck"],
+		length: 6.5,
+		keepPaint: true,
+		seat: { forward: 1.3, lateral: 0.6, rootAboveRoad: 0.78, scale: 0.75 },
+		credit: ORION_ORIGINAL,
+	},
+	{
+		// A cab-over box lorry: the cab in blue, a white box.
+		file: "orion-truck.glb",
+		styles: ["truck"],
+		length: 9.6,
+		keepPaint: true,
+		// High in the cab over the front axle.
+		seat: { forward: 4.0, lateral: 0.53, rootAboveRoad: 0.95, scale: 0.8 },
+		credit: ORION_ORIGINAL,
+	},
+	{
+		// A refuse truck: a low cab, the compactor body, the hopper at the back.
+		file: "orion-garbage-truck.glb",
+		styles: ["garbageTruck"],
+		length: 8.5,
+		keepPaint: true,
+		seat: { forward: 3.45, lateral: 0.65, rootAboveRoad: 0.72, scale: 0.8 },
+		credit: ORION_ORIGINAL,
+	},
+	{
+		// A fire engine: crew cab, roller-shutter lockers, an aerial ladder, light bars.
+		file: "orion-fire-truck.glb",
 		styles: ["fireTruck"],
 		length: 9.5,
 		keepPaint: true,
-		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
-		// High in the cab-over crew cab (glass 1.08 to 4.56 m forward, roof about 2.5 m up).
-		seat: { forward: 3.93, lateral: 0.6, rootAboveRoad: 1.1, scale: 0.79 },
-		keepMaterial: /decal/i,
-		credit: {
-			author: "Comrade1280",
-			licence: "CC-BY-4.0",
-			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
-		},
+		seat: { forward: 3.95, lateral: 0.67, rootAboveRoad: 0.75, scale: 0.8 },
+		credit: ORION_ORIGINAL,
 	},
 	{
-		// A patrol sedan (a second police model beside the Phoenix).
-		file: "civic-police-sedan.glb",
-		styles: ["police"],
-		length: 4.9,
+		// A low-floor city bus with two glazed doors on the kerb side.
+		file: "orion-city-bus.glb",
+		styles: ["bus"],
+		length: 11,
 		keepPaint: true,
-		// Its decals are the livery's generic lettering, checked by eye: no marques or badges.
-		// Left-hand drive; roof over the seat about 1.5 m up.
-		seat: { forward: 0.37, lateral: 0.4, rootAboveRoad: 0.25, scale: 0.68 },
-		keepMaterial: /decal/i,
-		credit: {
-			author: "Comrade1280",
-			licence: "CC-BY-4.0",
-			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
-		},
-	},
-	// Out of livery: two of the models above as plain cars, for the missions.
-	{
-		// The taxi's sedan in plain paint. Its yellow is painted into the one texture that covers
-		// the whole car, so the paint goes on a copy with the yellow made neutral and the chequer
-		// band painted out (scripts/prepare-civic-sedan.mjs); the TAXI lettering, being decals, is
-		// hidden like anything else's.
-		file: "civic-taxi.glb",
-		variant: "plain",
-		styles: ["sedan"],
-		length: 4.7,
-		paintMaterial: /^taxi$/,
-		paintMap: "civic-sedan-paint.png",
-		seat: { forward: 0.37, lateral: 0.38, rootAboveRoad: 0.25, scale: 0.56 },
-		credit: {
-			author: "Comrade1280",
-			licence: "CC-BY-4.0",
-			source: "https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465",
-		},
+		// The driver's seat, front left behind the windscreen.
+		seat: { forward: 4.85, lateral: 0.75, rootAboveRoad: 0.55, scale: 0.85 },
+		credit: ORION_ORIGINAL,
 	},
 	{
-		// The Phoenix out of uniform: light bar and push bar off, and the black-and-white livery,
-		// POLICE and all, painted into its body texture, replaced by flat paint. A quick 90s sedan
-		// for the races and the garage.
-		file: "phoenix-93-interceptor.glb",
-		variant: "plain",
+		// A bonneted school bus: yellow, black rub rails, a stop arm.
+		file: "orion-school-bus.glb",
+		styles: ["schoolBus"],
+		length: 10,
+		keepPaint: true,
+		seat: { forward: 3.35, lateral: 0.62, rootAboveRoad: 0.75, scale: 0.85 },
+		credit: ORION_ORIGINAL,
+	},
+	{
+		// The Vesper GT: an original mid-engined supercar built in code (scripts/build-supercar.mjs),
+		// no textures, a few hundred kilobytes. Its doors, bonnet, engine cover and glass are
+		// separate parts, named as the game looks for them.
+		file: "vesper-gt.glb",
 		styles: ["luxury"],
-		length: 4.94,
-		yawOffset: 180,
-		paintMap: null,
-		hideNode: /lightbar|bullbar/i,
-		seat: { forward: 0.07, lateral: 0.36, rootAboveRoad: 0.2, scale: 0.6 },
-		credit: {
-			author: "Daniel Zhabotinsky",
-			licence: "CC-BY-4.0",
-			source: "https://sketchfab.com/3d-models/phoenix-93-interceptor-low-poly-model-ac4a91cb1b184ebd82c598c1bc54ba3d",
-		},
+		length: 4.6,
+		// Left-hand drive, low in a low cabin (roof 1.14 m).
+		seat: { forward: 0.05, lateral: 0.4, rootAboveRoad: 0.2, scale: 0.6 },
+		// Butterfly doors: hinged along the A-pillar, they rise up and forward.
+		doorSwing: { axis: [0.3, -0.47, 0.83], hinge: [0.82, 0.86, 0.72], degrees: 72 },
+		activeWing: /^wing$/,
+		credit: { ...ORION_ORIGINAL, source: "scripts/build-supercar.mjs" },
 	},
 	// Example — uncomment and edit once the file is in public/models/vehicles/:
 	// {

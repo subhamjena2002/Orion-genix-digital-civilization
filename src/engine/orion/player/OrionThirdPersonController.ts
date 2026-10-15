@@ -34,6 +34,8 @@ import { skidMarks } from "../traffic/SkidMarks";
 import { clearWrecksNear, type OrionVehicle } from "../traffic/OrionVehicle";
 import { ORION_ACTIVE_TIME_OF_DAY, ORION_ENVIRONMENT_PROFILES, updateAtmosphere } from "../rendering/Environment";
 import { PLAYER_VISUAL_NAME, writeCameraLens, writeCameraView, writePlayerAction, writePlayerPose, writeVehicleState } from "./PlayerPose";
+import { playAt } from "../audio/SoundBank";
+import { ambientAudio } from "../audio/AmbientAudio";
 
 const UP = new Vec3(0, 1, 0);
 const ENVIRONMENT = ORION_ENVIRONMENT_PROFILES[ORION_ACTIVE_TIME_OF_DAY];
@@ -124,8 +126,11 @@ const CLICK_SLOP = 6;
 const AIM_TURN: TurnTuning = { smoothTime: 0.06, maxRate: 900 };
 const WALK_TURN: TurnTuning = { smoothTime: 0.12, maxRate: 600 };
 const RUN_TURN: TurnTuning = { smoothTime: 0.15, maxRate: 540 };
-/** Touch stick: pushed this far it walks at full pace, and at the rim it runs. */
-const STICK_FULL_WALK = 0.6;
+/**
+ * Touch stick: pushed this far it jogs at full pace (a lighter push walks, slower), and at the
+ * rim it runs.
+ */
+const STICK_FULL_JOG = 0.6;
 const STICK_RUN = 0.9;
 /** Browsers follow a tap with a click this long afterwards, at most. */
 const TOUCH_CLICK_WINDOW_MS = 800;
@@ -152,6 +157,9 @@ const CARJACK = {
 
 type PlayerMode = "onFoot" | "carjack" | "driving" | "flying" | "jet";
 
+/** Vehicles with an air horn rather than a car's. */
+const HEAVY_HORNS: ReadonlySet<string> = new Set(["truck", "bus", "schoolBus", "garbageTruck", "fireTruck", "towTruck"]);
+
 function smooth(t: number): number {
 	const k = Math.max(0, Math.min(1, t));
 	return k * k * (3 - 2 * k);
@@ -160,8 +168,9 @@ function smooth(t: number): number {
 export class OrionThirdPersonController extends Script {
 	public static scriptName = "orionThirdPersonController";
 	public camera: Entity | null = null;
-	public walkSpeed = 4.8;
-	public runSpeed = 9.2;
+	/** The everyday pace on foot: an easy jog rather than a walk. Shift (or the stick's rim) runs. */
+	public jogSpeed = 3.6;
+	public runSpeed = 6.2;
 	public acceleration = 16;
 	public braking = 22;
 	public mouseSensitivity = 0.12;
@@ -279,8 +288,17 @@ export class OrionThirdPersonController extends Script {
 		const digit = /^Digit([1-9])$/.exec(event.code);
 		if (digit && !event.repeat) this.combatInput.slotPressed = Number(digit[1]);
 		if (event.code === "KeyR" && !event.repeat) this.combatInput.reloadPressed = true;
+		if (event.code === "KeyH" && !event.repeat) this.soundHorn();
 		this.keys.add(event.code);
 	};
+	/** H at the wheel: a car's horn, or the deep air horn of a lorry or bus. */
+	private soundHorn() {
+		const car = this.car;
+		if (this.mode !== "driving" || !car) return;
+		const heavy = HEAVY_HORNS.has(car.style);
+		const at = car.entity.getPosition();
+		playAt(heavy ? "horn-heavy" : "horn-car", at.x, at.y, at.z, { level: heavy ? 0.9 : 0.75, variation: 0.02, channel: "vehicles" });
+	}
 	private readonly wheel = (event: WheelEvent) => {
 		if ((this.mode !== "onFoot" && this.mode !== "flying" && this.mode !== "jet") || event.deltaY === 0) return;
 		event.preventDefault();
@@ -469,11 +487,12 @@ export class OrionThirdPersonController extends Script {
 		const stick = readTouchHeld();
 		const stickLength = Math.hypot(stick.moveX, stick.moveY);
 		if (axisX === 0 && axisZ === 0 && stickLength > 0) {
-			// Short of the rim the stick walks, at a pace set by how far it's pushed; at the rim it runs.
+			// Short of the rim the stick jogs (or walks, pushed lightly), at a pace set by how far it's
+			// pushed; at the rim it runs.
 			axisX = stick.moveX;
 			axisZ = stick.moveY;
 			running = stickLength >= STICK_RUN;
-			gait = Math.min(1, stickLength / STICK_FULL_WALK);
+			gait = Math.min(1, stickLength / STICK_FULL_JOG);
 		}
 		const axisLength = Math.hypot(axisX, axisZ);
 		const normalizedX = axisLength > 0 ? axisX / axisLength : 0;
@@ -483,7 +502,7 @@ export class OrionThirdPersonController extends Script {
 		// Right-handed, Y-up: facing +Z means right is -X, so this is -cross(forward, up).
 		// The unnegated form sends D to screen-left.
 		this.right.set(-Math.cos(radians), 0, Math.sin(radians));
-		const speed = running ? this.runSpeed : this.walkSpeed * gait;
+		const speed = running ? this.runSpeed : this.jogSpeed * gait;
 		this.desiredVelocity.set(
 			this.forward.x * normalizedZ * speed + this.right.x * normalizedX * speed,
 			0,
@@ -731,6 +750,7 @@ export class OrionThirdPersonController extends Script {
 		// Traffic is mixed here rather than per car: only the nearest few engines are audible, and
 		// which those are can only be decided once the listener has moved for this frame.
 		engineAudio().update(this.lastDelta);
+		ambientAudio().update(this.lastDelta, this.cameraPosition.x, this.cameraPosition.z, this.cameraPosition.y);
 		// Haze for the camera's height: street-level on foot, thinner and sea-blue from the air.
 		updateAtmosphere(this.app.scene, ENVIRONMENT, this.cameraPosition.y);
 		// After the patrol cars have moved: who can see the player, and the sirens of those chasing.

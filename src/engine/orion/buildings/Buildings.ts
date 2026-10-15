@@ -118,24 +118,6 @@ export const ORION_BUILDING_REGISTRY: readonly BuildingDefinition[] = Object.ent
 	yardProps: spec.yard ?? [],
 }));
 
-const definitionsById = new Map(ORION_BUILDING_REGISTRY.map((definition) => [definition.id, definition]));
-
-export function getBuildingDefinition(id: string): BuildingDefinition | undefined {
-	return definitionsById.get(id);
-}
-
-/**
- * Uniform scale that fits a model's own footprint inside its parcel, leaving a small margin.
- * Height follows proportionally, which is why each district draws from a pool of models whose
- * natural proportions already suit it (towers downtown, low-rise shops in the suburbs).
- */
-export function resolveBuildingScale(definition: BuildingDefinition, footprint: readonly [number, number]): number {
-	const [width, depth] = footprint;
-	const [nativeWidth, , nativeDepth] = definition.nativeSize;
-	const fill = 0.92;
-	return Math.min((width * fill) / nativeWidth, (depth * fill) / nativeDepth);
-}
-
 /** Which models suit which district, cycled per placement so neighbouring parcels differ. */
 const DISTRICT_MODEL_POOLS: Readonly<Record<DistrictKind, readonly string[]>> = {
 	downtown: ["tower-b", "tower-d", "tower-a", "tower-c", "block-m", "tower-e"],

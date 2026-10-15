@@ -292,7 +292,7 @@ export default function Home() {
 					<div className="lp-mini-features">
 						<div>
 							<h3>Street races</h3>
-							<p>Three rivals, three races — a downtown circuit, a flat-out Sea Link sprint and a hill climb through the Ghats tunnel. Win and the gold Phoenix is yours.</p>
+							<p>Three rivals, three races — a downtown circuit, a flat-out Sea Link sprint and a hill climb through the Ghats tunnel. Win and the gold Vesper is yours.</p>
 						</div>
 						<div>
 							<h3>Missions with bite</h3>

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { audioBus } from "@/engine/orion/audio/AudioBus";
+
 /**
  * The one loading screen between pressing Play and the city: a progress bar, the step it's on,
  * and a tip to read while the world comes down the wire. `progress` is 0..1 and only ever moves
@@ -14,7 +16,7 @@ const TIPS = [
 	"The air base keeps its jets on the apron and its gunship on the pad.",
 	"Press J for the mission list, M for the map.",
 	"Crash too hard and the car catches fire. Get out before it goes up.",
-	"Win all three street races and the gold Phoenix is yours.",
+	"Win all three street races and the gold Vesper is yours.",
 ];
 
 export function LoadingScreen({ progress, label, done = false, error = false }: Readonly<{ progress: number; label: string; done?: boolean; error?: boolean }>) {
@@ -26,6 +28,11 @@ export function LoadingScreen({ progress, label, done = false, error = false }: 
 		const id = window.setInterval(() => setTip((value) => (value + 1) % TIPS.length), 4500);
 		return () => window.clearInterval(id);
 	}, []);
+
+	// No sound while this screen is up; it fades in as the screen fades out.
+	useEffect(() => {
+		audioBus().setAudible(done);
+	}, [done]);
 
 	useEffect(() => {
 		if (!done) return;

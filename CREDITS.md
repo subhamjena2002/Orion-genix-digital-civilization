@@ -9,14 +9,14 @@ so. An unverified licence is not a licence.
 
 ## Needs resolving before any public release
 
+> **Vehicles:** every road vehicle is an original built in code (see "Made for this project").
+> The third-party vehicle models used before 2026-10-14 (`truck.glb`, `military-wagon.glb`,
+> `phoenix-93-interceptor.glb`, `civic-*.glb`, `civic-sedan-paint.png`) were deleted from
+> `public/` on 2026-10-15, so they are no longer published and their credit obligations ended.
+
 | Asset | Author | Licence | Status |
 |---|---|---|---|
-| `public/models/vehicles/truck.glb` | **unknown** | **unknown** | ⚠️ Supplied as a file with no source page. Nobody has confirmed who made it or on what terms. It must not be redistributed until that is answered — if it can't be, replace the model. |
-| `public/models/vehicles/military-wagon.glb` | Axel Roman (DeathCoreBoy1) | CC-BY-4.0 *(unconfirmed)* | ⚠️ Taken from the Sketchfab page below; confirm against the download dialog. Credit required. |
 | `public/models/characters/player-casual.glb` | ijiklvn | CC-BY-4.0 | ⚠️ Credit required and not yet shown in game. |
-| `public/models/vehicles/phoenix-93-interceptor.glb` ("Phoenix '93 Interceptor – Low poly model") | Daniel Zhabotinsky | CC-BY-4.0 *(from the file's own metadata)* | ⚠️ Credit required and not yet shown in game. Fictional marque; its badge sheet and plates are hidden in game. |
-| `public/models/vehicles/civic-*.glb` (taxi, postal van, road-service truck, tow truck, city bus, school bus, garbage truck, ambulance, fire truck, police sedan — split one per file from "Generic civil service vehicles pack", geometry unchanged) | Comrade1280 | CC-BY-4.0 *(from the file's own metadata)* | ⚠️ Credit required and not yet shown in game. The author states the designs are "completely trademark claim proof"; the liveries are generic words and numbers (TAXI, POLICE, 911, FIRE DEPARTMENT), checked by eye — no marques or badges. |
-| `public/models/vehicles/civic-sedan-paint.png` (the taxi's body texture from the pack above, changed by `scripts/prepare-civic-sedan.mjs`: the yellow paint made neutral grey with a paint mask in its alpha, the chequer band painted out) | Comrade1280 | CC-BY-4.0 | ⚠️ Credit required, as for the pack; this is an adaptation, so the changes are stated here. Used for the plain sedan in missions. In game the Phoenix above is also shown as a plain car (light bar and push bar hidden, livery replaced by flat paint at runtime; the file is unchanged). |
 | `public/models/military/military-base-kit.glb` ("modular militry base low poly game ready") | Salah3D | CC-BY-4.0 *(from the file's own metadata)* | ⚠️ Credit required and not yet shown in game. Generic structures and props; no flags or insignia. |
 | `public/models/aircraft/gunship.glb` ("Boeing AH-64D Apache Combat Helicopter", re-based to metres and split into body, rotors, chin gun and missiles; geometry and textures unchanged) | Muhamad Mirza Arrafi | CC-BY-4.0 *(from the file's own metadata)* | ⚠️ Credit required and not yet shown in game. ⚠️ **Depicts a real aircraft.** The CC-BY licence covers the modeller's work only, not the manufacturer's trademarks or trade dress; used by the owner's decision, under a made-up name ("OG-1 Gunship") with no maker's name shown. Replace with an original design before release to remove the risk. |
 
@@ -24,10 +24,7 @@ so. An unverified licence is not a licence.
 
 Sources:
 
-- military-wagon — <https://sketchfab.com/3d-models/dcb-k-133byat-unbranded-1a37570f3bbf4c31b6c8c1f89fdf3724>
 - player-casual — <https://sketchfab.com/3d-models/casual-male-char-rigged-9034a1acc95e494592441a057d319953>
-- phoenix-93-interceptor — <https://sketchfab.com/3d-models/phoenix-93-interceptor-low-poly-model-ac4a91cb1b184ebd82c598c1bc54ba3d>
-- civic-* — <https://sketchfab.com/3d-models/generic-civil-service-vehicles-pack-8ff2a13f30914932a70c7950cfa58465>
 - military-base-kit — <https://sketchfab.com/3d-models/modular-militry-base-low-poly-game-ready-cc96aa9f48b547df8844074bf14e63fe>
 - gunship — <https://sketchfab.com/3d-models/boeing-ah-64d-apache-combat-helicopter-c3b58008c46b45048fdd7dd283a3c8c8>
 - jet — <https://sketchfab.com/3d-models/fictional-fighterbomber-aircraft-f0b9f656b6964cbf83445484be54a237>
@@ -40,6 +37,42 @@ Sources:
 | `public/textures/polyhaven/*` | Poly Haven | CC0 — no attribution required |
 | `public/environments/hdr/sky_partly_cloudy_2k.hdr` | Poly Haven ("Kloofendal 48d Partly Cloudy") | CC0 |
 
+## Sound effects
+
+`public/audio/*.ogg` are cut, levelled and looped by `scripts/prepare-sounds.py` from studio
+recordings in the **Sonniss GameAudioGDC bundles** (2015, 2020, 2023 and 2024 releases), under the Sonniss GDC
+bundle licence (<https://sonniss.com/gdc-bundle-license/>): royalty-free, commercial use in
+unlimited projects, **no attribution required**. Two conditions bind us: the sounds may not be
+redistributed or resold *as sound effects* (shipping them inside the game is allowed), and they
+may not be used to train AI models. The source WAVs are therefore not kept in the repository.
+
+| Game sounds | Library (publisher) | Bundle |
+|---|---|---|
+| Everyday car engine (`engine-car-*`) | Audi Q2 (Dramatic Cat) | 2024 |
+| Supercar engine (`engine-sport-*`) | Porsche Carrera GT 2005 (Pole Position Production) | 2024 |
+| Diesel engine (`engine-diesel-*`): vans, ambulance, service truck | Magnum 7250 tractor (Dramatic Cat) | 2024 |
+| Truck and bus engine (`engine-truck-*`) | Mercedes-Benz Unimog 437 (Dramatic Cat) | 2023 |
+| Pistol close and distant | Colt Python .357 Magnum (Pole Position Production); Guns (Coll Anderson) | 2024, 2015 |
+| Rifle close, far and distant | AK-74 (FLYSOUND); Guns — M4 shots (Coll Anderson) | 2020, 2015 |
+| Very distant gunfire | AK-74 (FLYSOUND); Mosin-Nagant (FLYSOUND) | 2020 |
+| Bullet fly-bys and impacts (dirt, glass, flesh) | Bullet Bys & Impacts (PMSFX); Hand Guns Sound Effects Pack (Olivier Girardot) | 2020 |
+| Bullets on walls | Shattering Bricks, Rocky Impacts (PMSFX); Debris & Rubble (Eneas Mentzel) | 2020, 2023 |
+| Shell casings | Cartridges & Casings Shell (SculpTunes); Detonation (BluezoneCorp) | 2020, 2023 |
+| Tyre skids | BMW 520i (FLYSOUND) | 2020 |
+| Shotgun, pump | Saiga-12 (Dramatic Cat); Franchi SPAS-12 (Pole Position Production) | 2024 |
+| Rocket; distant explosion | The Warfare 2 Library (Pole Position Production) | 2024 |
+| Explosions | Explosion SFX Pack (David Dumais); Detonation (BluezoneCorp); Guns — mortar (Coll Anderson) | 2024, 2023, 2015 |
+| Crashes, scrapes, glass | Car Destruction (Coll Anderson); Jaws of Life (Secret Source); Glass (Mechanical Wave); Broken Glass (BluezoneCorp) | 2015, 2024, 2023 |
+| Bullet impacts | The Metal Hit Sweeteners Library (Pole Position Production) | 2024 |
+| Reload, hammer, magazine | Desert Eagle .44, Dan Wesson .445 (Pole Position Production); Guns — AR-15 (Coll Anderson) | 2024, 2015 |
+| Punches, whooshes | Hong Kong Action Kit — Hit Kit #1 (NoizBoy); Hits Whoosh (Mechanical Wave) | 2015 |
+| Horns | Audi Q7 (Dramatic Cat); Renault R4 (Justsoundeffects); The Vehicle Doors and More Library — coach horn (Pole Position Production) | 2024 |
+| Car door | 1967 Corvette Convertible Work-Up (Bryan Gold) | 2024 |
+| Sirens | Traditional Sirens (Coll Anderson) | 2015 |
+| Gunship rotor | The Aircraft Ambient Library — military helicopter (Pole Position Production) | 2024 |
+| City street ambience | The 'hood Audio Playset (UberDuo) | 2024 |
+| Surf | Base — waves (Robert Cordova) | 2015 |
+
 ## Removed from the build
 
 Two models were taken out because they copy real manufacturers' cars — see
@@ -51,10 +84,17 @@ added back.
 
 Everything else is original to Orion Genix and carries no third-party claim, including:
 
-- All engine, weapon, impact and crash **audio**, synthesised at runtime from oscillators and
-  noise (`src/engine/orion/audio`, `src/engine/orion/combat/CombatAudio.ts`). Nothing is sampled
-  from any recording — deliberately, because a recording of a real car or firearm belongs to
-  whoever made it.
+- The **synthesised fallback audio** (`src/engine/orion/audio/EngineWorklet.ts`, the synths in
+  `src/engine/orion/combat/CombatAudio.ts`, `PoliceSirens.ts`, `GunshipAudio.ts`), which plays
+  until the recordings below have loaded.
+- The **Vesper GT** supercar (`public/models/vehicles/vesper-gt.glb`), an original design built
+  in code by `scripts/build-supercar.mjs`.
+- **Every other road vehicle** (`public/models/vehicles/orion-*.glb`: sedan, taxi, patrol car,
+  utility wagon, panel van, ambulance, service truck, tow truck, box lorry, refuse truck, fire
+  engine, city bus, school bus), original generic designs built in code by
+  `scripts/build-vehicles.mjs` on the shared kit in `scripts/vehicle-kit.mjs`. No textures beyond
+  a generated 4-pixel finish palette; liveries are plain colours and patterns, no lettering or
+  marques.
 - The **railway** — track bed, sleepers, rails and level-crossing hardware — generated as
   geometry in `src/engine/orion/rail/RailMeshes.ts`.
 - The road network, buildings layout, street furniture and traffic signals.

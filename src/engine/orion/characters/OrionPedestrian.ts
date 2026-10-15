@@ -38,9 +38,13 @@ const RESPAWN_ATTEMPTS = 12;
 /** Walk cycles pause while nobody could see them. */
 const ANIMATION_RANGE = 90;
 
-/** Materials that should never be tinted — eyes and metal trim read wrong recoloured. */
-const UNTINTED = ["eye", "metal", "gold", "white"];
-/** Ground speed the walk clip looks natural at; playback scales around it. */
+/**
+ * Materials that should never be tinted — eyes and metal trim read wrong recoloured, and the
+ * women's packs' Black/Brown parts are shoes, boots and belts: dyed the shirt's colour, every
+ * outfit came out one colour from cap to shoes.
+ */
+const UNTINTED = ["eye", "metal", "gold", "white", "black", "brown"];
+/** Ground speed a walk clip looks natural at, unless the spawn says otherwise (walkSpeed). */
 const REFERENCE_WALK_SPEED = 1.5;
 /** Ground speed the run clip looks natural at. */
 const REFERENCE_RUN_SPEED = 4;
@@ -163,6 +167,8 @@ export class OrionPedestrian extends Script {
 
 	public asset: Asset | null = null;
 	public speed = 1.3;
+	/** Ground speed (m/s) this model's walk clip covers at its authored rate; playback scales by speed / walkSpeed. */
+	public walkSpeed = REFERENCE_WALK_SPEED;
 	public seed = 1;
 	public palette: PedestrianPalette | null = null;
 	/**
@@ -431,7 +437,7 @@ export class OrionPedestrian extends Script {
 		const anim = this.animRoot?.anim;
 		if (anim && !waiting) {
 			anim.speed = this.limping
-				? this.walkRate((this.speed * pace) / REFERENCE_WALK_SPEED)
+				? this.walkRate((this.speed * pace) / this.walkSpeed)
 				: fleeing ? Math.max(0.8, (this.speed * pace) / REFERENCE_RUN_SPEED) : this.walkRate(pace * speedFactor);
 		}
 		if (this.agent) {
@@ -1209,10 +1215,10 @@ export class OrionPedestrian extends Script {
 		const anim = model.anim;
 		if (!anim) return;
 		const find = (pattern: RegExp) => animations.find((clip) => pattern.test((clip.resource as AnimTrack | undefined)?.name ?? ""));
-		// Match playback to ground speed so the feet don't skate. The clip is authored for a
-		// roughly 1.5 u/s stroll, so anyone slower or faster plays proportionally.
+		// Match playback to ground speed so the feet don't skate: the clip covers walkSpeed at its
+		// authored rate, so anyone slower or faster plays proportionally.
 		const roles: [string, RegExp, boolean, number][] = [
-			["Walk", /walk$/i, true, this.speed / REFERENCE_WALK_SPEED],
+			["Walk", /walk$/i, true, this.speed / this.walkSpeed],
 			["Idle", /(^|[|_])idle$/i, true, 1],
 			["Run", /(^|[|_])run$/i, true, 1],
 			["Punch", /punch(_right)?$/i, true, 1.2],

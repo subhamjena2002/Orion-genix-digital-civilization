@@ -108,7 +108,10 @@ export function installRenderPipeline(app: AppBase, component: CameraComponent):
 		frame.update();
 		const light = keyLight();
 		const resolution = Math.min(level.shadowResolution, settings.shadowAtlasSize);
-		if (light && light.shadowResolution !== resolution) light.shadowResolution = resolution;
+		if (light && light.shadowResolution !== resolution) {
+			light.shadowResolution = resolution;
+			light.normalOffsetBias = shadowNormalOffset(resolution);
+		}
 		setActiveQuality(level);
 	};
 	apply(QUALITY_LEVELS[settings.adaptiveQuality ? governor.level : 0]);
@@ -191,6 +194,17 @@ function configureSunShadows(light: LightComponent | null, settings: GraphicsSet
 	// were wiped the next time that component re-rendered. Only the atlas size is driven from
 	// this side, because adaptive quality changes it while the game runs.
 	light.shadowResolution = Math.min(light.shadowResolution, settings.shadowAtlasSize);
+	light.normalOffsetBias = shadowNormalOffset(light.shadowResolution);
+}
+
+/**
+ * The sun's normal offset for a shadow atlas of `resolution` texels a side. The offset has to
+ * cover a shadow texel, and a smaller atlas has bigger texels: at 1024 the 2048 value left the
+ * stripes of shadow acne back on every car side. 0.04 at 2048 (as set on the <Light> in
+ * OrionCanvas), scaled with texel size.
+ */
+export function shadowNormalOffset(resolution: number): number {
+	return 0.04 * (2048 / Math.max(256, resolution));
 }
 
 /**

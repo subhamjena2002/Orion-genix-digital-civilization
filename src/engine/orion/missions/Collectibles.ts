@@ -34,7 +34,7 @@ export const MANIFESTS: readonly Manifest[] = [
 	{ id: "manifest-3", x: 247.5, z: -87.5, text: "Sunset Park parcels 3 to 19: 'acquisition pending tenant cooperation'." },
 	{ id: "manifest-4", x: -327.5, z: 232.5, text: "Cinder Boys — monthly retainer. Cost centre: Community Relations." },
 	{ id: "manifest-5", x: 392.5, z: 7.5, text: "Twelve crates, army stencils painted over. Driver: J. Ruelle." },
-	{ id: "manifest-6", x: -7.5, z: -247.5, text: "Kasper Motors: client vehicle, silver Phoenix. Retrieve the item in the glovebox." },
+	{ id: "manifest-6", x: -7.5, z: -247.5, text: "Kasper Motors: client vehicle, silver Vesper. Retrieve the item in the glovebox." },
 	{ id: "manifest-7", ...highwayEnd("sea-link", 30, -8), text: "Depot ledger moved to the Sea Link office. Paper only. Mr. Crane insists." },
 	{ id: "manifest-8", ...highwayEnd("ghats-expressway", 30, 8), text: "Lookout site: 'temporary storage'. For what, the page doesn't say." },
 	{ id: "manifest-9", x: -195, z: 384, text: "Payment to an informant at Kasper Motors: two thousand, 'consulting'." },

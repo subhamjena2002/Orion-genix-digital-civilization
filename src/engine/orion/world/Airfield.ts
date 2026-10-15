@@ -64,7 +64,6 @@ export const SHELTERS: readonly { id: string; backX: number; z: number }[] = [49
 	backX: 95,
 	z,
 }));
-const SHELTER_DOOR_X = SHELTERS[0].backX + SHELTER.depth;
 
 export const CONTROL_TOWER = {
 	x: 105,
@@ -340,6 +339,3 @@ function addFacingTriangle(mesh: MeshData, a: number, b: number, c: number): voi
 	if (facesAlong(mesh, windingNormal(mesh, a, b, c), b)) mesh.indices.push(a, b, c);
 	else mesh.indices.push(a, c, b);
 }
-
-/** Where the shelter doors are, for anything that needs to line up with them. */
-export const SHELTER_DOOR = { x: SHELTER_DOOR_X, width: SHELTER.width - 2 * SHELTER.wall };

@@ -39,7 +39,7 @@ export const FACTION_NAMES: Readonly<Record<Faction, string>> = {
 	meridian: "Meridian",
 };
 
-/** What a mission pays, as lines: "$1,500", "Shotgun", "Red Phoenix in your garage", "Street +1". */
+/** What a mission pays, as lines: "$1,500", "Shotgun", "Red Vesper in your garage", "Street +1". */
 export function rewardLines(reward: MissionReward, withRep = false): string[] {
 	const lines: string[] = [];
 	if (reward.cash) lines.push(formatCash(reward.cash));

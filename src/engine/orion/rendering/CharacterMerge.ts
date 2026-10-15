@@ -23,8 +23,9 @@ import {
  * drivers and police that was the largest share of the frame's draw calls.
  *
  * The materials are flat colours (no textures), so each part's colour is baked into its vertices
- * and the parts are joined into one skinned mesh sharing the original skin. The look is
- * unchanged: same colours, same shape, same animation; only per-part gloss is unified.
+ * and the parts are joined into one skinned mesh sharing the original skin. Each part's
+ * roughness goes into the vertex colour's alpha, which the merged material reads as its gloss
+ * (see partRoughness), so skin, hair and cloth still each have their own sheen.
  *
  * Call after the character has been tinted and its bounds fixed. Parts that can't be joined (a
  * textured material, a different skin or vertex layout) are left as they are.
@@ -35,6 +36,16 @@ import {
 export function mergeCharacterMaterials(root: Entity, device: GraphicsDevice): void {
 	for (const render of root.findComponents("render") as RenderComponent[]) {
 		const instances = render.meshInstances;
+		// Parts that stay separate get the same fabric/skin/hair finish on their own material.
+		for (const instance of instances) {
+			const material = instance.material;
+			if (!(material instanceof StandardMaterial) || material.diffuseMap || material.glossVertexColor) continue;
+			const roughness = partRoughness(material);
+			if (material.glossInvert && Math.abs(material.gloss - roughness) > 1e-3) {
+				material.gloss = roughness;
+				material.update();
+			}
+		}
 		if (instances.length < 2) continue;
 		const skin = instances[0].skinInstance;
 		const hash = instances[0].mesh.vertexBuffer?.format.batchingHash;
@@ -89,11 +100,12 @@ function mergeSkinnedParts(device: GraphicsDevice, parts: readonly MeshInstance[
 		const r = Math.round(Math.min(1, diffuse.r) * 255);
 		const g = Math.round(Math.min(1, diffuse.g) * 255);
 		const b = Math.round(Math.min(1, diffuse.b) * 255);
+		const rough = Math.round(partRoughness(part.material as StandardMaterial) * 255);
 		for (let i = vertexBase; i < vertexBase + count; i++) {
 			colours[i * 4] = r;
 			colours[i * 4 + 1] = g;
 			colours[i * 4 + 2] = b;
-			colours[i * 4 + 3] = 255;
+			colours[i * 4 + 3] = rough;
 		}
 		const primitive = mesh.primitive[0];
 		const indexBuffer = mesh.indexBuffer[0];
@@ -124,9 +136,30 @@ function mergeSkinnedParts(device: GraphicsDevice, parts: readonly MeshInstance[
 	material.name = "character-merged";
 	material.diffuse.set(1, 1, 1);
 	material.diffuseVertexColor = true;
+	// Roughness per part, from the vertex alpha (glossInvert: the "gloss" read is roughness).
+	material.gloss = 1;
+	material.glossInvert = true;
+	material.glossVertexColor = true;
+	material.glossVertexColorChannel = "a";
 	material.update();
 
 	const instance = new MeshInstance(mesh, material, first.node);
 	instance.skinInstance = skin;
 	return instance;
+}
+
+/**
+ * How rough a character part is, from its material's name. Every character pack here exports
+ * one roughness (0.27 or 0.42) for every part, skin and hair and cloth alike, which made the
+ * whole crowd look moulded from wet plastic: trousers shone like latex. Clothes and shoes are
+ * nearly matte; skin has a soft sheen, hair a little more, eyes are wet. The women's packs name
+ * their cloth by colour (Red, Black, Worker_Vest...), so anything not recognised is cloth.
+ */
+export function partRoughness(material: StandardMaterial): number {
+	const name = (material.name ?? "").toLowerCase();
+	if (name.includes("eye")) return 0.15;
+	if (name.includes("skin")) return 0.55;
+	if (name.includes("hair")) return 0.5;
+	if (name.includes("gold")) return 0.3;
+	return 0.85;
 }

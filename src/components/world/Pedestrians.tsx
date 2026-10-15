@@ -27,13 +27,13 @@ export const Pedestrians = memo(function Pedestrians() {
 const HOSTILE_PALETTE = { skin: "#8d5a3b", shirt: "#a31515", pants: "#1c1c1f", hair: "#141010" };
 const CITIZEN = "/models/characters/orion-citizen";
 /** The models a mission's people can wear, each scaled to human height (see Pedestrians). */
-const PERSON_MODELS: Readonly<Record<NonNullable<PersonLook["model"]>, { path: string; scale: number }>> = {
-	manCasual: { path: `${CITIZEN}/orion-citizen-casual.glb`, scale: 1.8 / 4.74 },
-	man: { path: `${CITIZEN}/orion-citizen.glb`, scale: 1.8 / 4.75 },
-	woman: { path: `${CITIZEN}/citizen-woman-a.glb`, scale: 1 },
-	womanSuit: { path: `${CITIZEN}/citizen-woman-suit.glb`, scale: 1 },
-	womanWorker: { path: `${CITIZEN}/citizen-woman-worker.glb`, scale: 1 },
-	womanCasual: { path: `${CITIZEN}/citizen-woman-casual.glb`, scale: 1 },
+const PERSON_MODELS: Readonly<Record<NonNullable<PersonLook["model"]>, { path: string; scale: number; walkSpeed: number }>> = {
+	manCasual: { path: `${CITIZEN}/orion-citizen-casual.glb`, scale: 1.8 / 4.74, walkSpeed: 1.5 },
+	man: { path: `${CITIZEN}/orion-citizen.glb`, scale: 1.8 / 4.75, walkSpeed: 1.5 },
+	woman: { path: `${CITIZEN}/citizen-woman-a.glb`, scale: 1, walkSpeed: 1 },
+	womanSuit: { path: `${CITIZEN}/citizen-woman-suit.glb`, scale: 1, walkSpeed: 1 },
+	womanWorker: { path: `${CITIZEN}/citizen-woman-worker.glb`, scale: 1, walkSpeed: 1 },
+	womanCasual: { path: `${CITIZEN}/citizen-woman-casual.glb`, scale: 1, walkSpeed: 1 },
 };
 
 /**
@@ -46,7 +46,7 @@ const MISSION_HOSTILES: readonly PedestrianSpawn[] = [
 		.flatMap((spawn) => spawn.type === "hostile" ? [[spawn.id, spawn] as const] : [])).values(),
 ].map((spawn, index) => {
 	const model = PERSON_MODELS[spawn.model ?? "manCasual"];
-	return { id: spawn.id, assetPath: model.path, scale: model.scale, speed: 1.3, seed: 7717 * (index + 1), palette: spawn.palette ?? HOSTILE_PALETTE };
+	return { id: spawn.id, assetPath: model.path, scale: model.scale, speed: 1.3, walkSpeed: model.walkSpeed, seed: 7717 * (index + 1), palette: spawn.palette ?? HOSTILE_PALETTE };
 });
 
 /** A mission's hostiles (see OrionPedestrian.placeForMission). */
@@ -69,6 +69,7 @@ function PedestrianVisual({ person, missionSlot = -1 }: Readonly<{ person: Pedes
 				script={OrionPedestrian}
 				asset={asset}
 				speed={person.speed}
+				walkSpeed={person.walkSpeed}
 				seed={person.seed}
 				palette={person.palette}
 				missionSlot={missionSlot}

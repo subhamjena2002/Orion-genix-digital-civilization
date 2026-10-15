@@ -139,6 +139,102 @@ export class MeshBuilder {
 		return this;
 	}
 
+	/**
+	 * A round tube between two points, tapering from `radiusFrom` to `radiusTo`: a pole, an arm, a
+	 * lamp's visor. Open at the ends unless `capped`. `openBelow` (radians) leaves a slot that wide
+	 * along the underside of a lying tube, as a signal's visor is cut away beneath.
+	 */
+	addTube(from: readonly [number, number, number], to: readonly [number, number, number], radiusFrom: number, radiusTo: number, segments = 12, capped = false, openBelow = 0): this {
+		const ax = to[0] - from[0];
+		const ay = to[1] - from[1];
+		const az = to[2] - from[2];
+		const length = Math.hypot(ax, ay, az) || 1;
+		const [dx, dy, dz] = [ax / length, ay / length, az / length];
+		// Two directions across the axis: any helper not parallel to it, crossed twice.
+		const [hx, hy, hz] = Math.abs(dy) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+		let ux = dy * hz - dz * hy;
+		let uy = dz * hx - dx * hz;
+		let uz = dx * hy - dy * hx;
+		const ul = Math.hypot(ux, uy, uz);
+		ux /= ul;
+		uy /= ul;
+		uz /= ul;
+		const vx = dy * uz - dz * uy;
+		const vy = dz * ux - dx * uz;
+		const vz = dx * uy - dy * ux;
+		const ring = (centre: readonly [number, number, number], radius: number, angle: number): [number, number, number, number, number, number] => {
+			const c = Math.cos(angle);
+			const s = Math.sin(angle);
+			const nx = ux * c + vx * s;
+			const ny = uy * c + vy * s;
+			const nz = uz * c + vz * s;
+			return [centre[0] + nx * radius, centre[1] + ny * radius, centre[2] + nz * radius, nx, ny, nz];
+		};
+		const base = this.positions.length / 3;
+		// Angle π/2 is straight down for a lying tube (v points down there): the slot is centred on it.
+		const arcStart = Math.PI / 2 + openBelow / 2;
+		const arc = Math.PI * 2 - openBelow;
+		for (let i = 0; i <= segments; i++) {
+			const angle = arcStart + (i / segments) * arc;
+			for (const [centre, radius, v] of [[from, radiusFrom, 0], [to, radiusTo, 1]] as const) {
+				const [x, y, z, nx, ny, nz] = ring(centre, radius, angle);
+				this.positions.push(x, y, z);
+				this.normals.push(nx, ny, nz);
+				this.uvs.push(i / segments, v);
+				this.colors.push(...this.colour);
+			}
+		}
+		for (let i = 0; i < segments; i++) {
+			const a = base + i * 2;
+			this.indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+		}
+		if (capped && openBelow === 0) {
+			for (const [centre, radius, sign] of [[from, radiusFrom, -1], [to, radiusTo, 1]] as const) {
+				const middle = this.positions.length / 3;
+				this.positions.push(centre[0], centre[1], centre[2]);
+				this.normals.push(dx * sign, dy * sign, dz * sign);
+				this.uvs.push(0.5, 0.5);
+				this.colors.push(...this.colour);
+				for (let i = 0; i < segments; i++) {
+					const [x, y, z] = ring(centre, radius, (i / segments) * Math.PI * 2);
+					this.positions.push(x, y, z);
+					this.normals.push(dx * sign, dy * sign, dz * sign);
+					this.uvs.push(0.5, 0.5);
+					this.colors.push(...this.colour);
+				}
+				for (let i = 0; i < segments; i++) {
+					const a = middle + 1 + i;
+					const b = middle + 1 + ((i + 1) % segments);
+					if (sign > 0) this.indices.push(middle, a, b);
+					else this.indices.push(middle, b, a);
+				}
+			}
+		}
+		return this;
+	}
+
+	/**
+	 * An upright rectangle facing the horizontal direction (`facingX`, `facingZ`), its texture the
+	 * right way round for someone looking at it: u runs left to right, v bottom to top.
+	 */
+	addQuad(center: readonly [number, number, number], width: number, height: number, facingX: number, facingZ: number): this {
+		const length = Math.hypot(facingX, facingZ) || 1;
+		const nx = facingX / length;
+		const nz = facingZ / length;
+		// The viewer's right, looking back along the facing.
+		const rx = nz;
+		const rz = -nx;
+		const base = this.positions.length / 3;
+		for (const [su, sv] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+			this.positions.push(center[0] + rx * su * width / 2, center[1] + sv * height / 2, center[2] + rz * su * width / 2);
+			this.normals.push(nx, 0, nz);
+			this.uvs.push((su + 1) / 2, (sv + 1) / 2);
+			this.colors.push(...this.colour);
+		}
+		this.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+		return this;
+	}
+
 	build(device: GraphicsDevice): Mesh {
 		const mesh = new Mesh(device);
 		mesh.setPositions(this.positions);

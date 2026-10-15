@@ -24,25 +24,6 @@ import { simplifyInBackground, visibilityInBackground } from "../rendering/lod/S
 import { shadowOnlyLayer } from "../rendering/ShadowOnlyLayer";
 import { averageColour, releasedAverageColour } from "../rendering/TextureBudget";
 import { BRAKE_LIGHT_MATERIAL, HEADLIGHT_MATERIAL, SIREN_MATERIAL } from "./VehicleModels";
-
-/**
- * Levels of detail for detailed (GLB) cars.
- *
- * LOD0 is the car as loaded: merged body plus separately moving wheels, doors and windows.
- * The simplified levels are the whole car in its rest pose, simplified per material with an
- * error budget below about half a pixel at the size each level switches in:
- *
- *   LOD1  every material kept, ~1.5 cm error        (traffic from ~25 m at 1080p)
- *   LOD2  every material kept, small pieces pruned  (~60 m)
- *   LOD3  one vertex-coloured mesh for the opaque body, plus glass and lamps (~150 m):
- *         a handful of draw calls instead of ~80, still the car's shape and colours.
- *
- * Meshes are built once per model (and paint, where the fleet recolours it) off the main
- * thread, then shared; each car only adds mesh instances using its own materials.
- */
-
-/** Simplified levels after LOD0. */
-export const VEHICLE_SIMPLIFIED_LEVELS = 3;
 /** At LOD2 and LOD3 a material simplified below this is a speck, not worth its draw call. */
 const MIN_FAR_TRIANGLES = 6;
 
@@ -229,10 +210,6 @@ export function createLodEntities(app: AppBase, parent: Entity, meshes: LodMeshe
 	return { levels, shadowProxy };
 }
 
-export function lodTriangles(meshes: LodMeshes): readonly number[] {
-	return meshes.triangles;
-}
-
 /** Car paint, flattened: colour comes from the vertices, lacquer from the material. */
 function sharedFlatMaterial(): StandardMaterial {
 	if (flatMaterial) return flatMaterial;
@@ -260,18 +237,24 @@ function packedPositions(geometry: MergedGeometry): Float32Array {
 	return packed;
 }
 
-/** Positions and normals of `geometry`, with every vertex painted `colour` (sRGB, 0–1). */
+/**
+ * Positions and normals of `geometry`, with every vertex painted `colour` (sRGB, 0–1) — times
+ * the vertex colours it already has. Models built in code (scripts/build-vehicles.mjs) carry
+ * their trims' and metals' colours in the vertices under one white material; painted flat,
+ * those all came out white at this level.
+ */
 function withFlatColour(geometry: MergedGeometry, colour: readonly [number, number, number]): MergedGeometry {
 	const position = geometry.streams.find((stream) => stream.semantic === SEMANTIC_POSITION)!;
 	const normal = geometry.streams.find((stream) => stream.semantic === SEMANTIC_NORMAL);
+	const own = geometry.streams.find((stream) => stream.semantic === SEMANTIC_COLOR);
+	// Unsigned bytes normalised to 0–1, or floats.
+	const ownScale = own && own.dataType === TYPE_UINT8 ? 1 / 255 : 1;
 	const colours = new Uint8Array(geometry.vertexCount * 4);
-	const r = Math.round(colour[0] * 255);
-	const g = Math.round(colour[1] * 255);
-	const b = Math.round(colour[2] * 255);
 	for (let i = 0; i < geometry.vertexCount; i++) {
-		colours[i * 4] = r;
-		colours[i * 4 + 1] = g;
-		colours[i * 4 + 2] = b;
+		for (let c = 0; c < 3; c++) {
+			const tint = own ? Math.min(1, own.data[i * own.components + c] * ownScale) : 1;
+			colours[i * 4 + c] = Math.round(colour[c] * tint * 255);
+		}
 		colours[i * 4 + 3] = 255;
 	}
 	const streams: MergedStream[] = [

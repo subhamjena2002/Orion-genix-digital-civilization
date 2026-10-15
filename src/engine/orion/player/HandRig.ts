@@ -19,8 +19,6 @@ export interface FingerCurl {
 	pinky: number;
 }
 
-export const OPEN_HAND: FingerCurl = { thumb: 0, index: 0, middle: 0, ring: 0, pinky: 0 };
-
 const FINGERS = ["index", "middle", "ring", "pinky", "thumb"] as const;
 const BONE_NAMES: Readonly<Record<(typeof FINGERS)[number], string>> = { index: "Index", middle: "Mid", ring: "Ring", pinky: "Pinky", thumb: "Thumb" };
 /** How far each joint bends at a full curl, degrees: base knuckle, middle, tip. */

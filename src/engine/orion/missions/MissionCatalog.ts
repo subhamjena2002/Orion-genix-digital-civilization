@@ -18,7 +18,7 @@ import type { Checkpoint, Line, MissionDefinition, MissionSpawn, PersonLook } fr
  * — decide who stands with them at the end, and what's waiting at Crane's door.
  *
  * Alongside: Tomas Quill's sprint and Rosa Vega's street races, and the street jobs (JOBS) that
- * turn up as leads between missions. Timings are set from the cars' measured pace (the Phoenix
+ * turn up as leads between missions. Timings are set from the cars' measured pace (the Vesper
  * tops 60 m/s, the sedan pulls about 4 m/s²) so each clock leaves room for a clean run and not
  * much more.
  */
@@ -110,7 +110,7 @@ const HIGHWAY_LANE = HIGHWAY_GEOMETRY.median / 2 + HIGHWAY_GEOMETRY.laneWidth;
 
 /**
  * A chased car's driver gives up once it's knocked below this condition. Crashes cost what they
- * would for real: a sedan ramming a Phoenix takes about 1 point off it at 10 m/s closing, 2 at 15
+ * would for real: a sedan ramming a Vesper takes about 1 point off it at 10 m/s closing, 2 at 15
  * and 4–5 in a T-bone at 20, and a pistol round from the kerb 5 — so this is a few good hits
  * through the corners, where the driver has to slow.
  */
@@ -172,7 +172,7 @@ const COLD_OPEN: MissionDefinition = {
 	id: "cold-open",
 	title: "Cold Open",
 	giver: { name: "Benny Kasper", role: "Fixer · Kasper Motors", ...KASPER },
-	briefing: "Kid — you're the new driver? Good timing. Somebody just drove my client's silver Phoenix off my lot. Take my car, catch him, and bring it back. Bent is fine. Gone is not.",
+	briefing: "Kid — you're the new driver? Good timing. Somebody just drove my client's silver Vesper off my lot. Take my car, catch him, and bring it back. Bent is fine. Gone is not.",
 	spawns: [
 		BENNY_CAR,
 		// Slower than Benny's sedan on the straights, so it's caught in town or on the ramp, not at the top.
@@ -185,7 +185,7 @@ const COLD_OPEN: MissionDefinition = {
 		{
 			step: "chase",
 			kind: "disable",
-			label: "Ram the silver Phoenix until it stops",
+			label: "Ram the silver Vesper until it stops",
 			targets: ["cold-target"],
 			below: GIVES_UP_BELOW,
 			x: THIEF_ROUTE[0][0],
@@ -193,10 +193,10 @@ const COLD_OPEN: MissionDefinition = {
 			say: [{ who: BENNY, text: "He's a pro — he won't stop for a honk. Put him into something." }],
 			done: [{ who: BENNY, text: "He's stopped! Get my client's car before he gets ideas." }],
 		},
-		{ kind: "enterVehicle", label: "Pull the thief out and take the Phoenix", vehicle: "cold-target", x: 0, z: 0, timeLimit: 60 },
+		{ kind: "enterVehicle", label: "Pull the thief out and take the Vesper", vehicle: "cold-target", x: 0, z: 0, timeLimit: 60 },
 		{
 			kind: "deliver",
-			label: "Bring the Phoenix back to Kasper Motors",
+			label: "Bring the Vesper back to Kasper Motors",
 			vehicle: "cold-target",
 			x: KASPER_YARD.x,
 			z: KASPER_YARD.z,
@@ -458,7 +458,7 @@ const TAILGATE: MissionDefinition = {
 			radius: 20,
 			timeLimit: 120,
 			spawns: BUYERS,
-			done: [{ who: STATIC, text: "Black Phoenix pulling out. That's him. Hang back." }],
+			done: [{ who: STATIC, text: "Black Vesper pulling out. That's him. Hang back." }],
 		},
 		// Jax cruises at about 16 m/s: 95 m is six seconds behind, so a red light he made costs the tail.
 		{ step: "tail", kind: "tail", label: "Follow Jax without being seen", target: "jax-car", near: 22, far: 95, spotted: "chase" },
@@ -484,7 +484,7 @@ const TAILGATE: MissionDefinition = {
 		{ step: "bolt", kind: "disable", label: "Stop Jax before he crosses the Sea Link", targets: ["jax-car"], below: GIVES_UP_BELOW, x: MEET.x, z: MEET.z, next: "jax" },
 		{ step: "mark", kind: "inspect", label: "Get the buyers' plates — stay back", ...MEET, radius: 45, seconds: 4, on: "either", say: [{ who: STATIC, text: "Close enough to read a plate, far enough not to be shot. You know. Easy." }] },
 		{ kind: "leave", label: "Slip away", ...MEET, radius: 160, next: "pass", done: [{ who: KINCAID, text: "Plates came through. Two Meridian accountants and a man with no fingerprints. Thanks." }] },
-		{ step: "chase", kind: "disable", label: "He's made you — stop the black Phoenix", targets: ["jax-car"], below: GIVES_UP_BELOW, x: MEET.x, z: MEET.z, timeLimit: 150 },
+		{ step: "chase", kind: "disable", label: "He's made you — stop the black Vesper", targets: ["jax-car"], below: GIVES_UP_BELOW, x: MEET.x, z: MEET.z, timeLimit: 150 },
 		{ step: "jax", kind: "inspect", label: "Drag Jax out of the car", person: "jax-car", x: MEET.x, z: MEET.z, radius: 7, seconds: 2.5, done: [{ who: JAX, text: "Fine. You can drive. Now what?" }] },
 		{
 			kind: "choice",
@@ -648,7 +648,7 @@ const MERIDIAN_JOB: MissionDefinition = {
 			radius: 3,
 			seconds: 3,
 			checkpoint: { x: TOWER.x - 12, z: TOWER.z + 14, yaw: 90 },
-			done: [{ who: STATIC, text: "He's not in there — garage door's open! White Phoenix, heading for the Sea Link!" }],
+			done: [{ who: STATIC, text: "He's not in there — garage door's open! White Vesper, heading for the Sea Link!" }],
 		},
 		{ step: "flight", kind: "disable", label: "Stop Crane's car before he reaches the depot", targets: ["crane-car"], below: GIVES_UP_BELOW, x: CRANE_START.x, z: CRANE_START.z },
 		{ kind: "inspect", label: "Drag Crane out", person: "crane-car", x: CRANE_START.x, z: CRANE_START.z, radius: 7, seconds: 2.5, done: [{ who: CRANE, text: "Let's be adults. Everyone has a number. What's yours?" }] },
@@ -683,7 +683,7 @@ const MERIDIAN_JOB: MissionDefinition = {
 		{ id: "benny-car", label: "Keep Benny's car above 35%", kind: "intact", min: 35, vehicle: "benny-car" },
 		{ id: "quick", label: "Done inside 8:00", kind: "time", seconds: 480 },
 	],
-	reward: { cash: 8000, rep: { street: 2 }, vehicles: [{ id: "reward-white-phoenix", style: "luxury", colour: "#ece8df", name: "White Phoenix" }] },
+	reward: { cash: 8000, rep: { street: 2 }, vehicles: [{ id: "reward-white-vesper", style: "luxury", colour: "#ece8df", name: "White Vesper" }] },
 };
 
 // ---- The story's existing jobs ---------------------------------------------------------------------
@@ -735,13 +735,13 @@ const JET_STAND = STANDS[1];
 
 // ---- Street races ---------------------------------------------------------------------------------
 
-/** The same three rivals turn up to every race, each in their own Phoenix. */
+/** The same three rivals turn up to every race, each in their own Vesper. */
 const RIVALS: readonly { id: string; colour: string }[] = [
 	{ id: "racer-1", colour: "#f2c14e" },
 	{ id: "racer-2", colour: "#2f7fd6" },
 	{ id: "racer-3", colour: "#2e9e5b" },
 ];
-/** The Phoenix the player races in, waiting on the grid. */
+/** The Vesper the player races in, waiting on the grid. */
 const RACE_CAR = { id: "race-coupe", style: "luxury" as VehicleStyle, colour: "#e8e8e8" };
 
 interface RaceLayout {
@@ -783,7 +783,7 @@ function raceMission(race: RaceLayout, mission: Omit<MissionDefinition, "objecti
 		spawns: [{ type: "vehicle", id: RACE_CAR.id, style: RACE_CAR.style, colour: RACE_CAR.colour, x, z, yaw: race.yaw }, ...racers(race)],
 		protect: [RACE_CAR.id],
 		objectives: [
-			{ kind: "enterVehicle", label: "Get in the white Phoenix on the grid", vehicle: RACE_CAR.id, x, z, timeLimit: 60 },
+			{ kind: "enterVehicle", label: "Get in the white Vesper on the grid", vehicle: RACE_CAR.id, x, z, timeLimit: 60 },
 			{
 				kind: "race",
 				label: "Win the race",
@@ -944,14 +944,14 @@ export const MISSIONS: readonly MissionDefinition[] = [
 		title: "Coastal Sprint",
 		chapter: "side",
 		giver: { name: "Tomas Quill", role: "Collector · hates Silas Crane", x: 372, z: -151 },
-		briefing: "Crane outbid me on a car once. I've hated him professionally ever since — and anyone who annoys him is a friend. My Phoenix, the sea link, the far end in thirty seconds. Beat the clock and she's yours.",
+		briefing: "Crane outbid me on a car once. I've hated him professionally ever since — and anyone who annoys him is a friend. My Vesper, the sea link, the far end in thirty seconds. Beat the clock and she's yours.",
 		requires: ["clean-wheels"],
-		reward: { cash: 750, vehicles: [{ id: "reward-coupe", style: "luxury", colour: "#b3121b", name: "Red Phoenix" }] },
+		reward: { cash: 750, vehicles: [{ id: "reward-coupe", style: "luxury", colour: "#b3121b", name: "Red Vesper" }] },
 		timed: true,
 		spawns: [{ type: "vehicle", id: "m4-coupe", style: "luxury", colour: "#b3121b", x: 382, z: -163.5, yaw: 90 }],
 		protect: ["m4-coupe"],
 		objectives: [
-			{ kind: "enterVehicle", label: "Get in the red Phoenix", vehicle: "m4-coupe", x: 382, z: -163.5 },
+			{ kind: "enterVehicle", label: "Get in the red Vesper", vehicle: "m4-coupe", x: 382, z: -163.5 },
 			{ kind: "checkpoints", label: "Race the sea link", points: SPRINT_CHECKPOINTS, timeLimit: 30 },
 		],
 		outro: [{ who: QUILL, text: "Magnificent. Keep her. Send Crane a photo." }],
@@ -978,9 +978,9 @@ export const MISSIONS: readonly MissionDefinition[] = [
 		id: "ghats-hillclimb",
 		title: "Ghats Hillclimb",
 		giver: { name: "Rosa \"Redline\" Vega", role: "Street racing", x: -320, z: -9 },
-		briefing: "Up the Ghats, through the tunnel, to the top. They know every bend. Beat them and the gold Phoenix is yours.",
+		briefing: "Up the Ghats, through the tunnel, to the top. They know every bend. Beat them and the gold Vesper is yours.",
 		requires: ["sea-link-showdown"],
-		reward: { cash: 4000, rep: { street: 2 }, vehicles: [{ id: "reward-gold-coupe", style: "luxury", colour: "#c9a227", name: "Gold Phoenix" }] },
+		reward: { cash: 4000, rep: { street: 2 }, vehicles: [{ id: "reward-gold-coupe", style: "luxury", colour: "#c9a227", name: "Gold Vesper" }] },
 		outro: [{ who: ROSA, text: "Gold suits you. Don't let it go to your head — let it go to your garage." }],
 	}),
 ];

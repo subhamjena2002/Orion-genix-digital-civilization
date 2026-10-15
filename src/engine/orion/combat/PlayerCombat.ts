@@ -17,6 +17,7 @@ import { WEAPONS, type WeaponDefinition } from "./WeaponData";
 import { WeaponInventory } from "./WeaponInventory";
 import { onProgressChange, ownsWeapon } from "../missions/Progress";
 import { WeaponModels, type WeaponVisual } from "./WeaponModels";
+import { playAt } from "../audio/SoundBank";
 
 /** What the controller passes in each frame. */
 export interface CombatInput {
@@ -58,6 +59,9 @@ export interface CombatOutput {
 	/** The character should turn to face the aim (shooting or swinging). */
 	faceAim: boolean;
 }
+
+/** Weapons that throw out a spent case each shot. */
+const EJECTS_CASES: ReadonlySet<string> = new Set(["pistol", "rifle", "shotgun"]);
 
 const PLAYER_RADIUS = 0.4;
 const PLAYER_HEIGHT = 1.8;
@@ -394,7 +398,12 @@ export class PlayerCombat {
 		if (weapon.effects.muzzle !== "none") {
 			effects.muzzleFlash(this.muzzle.x, this.muzzle.y, this.muzzle.z, context.aimX, context.aimY, context.aimZ, weapon.effects.muzzle);
 		}
-		combatAudio().play(weapon.sounds.fire, this.muzzle.x, this.muzzle.y, this.muzzle.z, 1.2);
+		combatAudio().play(weapon.sounds.fire, this.muzzle.x, this.muzzle.y, this.muzzle.z, 1.2, true);
+		// The spent case, a beat later, bouncing on the ground at the shooter's feet: a detail
+		// under the shot (about -20 dB), never loud enough to be heard as a click of its own.
+		if (EJECTS_CASES.has(weapon.sounds.fire)) {
+			playAt("casing", this.muzzle.x, this.muzzle.y - 1.2, this.muzzle.z, { level: 0.24, delay: 0.32 + Math.random() * 0.25, variation: 0.12, channel: "impacts" });
+		}
 		this.output.recoilPitch += weapon.recoil.pitch;
 		this.output.recoilYaw += (Math.random() - 0.5) * 2 * weapon.recoil.yaw;
 		broadcastDisturbance(context.x, context.z, GUNSHOT_HEARING, { id: this.source.id, x: context.x, z: context.z, attackable: true });
@@ -444,12 +453,20 @@ export class PlayerCombat {
 			const flat = Math.hypot(this.ray.dx, this.ray.dz) || 1;
 			applyDamage(hit.target, this.fillEvent(weapon, x, y, z, this.ray.dx / flat, this.ray.dz / flat));
 			effects.impact(x, y, z, -this.ray.dx, -this.ray.dy, -this.ray.dz, hit.target.kind === "vehicle" ? "metal" : "flesh");
+			if (hit.target.kind === "vehicle") {
+				combatAudio().play("impact", x, y, z, 0.8);
+				// Now and then the round finds a window.
+				if (Math.random() < 0.25) combatAudio().play("bulletGlass", x, y, z, 0.6);
+			} else {
+				combatAudio().play("bulletFlesh", x, y, z, 0.8);
+			}
 			if (weapon.effects.tracer) effects.tracer(this.ray.ox, this.ray.oy, this.ray.oz, x, y, z);
 			return;
 		}
 		if (wall) {
 			effects.impact(wall.point.x, wall.point.y, wall.point.z, wall.normal.x, wall.normal.y, wall.normal.z, "hard");
-			combatAudio().play("impact", wall.point.x, wall.point.y, wall.point.z, 0.6);
+			// The street underfoot or a wall: they sound different when a round strikes them.
+			combatAudio().play(wall.normal.y > 0.6 ? "bulletGround" : "bulletHit", wall.point.x, wall.point.y, wall.point.z, 0.6);
 		}
 		if (weapon.effects.tracer) effects.tracer(this.ray.ox, this.ray.oy, this.ray.oz, this.to.x, this.to.y, this.to.z);
 	}

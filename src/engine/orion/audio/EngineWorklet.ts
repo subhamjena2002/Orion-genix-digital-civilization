@@ -16,7 +16,8 @@
  *   - two gentle low-pass stages that turn each click into a pressure pulse
  *
  * The exhaust resonance and overall brightness are applied afterwards by ordinary filter nodes
- * (see EngineAudio). Nothing is sampled from any real engine.
+ * (see EngineAudio). Nothing is sampled from any real engine: this is the fallback that plays
+ * until the recorded engines (EngineGrainWorklet) have loaded, or where they can't.
  *
  * The processor is kept as source text and loaded from a Blob, so it needs no separate file
  * served beside the page and survives bundling untouched. It has to be plain JavaScript.
