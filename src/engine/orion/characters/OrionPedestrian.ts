@@ -10,7 +10,7 @@ import { inCameraView, needsPosing, readPlayerPose } from "../player/PlayerPose"
 import { mergeCharacterMaterials } from "../rendering/CharacterMerge";
 import { fixSkinnedBounds } from "../rendering/SkinnedBounds";
 import { applySmoothShading } from "../rendering/SmoothShading";
-import { pavedHeightAt, pavementCorner, ROAD_GRID, roadWidthAt } from "../roads/RoadNetwork";
+import { CITY_EXTENT_X, CITY_EXTENT_Z, pavedHeightAt, pavementCorner, ROAD_GRID, roadWidthAt } from "../roads/RoadNetwork";
 import { crashEffects } from "../traffic/CrashEffects";
 import { registerTrafficAgent, unregisterTrafficAgent, type TrafficAgent } from "../traffic/TrafficAgents";
 import { redRemaining, signalGroup } from "../traffic/TrafficSignals";
@@ -19,6 +19,7 @@ import { RestPose } from "./RestPose";
 import { NpcBrain, paceFor, runsThisFrame, updateInterval, type NpcState } from "./NpcBrain";
 import { reportCrime } from "../police/Wanted";
 import { fireAtPlayer, nextShotDelay, type PoliceGun } from "../police/PoliceFire";
+import { highwayGroundAt } from "../world/Highways";
 import { terrainHeightAt } from "../world/Mountains";
 import type { PedestrianPalette } from "./Pedestrians";
 import { emitGameEvent } from "../missions/GameEvents";
@@ -67,6 +68,26 @@ const HEALTH = 100;
 
 /** A mission's hostile notices the player this close. */
 const HOSTILE_AGGRO = 26;
+/**
+ * A sentry sees this far, inside this half-angle either side of where they're looking (which
+ * sweeps a little either side of their post's facing). Behind them, someone running closer than
+ * `SENTRY_CLOSE` is heard — walking up isn't, which is how a takedown is done — and so is a car
+ * pulling up within `SENTRY_HEARS_CAR`.
+ */
+const SENTRY_SIGHT = 24;
+const SENTRY_HALF_ANGLE = 50;
+const SENTRY_CLOSE = 6;
+/** Footsteps faster than this (m/s) are a run, and heard; the player walks at 2 and runs at 5.5 (PlayerController). */
+const SENTRY_HEARS_RUNNING = 4;
+const SENTRY_HEARS_CAR = 14;
+const SENTRY_SWEEP = 35;
+/** Someone following the player keeps about this far off, and runs to catch up beyond `FOLLOW_RUN`. */
+const FOLLOW_GAP = 2.2;
+const FOLLOW_RUN = 6;
+const FOLLOW_WALK_SPEED = 1.5;
+const FOLLOW_RUN_SPEED = 4.2;
+/** Gets into the player's vehicle from this close. */
+const BOARD_RANGE = 9;
 /** An armed hostile keeps shooting from range; closer than this they use their fists. */
 const HOSTILE_MELEE_RANGE = 2.5;
 const HOSTILE_GUN: PoliceGun = { weapon: "pistol", interval: 1.05, damage: 9, carDamage: 4, accuracy: 0.42, range: 45 };
@@ -568,7 +589,10 @@ export class OrionPedestrian extends Script {
 			return;
 		}
 		const zone = bodyZone(event.y, this.posY, BODY_HEIGHT);
-		const killed = this.health.damage(zoneDamage(event.amount, event.type, zone) / (this.hostile?.toughness ?? 1));
+		// A guard who hasn't seen the player coming goes down to one blow: a takedown.
+		const hostile = this.hostile;
+		const takedown = byPlayer && hostile !== null && hostile.role !== "passive" && !hostile.engaged && (event.type === "melee" || event.type === "blade");
+		const killed = this.health.damage(takedown ? this.health.current : zoneDamage(event.amount, event.type, zone) / (hostile?.toughness ?? 1));
 		if (byPlayer) reportCrime(killed ? "murder" : "assault", event.x, event.z);
 		this.brain.onDamaged(threat, killed);
 		if (killed) {
@@ -754,19 +778,107 @@ export class OrionPedestrian extends Script {
 	// ---- A mission's hostile ---------------------------------------------------------------------
 
 	/** Into the world for a mission: on their feet at (x, z), standing guard. */
-	public placeForMission(x: number, z: number, armed: boolean, toughness = 1) {
+	public placeForMission(x: number, z: number, armed: boolean, toughness = 1, role: MissionRole = "guard", yaw = 0) {
 		this.stowed = false;
 		for (const child of this.entity.children) (child as Entity).enabled = true;
 		this.resetBody();
-		this.hostile = { armed, engaged: false, shotTimer: 0.6, toughness: Math.max(1, toughness) };
+		this.hostile = { armed, engaged: false, shotTimer: 0.6, toughness: Math.max(1, toughness), role, facing: yaw, watch: this.seed % 7, following: false, aboard: false };
 		this.offGraph = true;
 		this.freeX = x;
 		this.freeZ = z;
 		this.heading = null;
-		this.moveTo(x, groundAt(x, z), z, 0, 0);
+		this.moveTo(x, groundAt(x, z), z, yaw, 0);
 		this.entity.setPosition(this.posX, this.posY, this.posZ);
 		this.publishBody();
 		this.setClip("Idle", true);
+	}
+
+	/** Where they are for the mission: alive and out, and whether they're riding with the player. */
+	public get missionState(): { x: number; z: number; aboard: boolean } | null {
+		if (this.stowed || !this.health.alive || !this.hostile) return null;
+		if (this.hostile.aboard) {
+			const player = readPlayerPose();
+			return { x: player.x, z: player.z, aboard: true };
+		}
+		return { x: this.posX, z: this.posZ, aboard: false };
+	}
+
+	/** Someone passive starts (or stops) keeping up with the player. */
+	public setFollowing(following: boolean) {
+		if (this.hostile?.role === "passive") this.hostile.following = following;
+	}
+
+	/** The alarm's up: on guard no longer. */
+	public alert() {
+		const hostile = this.hostile;
+		if (!hostile || hostile.role === "passive" || hostile.engaged || !this.health.alive) return;
+		this.engage(hostile);
+	}
+
+	private engage(hostile: Hostile) {
+		hostile.engaged = true;
+		emitGameEvent({ type: "hostileAlerted", id: this.entity.name });
+	}
+
+	/** Whether a sentry on post sees (or hears) the player. */
+	private sentrySees(hostile: Hostile, dt: number, distance: number): boolean {
+		hostile.watch += dt;
+		const player = readPlayerPose();
+		if (!player.inVehicle && distance < SENTRY_CLOSE && player.speed > SENTRY_HEARS_RUNNING) return true;
+		if (player.inVehicle && distance < SENTRY_HEARS_CAR) return true;
+		if (distance > SENTRY_SIGHT) return false;
+		const looking = hostile.facing + SENTRY_SWEEP * Math.sin(hostile.watch * 0.45);
+		const toPlayer = Math.atan2(player.x - this.posX, player.z - this.posZ) * 180 / Math.PI;
+		return Math.abs(((toPlayer - looking + 540) % 360) - 180) < SENTRY_HALF_ANGLE;
+	}
+
+	/** Keeping up with the player on foot, or riding with them. True while out of sight in their car. */
+	private updateFollowing(dt: number, hostile: Hostile): boolean {
+		const player = readPlayerPose();
+		if (hostile.aboard) {
+			if (player.inVehicle) return true;
+			// Out of the car alongside the player.
+			hostile.aboard = false;
+			for (const child of this.entity.children) (child as Entity).enabled = true;
+			this.freeX = player.x + 1.6;
+			this.freeZ = player.z;
+			this.heading = null;
+		}
+		const distance = Math.hypot(player.x - this.freeX, player.z - this.freeZ);
+		if (player.inVehicle && distance < BOARD_RANGE) {
+			hostile.aboard = true;
+			for (const child of this.entity.children) (child as Entity).enabled = false;
+			this.hideBody();
+			return true;
+		}
+		const heading = Math.atan2(player.x - this.freeX, player.z - this.freeZ) * 180 / Math.PI;
+		// On foot, keeping a step behind; the player in a car, running to it to get in.
+		if (distance > FOLLOW_GAP) {
+			const running = distance > FOLLOW_RUN || player.inVehicle;
+			const step = Math.min(distance - FOLLOW_GAP, (running ? FOLLOW_RUN_SPEED : FOLLOW_WALK_SPEED) * dt);
+			this.freeX += ((player.x - this.freeX) / distance) * step;
+			this.freeZ += ((player.z - this.freeZ) / distance) * step;
+			this.setClip(running ? "Run" : "Walk");
+		} else {
+			this.setClip("Idle");
+		}
+		this.posY = groundAt(this.freeX, this.freeZ);
+		this.moveTo(this.freeX, this.posY, this.freeZ, heading, dt);
+		return false;
+	}
+
+	/** Out of reach of shots and cars, without leaving the mission. */
+	private hideBody() {
+		if (this.agent) {
+			this.agent.x = 1e6;
+			this.agent.z = 1e6;
+			this.agent.speed = 0;
+		}
+		if (this.body) {
+			this.body.x = 1e6;
+			this.body.z = 1e6;
+			damageableMoved(this.body);
+		}
 	}
 
 	/** The mission's over: the living leave at once, the dead once their body's cleared. */
@@ -803,7 +915,14 @@ export class OrionPedestrian extends Script {
 	private updateHostile(dt: number, hostile: Hostile) {
 		const player = readPlayerPose();
 		const distance = Math.hypot(player.x - this.posX, player.z - this.posZ);
-		if (!hostile.engaged && (distance < HOSTILE_AGGRO || this.brain.threat !== null)) hostile.engaged = true;
+		if (hostile.role === "passive") {
+			this.updatePassive(dt, hostile, distance);
+			return;
+		}
+		if (!hostile.engaged) {
+			const noticed = hostile.role === "sentry" ? this.sentrySees(hostile, dt, distance) : distance < HOSTILE_AGGRO;
+			if (noticed || this.brain.threat !== null) this.engage(hostile);
+		}
 		if (hostile.engaged) {
 			this.brain.trackThreat(player.x, player.z);
 			if (!hostile.armed || distance < HOSTILE_MELEE_RANGE) this.brain.provoke({ id: -1, x: player.x, z: player.z, attackable: true });
@@ -819,7 +938,8 @@ export class OrionPedestrian extends Script {
 			// Standing: on guard, or holding ground and shooting.
 			this.punch.cancel();
 			this.setClip("Idle");
-			const heading = hostile.engaged ? Math.atan2(player.x - this.freeX, player.z - this.freeZ) * 180 / Math.PI : this.heading ?? 0;
+			const post = hostile.role === "sentry" ? hostile.facing + SENTRY_SWEEP * Math.sin(hostile.watch * 0.45) : this.heading ?? hostile.facing;
+			const heading = hostile.engaged ? Math.atan2(player.x - this.freeX, player.z - this.freeZ) * 180 / Math.PI : post;
 			this.moveTo(this.freeX, this.posY, this.freeZ, heading, dt);
 		}
 		if (hostile.engaged && hostile.armed && state !== "HIT" && distance >= HOSTILE_MELEE_RANGE) {
@@ -828,6 +948,28 @@ export class OrionPedestrian extends Script {
 				hostile.shotTimer = nextShotDelay(HOSTILE_GUN);
 				fireAtPlayer(this.app, this.posX, this.posY + 1.4, this.posZ, HOSTILE_GUN, null, this.source, this.event);
 			}
+		}
+		this.publishBody();
+		const anim = this.animRoot?.anim;
+		if (anim && !anim.playing) anim.playing = true;
+	}
+
+	/**
+	 * Someone the mission needs who won't fight: stands where they were put (turning to face the
+	 * player when they come near), or follows them once asked to.
+	 */
+	private updatePassive(dt: number, hostile: Hostile, distance: number) {
+		const state = this.brain.update(dt, Infinity);
+		if (state === "HIT") {
+			this.setClip("Hit");
+		} else if (hostile.following) {
+			if (this.updateFollowing(dt, hostile)) return;
+		} else {
+			const player = readPlayerPose();
+			this.setClip("Idle");
+			this.posY = groundAt(this.freeX, this.freeZ);
+			const heading = distance < 8 ? Math.atan2(player.x - this.freeX, player.z - this.freeZ) * 180 / Math.PI : hostile.facing;
+			this.moveTo(this.freeX, this.posY, this.freeZ, heading, dt);
 		}
 		this.publishBody();
 		const anim = this.animRoot?.anim;
@@ -1105,6 +1247,8 @@ function mulberry32(seed: number) {
 	};
 }
 
+export type MissionRole = "guard" | "sentry" | "passive";
+
 interface Hostile {
 	armed: boolean;
 	/** Seen the player (or been hit): fighting from now on. */
@@ -1112,11 +1256,24 @@ interface Hostile {
 	shotTimer: number;
 	/** Divides the damage they take: a hardened crew member soaks up more rounds. */
 	toughness: number;
+	/** Fights on sight; keeps watch one way; or never fights at all (a witness, a hostage). */
+	role: MissionRole;
+	/** The way their post faces, degrees. */
+	facing: number;
+	/** Seconds on post, for the sentry's sweep. */
+	watch: number;
+	/** Passive, keeping up with the player; and riding in their vehicle. */
+	following: boolean;
+	aboard: boolean;
 }
 
 /** Paved ground where there is some, else the hillside. */
 function groundAt(x: number, z: number): number {
-	return pavedHeightAt(x, z) ?? terrainHeightAt(x, z);
+	const paved = pavedHeightAt(x, z);
+	if (paved !== null) return paved;
+	// Out past the grid, a mission's people may stand on an expressway's deck or its turning circle.
+	const outside = Math.abs(x) > CITY_EXTENT_X || Math.abs(z) > CITY_EXTENT_Z;
+	return (outside ? highwayGroundAt(x, z) : null) ?? terrainHeightAt(x, z);
 }
 
 // Mission hostiles (people with a missionSlot: see missions/MissionActors).
@@ -1124,12 +1281,27 @@ function groundAt(x: number, z: number): number {
 /** By id (the entity's name, as the missions know them). */
 const missionPeople = new Map<string, OrionPedestrian>();
 
-/** Puts a mission's hostile into the world; false if there's no such person. */
-export function placeMissionHostile(id: string, x: number, z: number, armed: boolean, toughness = 1): boolean {
+/** Puts a mission's person into the world; false if there's no such person (yet). */
+export function placeMissionHostile(id: string, x: number, z: number, armed: boolean, toughness = 1, role: MissionRole = "guard", yaw = 0): boolean {
 	const person = missionPeople.get(id);
 	if (!person) return false;
-	person.placeForMission(x, z, armed, toughness);
+	person.placeForMission(x, z, armed, toughness, role, yaw);
 	return true;
+}
+
+/** Where a mission's person is, if they're out and alive. */
+export function missionPersonState(id: string): { x: number; z: number; aboard: boolean } | null {
+	return missionPeople.get(id)?.missionState ?? null;
+}
+
+/** A mission's passive person starts or stops following the player. */
+export function setMissionFollow(id: string, following: boolean): void {
+	missionPeople.get(id)?.setFollowing(following);
+}
+
+/** These mission guards and sentries, if they're out, stop watching and fight. */
+export function alertMissionHostiles(ids: Iterable<string>): void {
+	for (const id of ids) missionPeople.get(id)?.alert();
 }
 
 /**
@@ -1144,7 +1316,7 @@ export function releaseMissionHostiles(ids: Iterable<string>): void {
 export function missionHostileMarkers(out: { id: string; x: number; z: number }[]): number {
 	let count = 0;
 	for (const [id, person] of missionPeople) {
-		if (!person.standing) continue;
+		if (!person.standing || person.missionState?.aboard) continue;
 		const slot = out[count] ?? (out[count] = { id, x: 0, z: 0 });
 		slot.id = id;
 		slot.x = person.x;

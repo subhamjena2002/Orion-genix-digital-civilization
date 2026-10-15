@@ -13,6 +13,8 @@ export const BLIP_LABELS: Readonly<Record<Exclude<BlipKind, "shop">, string>> = 
 	mission: "Mission",
 	target: "Target",
 	missionVehicle: "Mission vehicle",
+	ally: "Contact",
+	lead: "Street lead",
 	safehouse: "Safehouse",
 	hospital: "Hospital",
 	police: "Police",
@@ -93,6 +95,22 @@ export function BlipIcon({ kind }: Readonly<{ kind: BlipKind }>) {
 					{/* A car from above, nose up. */}
 					<rect x={-0.16} y={-0.3} width={0.32} height={0.6} rx={0.1} fill="#ffffff" />
 					<rect x={-0.11} y={-0.14} width={0.22} height={0.14} fill="#2f7fd6" />
+				</g>
+			);
+		case "ally":
+			return (
+				<g>
+					<circle r={0.42} fill="#2f7fd6" stroke="#ffffff" strokeWidth={0.1} />
+					{/* A person: head and shoulders. */}
+					<circle cy={-0.1} r={0.12} fill="#ffffff" />
+					<path d="M-0.2 0.24 Q0 0.02 0.2 0.24 Z" fill="#ffffff" />
+				</g>
+			);
+		case "lead":
+			return (
+				<g>
+					<circle r={0.42} fill="#1f8a7a" stroke="#ffffff" strokeWidth={0.08} />
+					<text y={0.17} fontSize={0.52} fontWeight={800} textAnchor="middle" fill="#ffffff" fontFamily="var(--font-geist-sans), sans-serif">$</text>
 				</g>
 			);
 		case "safehouse":

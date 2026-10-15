@@ -1451,7 +1451,8 @@ body {
 .orion-mission-objective {
   position: absolute;
   left: 50%;
-  bottom: 7.5rem;
+  /* Clear of the subtitle line below it, which sits just above the control hints. */
+  bottom: 8.4rem;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1462,6 +1463,7 @@ body {
 }
 
 .orion-mission-objective-line {
+  animation: orion-objective-in 360ms ease-out both;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1654,7 +1656,241 @@ body {
   color: var(--oi-text-secondary);
 }
 
+/* ---------- Dialogue, notices, choices, optional objectives, ratings ---------- */
+
+.orion-subtitle {
+  position: absolute;
+  left: 50%;
+  bottom: 4.6rem;
+  width: max-content;
+  max-width: min(40rem, calc(100% - 2rem));
+  transform: translateX(-50%);
+  border-radius: 8px;
+  background: rgba(10, 11, 12, 0.55);
+  padding: 0.3rem 0.75rem;
+  text-align: center;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: #ffffff;
+  text-shadow: 0 1px 0 rgb(0 0 0 / 80%);
+  animation: orion-subtitle-in 220ms ease-out both;
+}
+
+.orion-subtitle-who {
+  font-weight: 700;
+  color: var(--oi-accent-strong);
+}
+
+.orion-subtitle-who::after {
+  content: ":";
+}
+
+.orion-mission-notice {
+  position: absolute;
+  left: 50%;
+  top: 19%;
+  transform: translateX(-50%);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #f2c14e;
+  text-shadow: 0 1px 0 rgb(0 0 0 / 85%), 0 0 12px rgb(0 0 0 / 60%);
+  animation: orion-notice 2.6s ease-out both;
+}
+
+.orion-mission-choices {
+  position: absolute;
+  left: 50%;
+  bottom: 11rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  width: min(40rem, calc(100% - 2rem));
+  transform: translateX(-50%);
+  animation: orion-mission-rise 260ms ease-out both;
+}
+
+.orion-mission-choice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 0.6rem;
+  align-items: center;
+  min-width: 12rem;
+  max-width: 19rem;
+  flex: 1 1 12rem;
+  border: 1px solid var(--oi-border-strong);
+  border-radius: 12px;
+  background: var(--oi-surface-2);
+  box-shadow: var(--oi-shadow-elevated);
+  padding: 0.55rem 0.8rem;
+  text-align: left;
+  backdrop-filter: blur(8px);
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.orion-mission-choice:hover {
+  border-color: var(--oi-accent);
+  background: var(--oi-accent-soft);
+}
+
+.orion-mission-choice-key {
+  grid-row: span 2;
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border: 1px solid var(--oi-accent);
+  border-radius: 6px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--oi-accent-strong);
+}
+
+.orion-mission-choice-label {
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: var(--oi-text-primary);
+}
+
+.orion-mission-choice-detail {
+  font-size: 0.75rem;
+  color: var(--oi-text-secondary);
+}
+
+.orion-mission-bonuses {
+  position: absolute;
+  right: 1.25rem;
+  /* Under the weapon and health panel, however short the screen. */
+  top: max(38%, 16rem);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.78);
+  text-shadow: 0 1px 0 rgb(0 0 0 / 85%);
+}
+
+.orion-mission-bonuses li.is-met,
+.orion-mission-result-bonuses li.is-met {
+  color: #9fe0a8;
+}
+
+.orion-mission-bonuses li.is-failed,
+.orion-mission-result-bonuses li.is-failed {
+  color: rgba(255, 138, 128, 0.75);
+  text-decoration: line-through;
+}
+
+.orion-mission-result-bonuses {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.78rem;
+  color: #ffffff;
+  text-shadow: 0 1px 0 rgb(0 0 0 / 85%);
+}
+
+.orion-mission-rating {
+  display: flex;
+  gap: 0.3rem;
+  font-size: 1.6rem;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.25);
+  text-shadow: 0 1px 0 rgb(0 0 0 / 70%);
+}
+
+.orion-mission-rating .is-lit {
+  color: #f2c14e;
+}
+
+.orion-mission-actions.is-centred {
+  justify-content: center;
+}
+
+.orion-mission-log-section {
+  margin-top: 0.9rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--oi-text-secondary);
+}
+
+.orion-mission-log-rep {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+  margin-top: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--oi-text-secondary);
+}
+
+.orion-mission-log-rep strong {
+  color: var(--oi-text-primary);
+}
+
+@keyframes orion-objective-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes orion-subtitle-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes orion-notice {
+  0% {
+    opacity: 0;
+    letter-spacing: 0.32em;
+  }
+  12% {
+    opacity: 1;
+    letter-spacing: 0.18em;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orion-mission-objective-line,
+  .orion-subtitle,
+  .orion-mission-choices {
+    animation: none;
+  }
+}
+
 /* Touch: the controls own the bottom of the screen, so missions talk from the top. */
+#world[data-input="touch"] .orion-subtitle {
+  top: calc(var(--touch-top) + 3.6rem);
+  bottom: auto;
+}
+
+#world[data-input="touch"] .orion-mission-choices {
+  top: calc(var(--touch-top) + 6.5rem);
+  bottom: auto;
+}
+
+#world[data-input="touch"] .orion-mission-bonuses {
+  display: none;
+}
+
+
 #world[data-input="touch"] .orion-mission-objective {
   top: calc(var(--touch-top) + 0.25rem);
   bottom: auto;
@@ -2159,4 +2395,18 @@ body {
   .orion-loading-bar span::after {
     animation: none;
   }
+}
+
+.orion-mission-log-stars {
+  font-size: 0.8rem;
+  letter-spacing: 0.05em;
+  color: #f2c14e;
+}
+
+.orion-mission-optional {
+  margin-top: 0.3rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--oi-text-secondary);
 }

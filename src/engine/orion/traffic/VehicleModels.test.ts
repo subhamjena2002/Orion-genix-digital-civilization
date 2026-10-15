@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { MISSIONS } from "../missions/MissionCatalog";
+import { ALL_MISSIONS } from "../missions/MissionCatalog";
+import { missionSpawns } from "../missions/MissionDirector";
 import { HIDDEN_BRAND_NODE, HIDDEN_MATERIAL, modelKey, pickVehicleModel, VEHICLE_MODELS } from "./VehicleModels";
 import type { VehicleStyle } from "./Vehicles";
 
@@ -44,10 +45,10 @@ describe("vehicle models", () => {
 
 	it("gives every car a mission spawns or rewards a real model", () => {
 		const styles = new Set<string>();
-		for (const mission of MISSIONS) {
-			const spawns = [...(mission.spawns ?? []), ...mission.objectives.flatMap((objective) => objective.spawns ?? [])];
-			for (const spawn of spawns) if (spawn.type === "vehicle") styles.add(spawn.style);
-			for (const vehicle of mission.reward.vehicles ?? []) styles.add(vehicle.style);
+		for (const mission of ALL_MISSIONS) {
+			for (const spawn of missionSpawns(mission)) if (spawn.type === "vehicle") styles.add(spawn.style);
+			const choiceRewards = mission.objectives.flatMap((objective) => (objective.kind === "choice" ? objective.options.map((option) => option.reward ?? {}) : []));
+			for (const vehicle of [mission.reward, ...choiceRewards].flatMap((reward) => reward.vehicles ?? [])) styles.add(vehicle.style);
 		}
 		for (const style of styles) expect(pickVehicleModel(style as VehicleStyle, 1), style).not.toBeNull();
 	});

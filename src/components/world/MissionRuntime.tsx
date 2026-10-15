@@ -6,16 +6,20 @@ import { BLEND_ADDITIVE, Color, CULLFACE_NONE, Entity as PlayCanvasEntity, Stand
 import { memo, useEffect, useState } from "react";
 
 import { readCombatHud } from "@/engine/orion/combat/CombatHud";
+import { ALL_MANIFESTS_CASH, MANIFEST_CASH, MANIFESTS, manifestInReach } from "@/engine/orion/missions/Collectibles";
+import { streetLeads } from "@/engine/orion/missions/Leads";
 import { missionActorMarkers, missionStage, updateMissionActors } from "@/engine/orion/missions/MissionActors";
-import { MISSIONS } from "@/engine/orion/missions/MissionCatalog";
-import { missions, type MissionDefinition, type PlayerView } from "@/engine/orion/missions/MissionDirector";
-import { playMissionFromGiver } from "@/engine/orion/missions/MissionFlow";
-import { availableMissions, onProgressChange, readProgress, recordPass, resetProgress } from "@/engine/orion/missions/Progress";
+import { isPassive, quarryOf } from "@/engine/orion/missions/MissionBlips";
+import { ALL_MISSIONS, MISSIONS } from "@/engine/orion/missions/MissionCatalog";
+import { holds, missions, type MissionDefinition, type PlayerView } from "@/engine/orion/missions/MissionDirector";
+import { abandonMission, playMissionFromGiver, retryMission } from "@/engine/orion/missions/MissionFlow";
+import { availableMissions, collect, hasCollected, hasFlag, hasPassed, onProgressChange, readProgress, recordJob, recordPass, resetProgress, setFlags } from "@/engine/orion/missions/Progress";
 import { clearWaypoint } from "@/engine/orion/navigation/Navigation";
 import { clearWanted, readWanted } from "@/engine/orion/police/Wanted";
 import { setControlsHeld } from "@/engine/orion/player/ControlHold";
 import { readPlayerPose } from "@/engine/orion/player/PlayerPose";
 import { pavedHeightAt } from "@/engine/orion/roads/RoadNetwork";
+import { highwayGroundAt } from "@/engine/orion/world/Highways";
 import { terrainHeightAt } from "@/engine/orion/world/Mountains";
 
 /** Step this close to a giver's marker to be offered their mission. */
@@ -25,20 +29,32 @@ const GIVER_LEAVE = 6;
 /** Markers are only lit within this distance (they're seen from about a block away). */
 const MARKER_RANGE = 220;
 const MARKER_COLOUR = new Color(1, 0.78, 0.2);
-/** Over a mission's cars and people: blue for a car to get in, red for whatever's to be destroyed. */
+/** A street lead's marker: smaller, and teal, so it doesn't read as a story mission. */
+const LEAD_COLOUR = new Color(0.2, 0.85, 0.72);
+/** Over a mission's cars and people: blue for a car to get in or a friend, red for whatever's to be dealt with. */
 const FRIENDLY_COLOUR = new Color(0.25, 0.6, 1);
 const TARGET_COLOUR = new Color(1, 0.2, 0.18);
+/** A manifest page's glint. */
+const PAGE_COLOUR = new Color(1, 0.95, 0.8);
 /** At most this many cars and people out for a mission at once. */
-const ACTOR_MARKERS = 8;
+const ACTOR_MARKERS = 10;
 /** Heights of the marker above the ground under a car, and a person. */
 const OVER_VEHICLE = 3.1;
 const OVER_PERSON = 2.6;
+/** Manifest pages glint from this close. */
+const PAGE_RANGE = 70;
+
+/** The ground a marker stands on: the streets, an expressway's deck, or the land. */
+function groundAt(x: number, z: number): number {
+	return pavedHeightAt(x, z) ?? highwayGroundAt(x, z) ?? terrainHeightAt(x, z);
+}
 
 /**
  * Missions in the world: ticks the director once a frame with where the player is, puts each
  * mission's cars and people in (see MissionActors), lights a gold marker at every giver with a
- * mission on offer, and opens the briefing when the player steps into one on foot. A mission
- * passed is paid out and saved (see Progress).
+ * mission on offer and a teal one at a street lead, and opens the briefing when the player steps
+ * into one on foot. A mission passed is paid out and saved (see Progress); so is a street job,
+ * and a manifest page picked up.
  */
 export const MissionRuntime = memo(function MissionRuntime() {
 	const app = useApp();
@@ -46,23 +62,35 @@ export const MissionRuntime = memo(function MissionRuntime() {
 
 	useEffect(() => {
 		missions.setStage(missionStage);
+		missions.setFlagSource(hasFlag);
 		const stopListening = missions.on((event) => {
 			if (event.type === "started") {
 				clearWanted();
 				clearWaypoint();
 			} else if (event.type === "complete") {
-				recordPass(event.mission, event.seconds);
+				if (event.mission.chapter === "job") {
+					const extra = event.extras.reduce((sum, reward) => sum + (reward.cash ?? 0), 0);
+					recordJob((event.mission.reward.cash ?? 0) + extra, event.mission.reward.rep);
+				} else {
+					recordPass(event.mission, event.seconds, { flags: event.flags, rating: event.rating, extras: event.extras });
+				}
 			}
+			if ((event.type === "complete" || event.type === "failed") && event.mission.chapter === "job") streetLeads.finished();
 		});
 		const development = process.env.NODE_ENV !== "production";
 		if (development) {
-			// For trying missions out: __orionMissions.start("convoy") and so on.
+			// For trying missions out: __orionMissions.start("convoy"), .choose(0), .flags("dez-owes") and so on.
 			(window as unknown as Record<string, unknown>).__orionMissions = {
-				list: () => MISSIONS.map((mission) => mission.id),
+				list: () => ALL_MISSIONS.map((mission) => mission.id),
 				start: (id: string) => playMissionFromGiver(id),
+				choose: (index: number) => missions.choose(index),
+				retry: (fromCheckpoint = true) => retryMission(fromCheckpoint),
+				abandon: () => abandonMission(),
 				progress: () => readProgress(),
 				reset: () => resetProgress(),
+				flags: (...flags: string[]) => setFlags(flags),
 				loseWanted: () => clearWanted(),
+				leads: streetLeads,
 				director: missions,
 			};
 		}
@@ -70,45 +98,77 @@ export const MissionRuntime = memo(function MissionRuntime() {
 			stopListening();
 			missions.stop();
 			missions.setStage(null);
+			missions.setFlagSource(null);
 			if (development) delete (window as unknown as Record<string, unknown>).__orionMissions;
 		};
 	}, []);
 
 	useEffect(() => {
 		if (!app || !root) return;
-		const material = new StandardMaterial();
-		material.name = "mission-marker";
-		material.diffuse = new Color(0, 0, 0);
-		material.emissive = MARKER_COLOUR;
-		material.emissiveIntensity = 2;
-		material.opacity = 0.4;
-		material.blendType = BLEND_ADDITIVE;
-		material.depthWrite = false;
-		material.cull = CULLFACE_NONE;
-		material.useLighting = false;
-		material.useFog = false;
-		material.update();
+		const glow = (colour: Color, name: string) => {
+			const made = new StandardMaterial();
+			made.name = name;
+			made.diffuse = new Color(0, 0, 0);
+			made.emissive = colour;
+			made.emissiveIntensity = 2;
+			made.opacity = 0.4;
+			made.blendType = BLEND_ADDITIVE;
+			made.depthWrite = false;
+			made.cull = CULLFACE_NONE;
+			made.useLighting = false;
+			made.useFog = false;
+			made.update();
+			return made;
+		};
+		const material = glow(MARKER_COLOUR, "mission-marker");
+		const leadMaterial = glow(LEAD_COLOUR, "lead-marker");
+
+		const makeMarker = (name: string, markerMaterial: StandardMaterial, size: number) => {
+			const marker = new PlayCanvasEntity(name);
+			const column = new PlayCanvasEntity("column");
+			column.addComponent("render", { type: "cylinder", material: markerMaterial, castShadows: false, receiveShadows: false });
+			column.setLocalScale(1.6 * size, 3 * size, 1.6 * size);
+			column.setLocalPosition(0, 1.5 * size, 0);
+			const ring = new PlayCanvasEntity("ring");
+			ring.addComponent("render", { type: "torus", material: markerMaterial, castShadows: false, receiveShadows: false });
+			ring.setLocalScale(GIVER_TRIGGER * 2 * size, 0.5, GIVER_TRIGGER * 2 * size);
+			ring.setLocalPosition(0, 0.12, 0);
+			marker.addChild(column);
+			marker.addChild(ring);
+			marker.enabled = false;
+			root.addChild(marker);
+			return marker;
+		};
 
 		// One marker per mission, made once and switched on and off: a glowing column and a ring.
 		const markers = new Map<string, PlayCanvasEntity>();
 		for (const mission of MISSIONS) {
-			const marker = new PlayCanvasEntity(`mission-marker-${mission.id}`);
-			const column = new PlayCanvasEntity("column");
-			column.addComponent("render", { type: "cylinder", material, castShadows: false, receiveShadows: false });
-			column.setLocalScale(1.6, 3, 1.6);
-			column.setLocalPosition(0, 1.5, 0);
-			const ring = new PlayCanvasEntity("ring");
-			ring.addComponent("render", { type: "torus", material, castShadows: false, receiveShadows: false });
-			ring.setLocalScale(GIVER_TRIGGER * 2, 0.5, GIVER_TRIGGER * 2);
-			ring.setLocalPosition(0, 0.12, 0);
-			marker.addChild(column);
-			marker.addChild(ring);
+			const marker = makeMarker(`mission-marker-${mission.id}`, material, 1);
 			const { x, z } = mission.giver;
-			marker.setPosition(x, pavedHeightAt(x, z) ?? terrainHeightAt(x, z), z);
-			marker.enabled = false;
-			root.addChild(marker);
+			marker.setPosition(x, groundAt(x, z), z);
 			markers.set(mission.id, marker);
 		}
+		// One for whichever street lead is up, moved to it.
+		const leadMarker = makeMarker("lead-marker", leadMaterial, 0.75);
+		let leadAt = "";
+
+		// Manifest pages: a small bright sheet turning over the pavement, one per page.
+		const pageMaterial = new StandardMaterial();
+		pageMaterial.name = "manifest-page";
+		pageMaterial.diffuse = new Color(0.9, 0.88, 0.8);
+		pageMaterial.emissive = PAGE_COLOUR;
+		pageMaterial.emissiveIntensity = 0.9;
+		pageMaterial.useFog = false;
+		pageMaterial.update();
+		const pages = MANIFESTS.map((manifest) => {
+			const page = new PlayCanvasEntity(`manifest-${manifest.id}`);
+			page.addComponent("render", { type: "box", material: pageMaterial, castShadows: false, receiveShadows: false });
+			page.setLocalScale(0.42, 0.02, 0.56);
+			page.setPosition(manifest.x, groundAt(manifest.x, manifest.z) + 0.9, manifest.z);
+			page.enabled = false;
+			root.addChild(page);
+			return page;
+		});
 
 		// Chevrons over the mission's cars and people, made once and reused.
 		const actorMaterial = (colour: Color) => {
@@ -132,14 +192,18 @@ export const MissionRuntime = memo(function MissionRuntime() {
 			return chevron;
 		});
 
-		// What's on offer only changes when a mission is passed.
+		// What's on offer only changes when progress does.
 		let offered: MissionDefinition[] = availableMissions(MISSIONS);
+		let unlocked = hasPassed("cold-open");
 		const stopWatchingProgress = onProgressChange(() => {
 			offered = availableMissions(MISSIONS);
+			unlocked = hasPassed("cold-open");
 		});
 		/** Declined (or just finished) here: not offered again until the player has walked off. */
 		let heldBack: string | null = null;
 		const view: PlayerView = { x: 0, y: 0, z: 0, vehicleIntegrity: 100, wantedStars: 0 };
+		const leadContext = { free: false, unlocked: false, x: 0, z: 0, inVehicle: false, open: (job: MissionDefinition) => holds(job.onlyIf, hasFlag) };
+		let announced = streetLeads.announced;
 		let time = 0;
 
 		const update = (dt: number) => {
@@ -159,9 +223,11 @@ export const MissionRuntime = memo(function MissionRuntime() {
 			// Givers only deal with someone who's on foot, alive, and not wanted by the police.
 			const free = phase !== "active" && phase !== "briefing";
 			const combat = readCombatHud();
-			const canStart = free && !pose.inVehicle && !combat.wasted && !combat.busted && wanted.stars === 0;
+			const alive = !combat.wasted && !combat.busted;
+			const canStart = free && !pose.inVehicle && alive && wanted.stars === 0;
 			time += dt;
-			material.opacity = 0.32 + 0.1 * Math.sin(time * 2.5);
+			const pulse = 0.32 + 0.1 * Math.sin(time * 2.5);
+			material.opacity = pulse;
 			material.update();
 			for (const [id, marker] of markers) {
 				const mission = offered.find((candidate) => candidate.id === id);
@@ -176,24 +242,70 @@ export const MissionRuntime = memo(function MissionRuntime() {
 				}
 			}
 
+			// Street leads: one at a time, announced once, started by walking (or driving) into it.
+			leadContext.free = free && alive && wanted.stars === 0;
+			leadContext.unlocked = unlocked;
+			leadContext.x = pose.x;
+			leadContext.z = pose.z;
+			leadContext.inVehicle = pose.inVehicle;
+			const job = streetLeads.update(dt, leadContext);
+			if (job) {
+				missions.start(job);
+				missions.notice(job.title);
+			}
+			const lead = streetLeads.lead;
+			if (streetLeads.announced !== announced) {
+				announced = streetLeads.announced;
+				if (lead) missions.say([{ who: "Phone", text: `New lead: ${lead.giver.role ?? lead.title}. It's on your map.` }]);
+			}
+			const leadLit = !!lead && free && Math.hypot(lead.giver.x - pose.x, lead.giver.z - pose.z) < MARKER_RANGE;
+			if (lead && leadAt !== lead.id) {
+				leadAt = lead.id;
+				leadMarker.setPosition(lead.giver.x, groundAt(lead.giver.x, lead.giver.z), lead.giver.z);
+			}
+			if (leadMarker.enabled !== leadLit) leadMarker.enabled = leadLit;
+			if (leadLit) {
+				leadMaterial.opacity = pulse;
+				leadMaterial.update();
+			}
+
+			// Manifest pages: glinting when near, picked up by walking or driving over one.
+			for (let index = 0; index < pages.length; index++) {
+				const manifest = MANIFESTS[index];
+				const page = pages[index];
+				const near = Math.abs(manifest.x - pose.x) < PAGE_RANGE && Math.abs(manifest.z - pose.z) < PAGE_RANGE && !hasCollected(manifest.id);
+				if (page.enabled !== near) page.enabled = near;
+				if (near) page.setEulerAngles(18, time * 70, 0);
+			}
+			const found = alive ? manifestInReach(pose.x, pose.z, pose.inVehicle, hasCollected) : null;
+			if (found && collect(found.id, MANIFEST_CASH)) {
+				const count = MANIFESTS.filter((manifest) => hasCollected(manifest.id)).length;
+				missions.say([{ who: `Manifest ${count}/${MANIFESTS.length}`, text: found.text, seconds: 6 }]);
+				if (count === MANIFESTS.length && collect("manifests-complete", ALL_MANIFESTS_CASH)) {
+					missions.notice(`Every manifest found · +$${ALL_MANIFESTS_CASH.toLocaleString("en-US")}`);
+				} else {
+					missions.notice(`Manifest found · +$${MANIFEST_CASH}`);
+				}
+			}
+
 			// Chevrons over the mission's people, and its cars (bar the one the player's driving).
 			let used = 0;
 			if (phase === "active") {
-				const objective = missions.objective;
-				const quarry = objective?.kind === "destroyVehicles" ? objective.ids : [];
+				const mission = missions.mission;
+				const quarry = quarryOf(missions.objective);
 				const actors = missionActorMarkers();
 				const bob = Math.sin(time * 3) * 0.25;
 				const place = (x: number, z: number, height: number, target: boolean) => {
 					const chevron = chevrons[used++];
 					if (!chevron) return;
-					const material = target ? hostile : friendly;
+					const chevronMaterial = target ? hostile : friendly;
 					const render = chevron.render;
-					if (render && render.material !== material) render.material = material;
-					chevron.setPosition(x, (pavedHeightAt(x, z) ?? terrainHeightAt(x, z)) + height + bob, z);
+					if (render && render.material !== chevronMaterial) render.material = chevronMaterial;
+					chevron.setPosition(x, groundAt(x, z) + height + bob, z);
 					chevron.setEulerAngles(180, time * 90, 0);
 					if (!chevron.enabled) chevron.enabled = true;
 				};
-				for (const person of actors.people) place(person.x, person.z, OVER_PERSON, true);
+				for (const person of actors.people) place(person.x, person.z, OVER_PERSON, !(mission && isPassive(mission, person.id)));
 				for (const car of actors.vehicles) {
 					const target = quarry.includes(car.id);
 					if (!target && pose.inVehicle && Math.hypot(car.x - pose.x, car.z - pose.z) < 4) continue;
@@ -212,8 +324,12 @@ export const MissionRuntime = memo(function MissionRuntime() {
 			setControlsHeld(false);
 			stopWatchingProgress();
 			for (const marker of markers.values()) marker.destroy();
+			leadMarker.destroy();
+			for (const page of pages) page.destroy();
 			for (const chevron of chevrons) chevron.destroy();
 			material.destroy();
+			leadMaterial.destroy();
+			pageMaterial.destroy();
 			friendly.destroy();
 			hostile.destroy();
 		};
@@ -221,3 +337,4 @@ export const MissionRuntime = memo(function MissionRuntime() {
 
 	return <Entity ref={setRoot} name="missions" />;
 });
+

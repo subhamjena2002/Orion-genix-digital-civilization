@@ -21,7 +21,11 @@ export type BlipKind =
 	/** A mission's quarry: someone to take out, a vehicle to destroy. */
 	| "target"
 	/** A car a mission wants the player in. */
-	| "missionVehicle";
+	| "missionVehicle"
+	/** Someone on the player's side in a mission: a witness, a hostage. */
+	| "ally"
+	/** A street job waiting to be picked up. */
+	| "lead";
 
 export interface Blip {
 	id: string;

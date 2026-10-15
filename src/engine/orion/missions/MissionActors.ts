@@ -1,5 +1,5 @@
-import { missionHostileMarkers, placeMissionHostile, releaseMissionHostiles } from "../characters/OrionPedestrian";
-import { missionVehicleMarkers, missionVehicleProgress, placeMissionVehicle, releaseMissionVehicles, startMissionRacers } from "../traffic/OrionVehicle";
+import { alertMissionHostiles, missionHostileMarkers, missionPersonState, placeMissionHostile, releaseMissionHostiles, setMissionFollow } from "../characters/OrionPedestrian";
+import { missionVehicleMarkers, missionVehicleProgress, missionVehicleState, paceMissionVehicle, placeMissionVehicle, releaseMissionVehicles, rerouteMissionVehicle, startMissionRacers } from "../traffic/OrionVehicle";
 import { readPlayerPose } from "../player/PlayerPose";
 import { raiseWanted } from "../police/Wanted";
 import type { MissionSpawn, MissionStage } from "./MissionDirector";
@@ -21,13 +21,18 @@ const racing = new Set<string>();
 function place(spawn: MissionSpawn): boolean {
 	if (spawn.type === "vehicle") {
 		vehicles.add(spawn.id);
-		const placed = placeMissionVehicle(spawn.id, spawn.x, spawn.z, spawn.yaw, spawn.route ?? null, { cruise: spawn.cruise, racer: spawn.racer });
+		const placed = placeMissionVehicle(spawn.id, spawn.x, spawn.z, spawn.yaw, spawn.route ?? null, { cruise: spawn.cruise, racer: spawn.racer, disableBelow: spawn.disableBelow });
 		if (placed && racing.has(spawn.id)) startMissionRacers([spawn.id]);
 		return placed;
 	}
 	people.add(spawn.id);
-	return placeMissionHostile(spawn.id, spawn.x, spawn.z, spawn.armed, spawn.toughness ?? 1);
+	const placed = placeMissionHostile(spawn.id, spawn.x, spawn.z, spawn.armed, spawn.toughness ?? 1, spawn.role ?? "guard", spawn.yaw ?? 0);
+	if (placed && following.has(spawn.id)) setMissionFollow(spawn.id, true);
+	return placed;
 }
+
+/** People asked to follow the player — kept, so one whose model arrives late still does. */
+const following = new Set<string>();
 
 export const missionStage: MissionStage = {
 	spawn(spawns) {
@@ -40,6 +45,7 @@ export const missionStage: MissionStage = {
 		vehicles.clear();
 		people.clear();
 		racing.clear();
+		following.clear();
 	},
 	startRace(racers) {
 		for (const id of racers) racing.add(id);
@@ -51,6 +57,26 @@ export const missionStage: MissionStage = {
 	alarm(stars) {
 		const player = readPlayerPose();
 		raiseWanted(stars, player.x, player.z);
+	},
+	actor(id) {
+		if (vehicles.has(id)) return missionVehicleState(id);
+		if (!people.has(id)) return null;
+		const person = missionPersonState(id);
+		return person ? { x: person.x, z: person.z, integrity: 100, aboard: person.aboard } : null;
+	},
+	follow(id, on) {
+		if (on) following.add(id);
+		else following.delete(id);
+		setMissionFollow(id, on);
+	},
+	alertAll() {
+		alertMissionHostiles(people);
+	},
+	reroute(id, route, cruise) {
+		rerouteMissionVehicle(id, route, cruise);
+	},
+	pace(id, cruise) {
+		paceMissionVehicle(id, cruise);
 	},
 };
 

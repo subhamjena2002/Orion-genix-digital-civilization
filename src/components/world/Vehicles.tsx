@@ -7,7 +7,8 @@ import { BLEND_NORMAL, Entity as PlayCanvasEntity, MeshInstance, StandardMateria
 import { memo, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { ORION_ASSET_PATHS } from "@/engine/orion/assets/AssetPaths";
-import { MISSIONS, SAFEHOUSE } from "@/engine/orion/missions/MissionCatalog";
+import { ALL_MISSIONS, SAFEHOUSE } from "@/engine/orion/missions/MissionCatalog";
+import { missionSpawns } from "@/engine/orion/missions/MissionDirector";
 import { onProgressChange, progressVersion, readProgress } from "@/engine/orion/missions/Progress";
 import { pavedHeightAt } from "@/engine/orion/roads/RoadNetwork";
 import { terrainHeightAt } from "@/engine/orion/world/Mountains";
@@ -133,12 +134,15 @@ export const FireEngines = memo(function FireEngines() {
  * Every car any mission puts into the world, each its own slot (out of the world until needed).
  * A car several missions use — the race rivals — is one slot, shared.
  */
+const MISSION_CAR_SPAWNS = ALL_MISSIONS.flatMap(missionSpawns).flatMap((spawn) => spawn.type === "vehicle" ? [spawn] : []);
+/** Someone at the wheel if any mission drives it anywhere. */
+const DRIVEN = new Set([
+	...MISSION_CAR_SPAWNS.filter((spawn) => spawn.route !== undefined).map((spawn) => spawn.id),
+	...ALL_MISSIONS.flatMap((mission) => (mission.triggers ?? []).flatMap((trigger) => trigger.reroute ? [trigger.reroute.id] : [])),
+]);
 const MISSION_FLEET: readonly (VehicleSpawn & { driven: boolean })[] = [
-	...new Map(MISSIONS
-		.flatMap((mission) => [...(mission.spawns ?? []), ...mission.objectives.flatMap((objective) => objective.spawns ?? [])])
-		.flatMap((spawn) => spawn.type === "vehicle" ? [spawn] : [])
-		.map((spawn) => [spawn.id, spawn] as const)).values(),
-].map((spawn, index) => ({ id: spawn.id, style: spawn.style, colour: spawn.colour, seed: 3307 * (index + 1), speedFactor: 1, driven: spawn.route !== undefined }));
+	...new Map(MISSION_CAR_SPAWNS.map((spawn) => [spawn.id, spawn] as const)).values(),
+].map((spawn, index) => ({ id: spawn.id, style: spawn.style, colour: spawn.colour, seed: 3307 * (index + 1), speedFactor: 1, driven: DRIVEN.has(spawn.id) }));
 
 /** Mission cars (see OrionVehicle.placeForMission): the ones parked for the player have nobody in them. */
 export const MissionVehicles = memo(function MissionVehicles() {

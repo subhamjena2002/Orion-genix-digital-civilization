@@ -325,6 +325,21 @@ export function projectOnto(highway: Highway, x: number, z: number): HighwayProj
 	return best!;
 }
 
+/**
+ * Where someone standing on a route would stand: its deck (bridge or cutting), or the turning
+ * circle at a spur's end; null off every route.
+ */
+export function highwayGroundAt(x: number, z: number): number | null {
+	const deck = highwaySurfaceAt(x, z);
+	if (deck !== null) return deck;
+	for (const highway of HIGHWAYS) {
+		if (!highway.endPlaza) continue;
+		const end = highway.samples[highway.samples.length - 1];
+		if (Math.hypot(end.x - x, end.z - z) <= HIGHWAY_GEOMETRY.plazaRadius) return end.y;
+	}
+	return null;
+}
+
 /** Road surface height of whichever route passes over (x, z), or null off every route. */
 export function highwaySurfaceAt(x: number, z: number): number | null {
 	for (const highway of HIGHWAYS) {

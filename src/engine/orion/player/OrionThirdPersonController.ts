@@ -753,9 +753,11 @@ export class OrionThirdPersonController extends Script {
 		const car = this.car;
 		if (!car) return;
 		if (car.burnedOut) {
-			// The car went up with the player still in it.
+			// The car went up with the player still in it: a death like any other, so the wasted
+			// screen shows and a mission fails. Respawning straight away stowed the mission's cars
+			// and people without failing it, leaving the objective with nothing left to act on.
 			this.leaveCar(car);
-			this.respawn();
+			this.die();
 			return;
 		}
 		if (this.doorCloseTimer > 0) {
@@ -1157,6 +1159,9 @@ export class OrionThirdPersonController extends Script {
 	}
 
 	private die() {
+		// Already down: the fire beside a burnt-out car can still finish off the body, and a second
+		// death would restart the wasted screen and fail the mission twice.
+		if (this.wastedTimer > 0) return;
 		this.wastedTimer = WASTED_SECONDS;
 		// Hands off the controls: nothing reads the keys while wasted, so the gunship flew on,
 		// climbing and turning on whatever was last held, until the respawn.

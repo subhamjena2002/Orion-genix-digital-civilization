@@ -7,7 +7,8 @@ import { memo } from "react";
 
 import { OrionPedestrian } from "@/engine/orion/characters/OrionPedestrian";
 import { ORION_PEDESTRIANS, type PedestrianSpawn } from "@/engine/orion/characters/Pedestrians";
-import { MISSIONS } from "@/engine/orion/missions/MissionCatalog";
+import { ALL_MISSIONS } from "@/engine/orion/missions/MissionCatalog";
+import { missionSpawns, type PersonLook } from "@/engine/orion/missions/MissionDirector";
 
 /**
  * The crowd is a fixed pool rather than a distance-culled list: pedestrians roam the whole
@@ -24,14 +25,29 @@ export const Pedestrians = memo(function Pedestrians() {
 
 /** A crew's colours: dark trousers, the gang's red, so they read as a group from down the street. */
 const HOSTILE_PALETTE = { skin: "#8d5a3b", shirt: "#a31515", pants: "#1c1c1f", hair: "#141010" };
-const HOSTILE_MODEL = { path: "/models/characters/orion-citizen/orion-citizen-casual.glb", scale: 1.8 / 4.74 };
+const CITIZEN = "/models/characters/orion-citizen";
+/** The models a mission's people can wear, each scaled to human height (see Pedestrians). */
+const PERSON_MODELS: Readonly<Record<NonNullable<PersonLook["model"]>, { path: string; scale: number }>> = {
+	manCasual: { path: `${CITIZEN}/orion-citizen-casual.glb`, scale: 1.8 / 4.74 },
+	man: { path: `${CITIZEN}/orion-citizen.glb`, scale: 1.8 / 4.75 },
+	woman: { path: `${CITIZEN}/citizen-woman-a.glb`, scale: 1 },
+	womanSuit: { path: `${CITIZEN}/citizen-woman-suit.glb`, scale: 1 },
+	womanWorker: { path: `${CITIZEN}/citizen-woman-worker.glb`, scale: 1 },
+	womanCasual: { path: `${CITIZEN}/citizen-woman-casual.glb`, scale: 1 },
+};
 
-/** Everyone any mission sets against the player, each their own slot: out of the world until needed. */
+/**
+ * Everyone any mission puts in the world, each their own slot (out of the world until needed). A
+ * person several missions use is one slot, dressed as they're first listed.
+ */
 const MISSION_HOSTILES: readonly PedestrianSpawn[] = [
-	...new Set(MISSIONS
-		.flatMap((mission) => [...(mission.spawns ?? []), ...mission.objectives.flatMap((objective) => objective.spawns ?? [])])
-		.flatMap((spawn) => spawn.type === "hostile" ? [spawn.id] : [])),
-].map((id, index) => ({ id, assetPath: HOSTILE_MODEL.path, scale: HOSTILE_MODEL.scale, speed: 1.3, seed: 7717 * (index + 1), palette: HOSTILE_PALETTE }));
+	...new Map(ALL_MISSIONS
+		.flatMap(missionSpawns)
+		.flatMap((spawn) => spawn.type === "hostile" ? [[spawn.id, spawn] as const] : [])).values(),
+].map((spawn, index) => {
+	const model = PERSON_MODELS[spawn.model ?? "manCasual"];
+	return { id: spawn.id, assetPath: model.path, scale: model.scale, speed: 1.3, seed: 7717 * (index + 1), palette: spawn.palette ?? HOSTILE_PALETTE };
+});
 
 /** A mission's hostiles (see OrionPedestrian.placeForMission). */
 export const MissionHostiles = memo(function MissionHostiles() {

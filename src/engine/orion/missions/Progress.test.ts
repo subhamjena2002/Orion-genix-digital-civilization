@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { MissionDefinition } from "./MissionDirector";
-import { addCash, availableMissions, hasPassed, ownsWeapon, parseProgress, readProgress, recordPass, resetProgress, setProgressStorage, STARTING_WEAPONS } from "./Progress";
+import { addCash, availableMissions, collect, hasCollected, hasFlag, hasPassed, ownsWeapon, parseProgress, readProgress, recordJob, recordPass, REP_LIMIT, resetProgress, setProgressStorage, STARTING_WEAPONS } from "./Progress";
 
 class MemoryStorage {
 	public readonly items = new Map<string, string>();
@@ -132,5 +132,67 @@ describe("parseProgress", () => {
 		expect(progress.bestTimes).toEqual({ a: 12 });
 		expect(progress.weapons).toEqual(["fists", "sword", "pistol", "ar"]);
 		expect(progress.garage).toHaveLength(1);
+	});
+});
+
+describe("the story so far", () => {
+	it("keeps a pass's choices, standing and extra pay the first time only", () => {
+		const run = mission("m", { reward: { cash: 100, rep: { street: 1 } } });
+		recordPass(run, 10, { flags: ["dez-owes"], rating: 2, extras: [{ cash: 50, rep: { law: -2 } }] });
+		expect(readProgress().cash).toBe(150);
+		expect(hasFlag("dez-owes")).toBe(true);
+		expect(readProgress().rep).toEqual({ street: 1, sunset: 0, law: -2, meridian: 0 });
+		// A replay choosing differently changes neither the story nor the purse; a better rating is kept.
+		recordPass(run, 10, { flags: ["dez-exposed"], rating: 3, extras: [{ cash: 50 }] });
+		expect(readProgress().cash).toBe(150);
+		expect(hasFlag("dez-exposed")).toBe(false);
+		expect(readProgress().ratings.m).toBe(3);
+		recordPass(run, 10, { rating: 1 });
+		expect(readProgress().ratings.m).toBe(3);
+		// And it all survives a reload.
+		setProgressStorage(storage);
+		expect(hasFlag("dez-owes")).toBe(true);
+		expect(readProgress().rep.law).toBe(-2);
+		expect(readProgress().ratings.m).toBe(3);
+	});
+
+	it("holds back missions whose story flags don't hold", () => {
+		const catalog = [mission("a"), mission("only-if-owed", { requires: ["a"], onlyIf: ["dez-owes"] })];
+		recordPass(catalog[0], 1);
+		expect(availableMissions(catalog).map((m) => m.id)).toEqual([]);
+		recordPass(mission("x"), 1, { flags: ["dez-owes"] });
+		expect(availableMissions(catalog).map((m) => m.id)).toEqual(["only-if-owed"]);
+	});
+
+	it("keeps standing within its limits", () => {
+		for (let i = 0; i < 30; i++) recordJob(10, { sunset: 1, meridian: -1 });
+		expect(readProgress().rep.sunset).toBe(REP_LIMIT);
+		expect(readProgress().rep.meridian).toBe(-REP_LIMIT);
+		expect(readProgress().jobs).toBe(30);
+		expect(readProgress().cash).toBe(300);
+	});
+
+	it("pays for a story piece once", () => {
+		expect(collect("manifest-1", 250)).toBe(true);
+		expect(collect("manifest-1", 250)).toBe(false);
+		expect(hasCollected("manifest-1")).toBe(true);
+		expect(readProgress().cash).toBe(250);
+	});
+
+	it("reads back only well-formed story state", () => {
+		const progress = parseProgress(JSON.stringify({
+			flags: ["a", 1, "a"],
+			rep: { street: 4.4, law: "high", meridian: -99 },
+			ratings: { m: 2, n: 7, o: "three" },
+			collected: ["manifest-2", null],
+			jobs: -3,
+		}));
+		expect(progress.flags).toEqual(["a"]);
+		expect(progress.rep).toEqual({ street: 4, sunset: 0, law: 0, meridian: -REP_LIMIT });
+		expect(progress.ratings).toEqual({ m: 2 });
+		expect(progress.collected).toEqual(["manifest-2"]);
+		expect(progress.jobs).toBe(0);
+		// A save from before any of this loads as a story not yet begun.
+		expect(parseProgress(JSON.stringify({ cash: 10, passed: ["clean-wheels"] })).flags).toEqual([]);
 	});
 });

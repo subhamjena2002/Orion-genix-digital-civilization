@@ -242,6 +242,8 @@ function alongLeg(from: readonly [number, number], to: readonly [number, number]
 export interface MissionDriving {
 	cruise?: number;
 	racer?: boolean;
+	/** The driver gives up and pulls over once the car's knocked below this integrity. */
+	disableBelow?: number;
 }
 
 /**
@@ -424,6 +426,7 @@ export class OrionVehicle extends Script {
 	private missionCruise = MISSION_CRUISE;
 	private missionRacer = false;
 	private missionHeld = false;
+	private missionDisableBelow = 0;
 	/** Time spent going nowhere since it last got going properly. */
 	private missionStuckSeconds = 0;
 	/** Lane-following time owed from frames this car's driving was skipped (far, unseen). */
@@ -1398,6 +1401,7 @@ export class OrionVehicle extends Script {
 		this.reverseSeconds = 0;
 		this.missionRacer = options.racer ?? false;
 		this.missionHeld = this.missionRacer;
+		this.missionDisableBelow = options.disableBelow ?? 0;
 		this.driver = this.missionRoute ? "convoy" : "parked";
 	}
 
@@ -1410,7 +1414,34 @@ export class OrionVehicle extends Script {
 		this.missionClaimed = false;
 		this.missionRacer = false;
 		this.missionHeld = false;
+		this.missionDisableBelow = 0;
 		if (this.driver === "convoy") this.driver = "parked";
+	}
+
+	/** Where it is and what shape it's in, while a mission has it out. */
+	public get missionState(): { x: number; z: number; integrity: number } | null {
+		if (!this.missionClaimed || this.stowed) return null;
+		const car = this.carPhysics();
+		return { x: car.x, z: car.z, integrity: this.burnedOut ? 0 : this.integrity };
+	}
+
+	/** Keeps to its road at a new speed. */
+	public pace(cruise: number) {
+		if (this.missionClaimed) this.missionCruise = cruise;
+	}
+
+	/** A new road to drive (and pace), from where it is now; a car that had pulled over sets off again. */
+	public reroute(route: readonly (readonly [number, number])[], cruise?: number) {
+		if (!this.missionClaimed || this.stowed || this.burnedOut || route.length === 0) return;
+		if (this.missionDisableBelow > 0 && this.integrity < this.missionDisableBelow) return;
+		const car = this.carPhysics();
+		this.missionRoute = route;
+		this.missionRouteIndex = 0;
+		this.missionStartX = car.x;
+		this.missionStartZ = car.z;
+		this.missionStuckSeconds = 0;
+		if (cruise !== undefined) this.missionCruise = cruise;
+		if (this.driver === "parked" || this.driver === "convoy") this.driver = "convoy";
 	}
 
 	/**
@@ -1461,6 +1492,15 @@ export class OrionVehicle extends Script {
 			controls.drive = 0;
 			controls.steer = 0;
 			controls.handbrake = true;
+			return;
+		}
+		if (this.missionDisableBelow > 0 && this.integrity < this.missionDisableBelow) {
+			// Beaten: the driver gives up and stops where they are.
+			this.driver = "parked";
+			this.missionRoute = null;
+			controls.drive = 0;
+			controls.steer = 0;
+			controls.brake = 1;
 			return;
 		}
 		if (this.reverseSeconds > 0) {
@@ -2481,6 +2521,21 @@ export function startMissionRacers(ids: Iterable<string>): void {
 /** How far round its route a mission car is, or null if it isn't out. */
 export function missionVehicleProgress(id: string): { passed: number; x: number; z: number } | null {
 	return missionCars.get(id)?.routeProgress ?? null;
+}
+
+/** Where a mission car is and what shape it's in, if it's out. */
+export function missionVehicleState(id: string): { x: number; z: number; integrity: number } | null {
+	return missionCars.get(id)?.missionState ?? null;
+}
+
+/** A mission car on its road at a new speed. */
+export function paceMissionVehicle(id: string, cruise: number): void {
+	missionCars.get(id)?.pace(cruise);
+}
+
+/** Sends a mission car off along a new road. */
+export function rerouteMissionVehicle(id: string, route: readonly (readonly [number, number])[], cruise?: number): void {
+	missionCars.get(id)?.reroute(route, cruise);
 }
 
 /** Takes a mission's cars out of the world again (bar the one the player's in). */

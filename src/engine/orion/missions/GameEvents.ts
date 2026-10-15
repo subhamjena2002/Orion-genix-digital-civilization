@@ -20,7 +20,9 @@ export type GameEvent =
 	/** A mission's car reached the end of its route: whoever was meant to stop it didn't. */
 	| { type: "actorEscaped"; id: string }
 	/** A race opponent crossed the finish line. */
-	| { type: "racerFinished"; id: string };
+	| { type: "racerFinished"; id: string }
+	/** A mission guard noticed the player (or the trouble they made) and is raising the alarm. */
+	| { type: "hostileAlerted"; id: string };
 
 type Listener = (event: GameEvent) => void;
 
