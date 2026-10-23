@@ -36,6 +36,8 @@ const stage: MissionStage = {
 	alarm: (stars) => calls.push(`alarm ${stars}`),
 	reroute: (id) => calls.push(`reroute ${id}`),
 	pace: (id, cruise) => calls.push(`pace ${id} ${cruise}`),
+	ignite: (id) => calls.push(`ignite ${id}`),
+	letBurn: (id) => calls.push(`letBurn ${id}`),
 };
 
 beforeEach(() => {
@@ -415,5 +417,71 @@ describe("dialogue", () => {
 		expect(readMissionHud().notice).toBe("Checkpoint");
 		director.update(NOTICE_SECONDS, at(0, 0));
 		expect(readMissionHud().notice).toBeNull();
+	});
+});
+
+describe("emergency calls (Code Three's mechanics)", () => {
+	it("takes any vehicle of the asked-for style, and nothing else", () => {
+		director.start(mission([
+			{ kind: "enterVehicle", label: "Take an ambulance", style: "ambulance", x: 0, z: 0 },
+			{ kind: "goto", label: "Go", x: 50, z: 0, radius: 5 },
+		]));
+		emitGameEvent({ type: "vehicleEntered", id: "car", kind: "car", police: false, style: "taxi" });
+		director.update(0.1, at(0, 0));
+		expect(director.objective?.kind).toBe("enterVehicle");
+		emitGameEvent({ type: "vehicleExited", id: "car", kind: "car" });
+		emitGameEvent({ type: "vehicleEntered", id: "car", kind: "car", police: false, style: "ambulance" });
+		director.update(0.1, at(0, 0));
+		expect(director.objective?.kind).toBe("goto");
+	});
+
+	it("won't take a delivery with the passenger left behind", () => {
+		director.start(mission([
+			{ kind: "deliver", label: "Get her to hospital", style: "ambulance", person: "patient", x: 0, z: 0, radius: 10 },
+		], { spawns: [{ type: "hostile", id: "patient", x: 30, z: 0, armed: false, role: "passive" }] }));
+		emitGameEvent({ type: "vehicleEntered", id: "car", kind: "car", police: false, style: "ambulance" });
+		director.update(0.1, at(0, 0));
+		expect(director.phase).toBe("active");
+		expect(readMissionHud().objective).toBe("Wait for them to get in");
+		actors.get("patient")!.aboard = true;
+		director.update(0.1, at(0, 0));
+		expect(director.phase).toBe("passed");
+	});
+
+	it("sets a car alight and lets a held fire burn, from triggers", () => {
+		director.start(mission([
+			{ kind: "goto", step: "respond", label: "Go", x: 100, z: 0, radius: 5 },
+			{ kind: "goto", step: "carry", label: "Go back", x: 0, z: 0, radius: 5 },
+		], {
+			triggers: [
+				{ when: { step: "respond", after: 5 }, ignite: "crash-a" },
+				{ when: { step: "carry" }, letBurn: "crash-b" },
+			],
+		}));
+		director.update(3, at(0, 50));
+		expect(calls).not.toContain("ignite crash-a");
+		director.update(3, at(0, 50));
+		expect(calls).toContain("ignite crash-a");
+		director.update(0.1, at(100, 0));
+		director.update(0.1, at(100, 0));
+		expect(calls).toContain("letBurn crash-b");
+	});
+
+	it("moves on once a crew has put a mission car's fire out", () => {
+		director.start(mission([
+			{ kind: "goto", label: "Get there", x: 50, z: 0, radius: 5 },
+			{ kind: "survive", step: "wait", label: "Wait for the crew", x: 50, z: 0, seconds: 75 },
+			{ kind: "goto", step: "board", label: "Load up", x: 0, z: 0, radius: 5 },
+		], {
+			spawns: [{ type: "vehicle", id: "crash-b", style: "suv", colour: "#555555", x: 55, z: 0, yaw: 0, burning: true }],
+			triggers: [{ when: { step: "wait", putOut: "crash-b" }, goto: "board" }],
+		}));
+		actors.set("crash-b", { x: 55, z: 0, integrity: 21, onFire: true });
+		director.update(0.1, at(50, 0));
+		director.update(5, at(50, 0));
+		expect(director.objective?.step).toBe("wait");
+		actors.set("crash-b", { x: 5, z: 0, integrity: 24, onFire: false });
+		director.update(0.1, at(30, 30));
+		expect(director.objective?.step).toBe("board");
 	});
 });

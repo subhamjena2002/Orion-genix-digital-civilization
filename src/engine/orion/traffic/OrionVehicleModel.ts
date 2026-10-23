@@ -1,14 +1,17 @@
-import { Asset, BLEND_NONE, BLEND_NORMAL, BoundingBox, Color, Entity, Mat4, MeshInstance, Quat, SHADERLANGUAGE_GLSL, Script, StandardMaterial, Vec3, type AppBase, type GraphNode, type Material, type Mesh, type RenderComponent, type Texture } from "playcanvas";
+import { Asset, BLEND_NONE, BLEND_NORMAL, BoundingBox, Color, Entity, Mat4, MeshInstance, Quat, SEMANTIC_POSITION, SHADERLANGUAGE_GLSL, Script, StandardMaterial, Vec3, type AppBase, type GraphNode, type Material, type Mesh, type RenderComponent, type Texture } from "playcanvas";
 
 import { cameraLens, distanceFromCamera, needsPosing, readPlayerPose } from "../player/PlayerPose";
+import { deferredLoadingStarted } from "../rendering/DeferredModels";
+import { calmGate, perFrameAllowance } from "../rendering/FrameBudget";
 import { LOD_PROFILES, projectedPixels, selectLod } from "../rendering/lod/LodPolicy";
-import { buildMesh, compactGeometry, isMergeable, mergeGeometry, mergeMeshInstances } from "../rendering/MeshMerge";
+import { buildMesh, compactGeometry, isMergeable, mergeGeometry, mergeMeshInstances, readVertexStream } from "../rendering/MeshMerge";
+import { shareBatchGeometry } from "../rendering/SharedBatchGeometry";
 import { DOOR_NODE, DRIVER_SIDE, GLASS_NODE, NOT_SIDE_GLASS, SEAT_LATERAL } from "./Carjack";
 import { BodyDamage, isLoosePart, type CrashHit } from "./BodyDamage";
 import { BodyJolt } from "./BodyJolt";
 import type { OrionVehicle } from "./OrionVehicle";
 import { buildOf } from "./VehicleDamage";
-import { createLodEntities, groupByMaterial, requestVehicleLods, type LodEntities } from "./VehicleLod";
+import { createLodEntities, flatMaterialWarm, groupByMaterial, requestVehicleLods, type LodEntities } from "./VehicleLod";
 import {
 	BRAKE_LIGHT_MATERIAL,
 	HEADLIGHT_MATERIAL,
@@ -22,6 +25,7 @@ import {
 	WHEEL_NODE,
 	type VehicleModelSpec,
 } from "./VehicleModels";
+import { emergencyFlash, policeFlash } from "./EmergencyLights";
 
 /** A damaged car stays at full detail (its dents and glass) within this distance of the player. */
 const DAMAGED_FULL_DETAIL = 140;
@@ -95,6 +99,25 @@ const ROOF_RANGE = [0.85, 2.4] as const;
 /** Max size of one batch; a car is ~5 m, so this never splits a car on size. */
 const BATCH_AABB_SIZE = 20;
 let batchGroupCount = 0;
+/** The frame a car last did its setup in (see update): one per frame. */
+let lastSetupFrame = -1;
+/**
+ * Once the loading screen has gone, a car sets up only after the game has run smoothly for a few
+ * frames (see update). The first seconds of play are the busiest — shaders, the models loaded
+ * after the loading screen, the first sight of everything — and a setup landing there took
+ * 115–250 ms where the same model took 8–17 ms a little later (measured, Phase 2.6). Until then
+ * the car draws its model unmerged and drives as ever.
+ */
+const setupGate = calmGate({ frames: 12, frameMs: 50, maxWaitMs: 2000 });
+/**
+ * A car this close to the player sets up without waiting for calm frames: its seat, door and cabin
+ * are handed to the driving script by the setup, and the player may be about to take it (boarding
+ * is from the door, ~2 m). Kept tight: at 30 m every car around the spawn point skipped the wait
+ * and set up in the busiest frames, undoing the gate (measured, Phase 2.7).
+ */
+const SETUP_NOW_WITHIN = 10;
+/** Cars switching to a coarser level of detail, per frame (see update). */
+const allowCoarserLod = perFrameAllowance(3);
 
 /**
  * Merged rigid-body geometry per model (file and variant, see modelKey). Every car using a model
@@ -227,8 +250,16 @@ export class OrionVehicleModel extends Script {
 
 	public update(dt: number) {
 		if (!this.ready) {
+			// One car's setup per frame: cars whose model arrives together (both fire engines, a
+			// fleet of one model) otherwise all merge and batch in the same frame — 240–430 ms
+			// (measured, Phase 2.3). Until then the car draws its model unmerged; it drives as ever.
+			if (this.app.frame === lastSetupFrame) return;
+			const allowed = setupGate.allows(this.app.frame, performance.now(), deferredLoadingStarted());
+			if (!allowed && !this.nearPlayer(SETUP_NOW_WITHIN)) return;
 			this.trySetup();
 			if (!this.ready) return;
+			lastSetupFrame = this.app.frame;
+			setupGate.used(performance.now());
 		}
 		const fit = this.fit;
 		if (!fit) return;
@@ -259,7 +290,10 @@ export class OrionVehicleModel extends Script {
 		const acceleration = dt > 0 ? (speed - this.lastSpeed) / dt : 0;
 		this.lastSpeed = speed;
 		const level = this.chooseLod(position.x, position.z);
-		if (level !== this.lodLevel) this.applyLod(level);
+		// More detail at once (a car coming close, or being taken); less, a few cars a frame: when a
+		// coarser level first becomes usable every distant car wants it together, and switching
+		// them all in one frame was a 356 ms task (measured, Phase 2.3).
+		if (level !== this.lodLevel && (level < this.lodLevel || allowCoarserLod(this.app.frame))) this.applyLod(level);
 		// Out of view, the tilt, the wheels and the swinging loose panels can't be seen: left
 		// alone, the car's whole hierarchy stays clean and the engine skips it each frame.
 		if (!needsPosing(position.x, position.z, this.app.frame, this.slot)) {
@@ -282,6 +316,12 @@ export class OrionVehicleModel extends Script {
 		if (this.lodLevel === 0) this.spinWheels(dt, speed);
 		if (this.wing && this.lodLevel === 0) this.animateWing(dt, speed);
 		this.updateLights(dt);
+	}
+
+	private nearPlayer(within: number): boolean {
+		const position = this.entity.getPosition();
+		const player = readPlayerPose();
+		return Math.hypot(position.x - player.x, position.z - player.z) < within;
 	}
 
 	private trySetup() {
@@ -315,8 +355,7 @@ export class OrionVehicleModel extends Script {
 		});
 
 		const spec = this.spec;
-		const cacheKey = spec.keepPaint ? modelKey(spec) : `${modelKey(spec)}|${this.paint}`;
-		requestVehicleLods(this.app.graphicsDevice, cacheKey, lodGroups, model.getWorldTransform(), this.radius, fit.getLocalScale().x)
+		requestVehicleLods(this.app.graphicsDevice, modelKey(spec), spec.keepPaint ? "" : this.paint, lodGroups, model.getWorldTransform(), this.radius, fit.getLocalScale().x)
 			.then((meshes) => {
 				if (!meshes || this.destroyed) return;
 				this.lodEntities = createLodEntities(this.app, model, meshes, lodGroups);
@@ -340,6 +379,8 @@ export class OrionVehicleModel extends Script {
 		const lens = cameraLens();
 		const pixels = projectedPixels(this.radius, distanceFromCamera(x, z), lens.fov, lens.viewportHeight);
 		const level = selectLod(pixels, this.lodLevel, profile);
+		// LOD2 and LOD3 use the flat paint (LOD2 for its shadow): not before its shaders are built.
+		if (!flatMaterialWarm()) return Math.min(level, 1);
 		return this.burnt ? Math.min(level, 2) : level;
 	}
 
@@ -474,7 +515,13 @@ export class OrionVehicleModel extends Script {
 			}
 		}
 		this.batchGroupId = group.id;
-		this.on("destroy", () => batcher.removeGroup(group.id));
+		// Cars of one model batch the same parts: the first builds the geometry, the rest reuse it
+		// (reading it back per car was 15–58 ms each, measured in Phase 2.5).
+		const unshare = shareBatchGeometry(this.app, group.id);
+		this.on("destroy", () => {
+			unshare();
+			batcher.removeGroup(group.id);
+		});
 	}
 
 	/**
@@ -538,15 +585,16 @@ export class OrionVehicleModel extends Script {
 		const toLocal = new Mat4().copy(this.entity.getWorldTransform()).invert();
 		const relative = new Mat4();
 		const point = new Vec3();
-		const positions: number[] = [];
 		let highest = -Infinity;
 		for (const instance of instances) {
 			const box = localBounds(this.entity, [instance]);
 			if (Math.abs(box.center.z - z) > box.halfExtents.z + ROOF_SAMPLE_HALF) continue;
 			if (Math.abs(box.center.x - x) > box.halfExtents.x + ROOF_SAMPLE_HALF) continue;
 			if (box.center.y + box.halfExtents.y <= highest) continue;
-			positions.length = 0;
-			const count = instance.mesh.getPositions(positions);
+			// A typed array, read directly: into a plain array, a body this big took up to ~590 ms
+			// of one car's setup and fed a major collection (measured, Phase 2.7).
+			const positions = new Float32Array((instance.mesh.vertexBuffer?.numVertices ?? 0) * 3);
+			const count = readVertexStream(instance.mesh, SEMANTIC_POSITION, positions);
 			relative.mul2(toLocal, instance.node.getWorldTransform());
 			for (let i = 0; i < count; i++) {
 				point.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
@@ -956,15 +1004,16 @@ export class OrionVehicleModel extends Script {
 			}
 		}
 
-		if (!this.police || this.sirenMaterials.length === 0) return;
-		// Only on a chase or with the player at the wheel; a parked patrol car's lights are off.
+		// Police and emergency vehicles only: a tow truck's amber work beacons keep their glow.
+		const emergency = this.vehicle?.emergency ?? false;
+		if (!(this.police || emergency) || this.sirenMaterials.length === 0) return;
+		// Only on a call or with the player at the wheel; a parked car's lights are off.
 		const flashing = this.vehicle?.lightsFlashing ?? false;
 		if (flashing) this.flashTimer += dt;
-		const redPhase = Math.floor(this.flashTimer / FLASH_SECONDS) % 2 === 0;
 		this.sirenMaterials.forEach((material, index) => {
 			const name = (material.name ?? "").toLowerCase();
 			const isBlue = name.includes("blue") || (!name.includes("red") && index % 2 === 1);
-			const on = flashing && (isBlue ? !redPhase : redPhase);
+			const on = flashing && (emergency ? emergencyFlash(this.flashTimer, isBlue) : policeFlash(this.flashTimer, isBlue, FLASH_SECONDS));
 			const emissive = on ? (isBlue ? SIREN_BLUE : SIREN_RED) : SIREN_OFF;
 			if (material.emissive.equals(emissive)) return;
 			material.emissive = emissive;

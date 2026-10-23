@@ -2371,6 +2371,35 @@ body {
   font-weight: 700;
 }
 
+.orion-loading-bytes {
+  margin-top: 0.6rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  color: rgba(226, 228, 255, 0.5);
+}
+
+.orion-background-loading {
+  position: fixed;
+  left: 50%;
+  bottom: 0.6rem;
+  z-index: 5;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 2rem);
+  margin: 0;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(8, 10, 24, 0.45);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  color: rgba(226, 228, 255, 0.62);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
 .orion-loading-tip {
   min-height: 3em;
   margin-top: 2.2rem;

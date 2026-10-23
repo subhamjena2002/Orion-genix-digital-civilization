@@ -30,6 +30,8 @@ export interface BuildingSpec {
 	/** Bottom to top; the first tier's inset is ignored. */
 	tiers: readonly Tier[];
 	tint: Rgb;
+	/** The ground floor's tint: shopfronts warm or cool, so a row of them doesn't repeat. */
+	groundTint: Rgb;
 	trimTint: Rgb;
 	accentTint: Rgb;
 	cornice: boolean;
@@ -194,7 +196,7 @@ export function buildCityBuilding(spec: BuildingSpec): BuildingGeometry {
 	const roofGrey: Rgb = shadeOf([0.62, 0.6, 0.57], 0.85 + hash01(spec.seed, 99) * 0.25);
 
 	if (spec.ground) {
-		facadeBand(ground, halfW, halfD, 0, groundTop, (y) => 1 - y / GROUND_METRES, uOffset, [1, 1, 1]);
+		facadeBand(ground, halfW, halfD, 0, groundTop, (y) => 1 - y / GROUND_METRES, uOffset, spec.groundTint);
 	}
 
 	spec.tiers.forEach((tier, index) => {

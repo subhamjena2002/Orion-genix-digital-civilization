@@ -4,14 +4,35 @@
     {
       "name": "orion-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 3000
     },
     {
       "name": "orion-prod-cloudflare",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["-y", "wrangler@4", "dev", "--port", "8787"],
+      "runtimeArgs": [
+        "-y",
+        "wrangler@4",
+        "dev",
+        "--port",
+        "8787"
+      ],
       "port": 8787
+    },
+    {
+      "name": "orion-dev-3005",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "3005"
+      ],
+      "port": 3005
     }
   ]
 }

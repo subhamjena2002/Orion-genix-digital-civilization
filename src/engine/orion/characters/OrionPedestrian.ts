@@ -98,6 +98,8 @@ const HOSTILE_GUN: PoliceGun = { weapon: "pistol", interval: 1.05, damage: 9, ca
 const STOW_Y = -400;
 const BODY_RADIUS = 0.3;
 const BODY_HEIGHT = 1.8;
+/** A person struck while the player is driving this close counts as the player's doing. */
+const STRUCK_BY_PLAYER_RANGE = 8;
 /** A pedestrian who fights back punches like this. */
 const PUNCH = { windup: 0.28, active: 0.12, recovery: 0.35, cooldown: 0.45 };
 const PUNCH_DAMAGE = 7;
@@ -758,7 +760,16 @@ export class OrionPedestrian extends Script {
 			this.wound = "none";
 			this.restoreBody();
 		}
+		const wasAlive = this.health.alive;
 		this.health.damage(this.health.current);
+		// Run over or caught in a blast is a death like any other: missions waiting on it (a target
+		// to stop, someone to protect) must hear of it, or they wait for ever. Nothing says who did
+		// it, so it's the player's if they were driving right here.
+		if (wasAlive) {
+			const player = readPlayerPose();
+			const byPlayer = player.inVehicle && Math.hypot(player.x - this.posX, player.z - this.posZ) < STRUCK_BY_PLAYER_RANGE;
+			emitGameEvent({ type: "personKilled", id: this.entity.name, byPlayer });
+		}
 		this.brain.onDamaged(null, true);
 		if (this.agent) {
 			this.agent.alive = false;

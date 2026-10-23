@@ -7,11 +7,13 @@
  * so a listener sees each event as it happens, mid-frame.
  */
 
+import type { VehicleStyle } from "../traffic/Vehicles";
+
 export type GameVehicleKind = "car" | "jet" | "gunship";
 
 export type GameEvent =
 	/** The player is in the seat and in control (after any carjack, not at its start). */
-	| { type: "vehicleEntered"; id: string; kind: GameVehicleKind; police: boolean }
+	| { type: "vehicleEntered"; id: string; kind: GameVehicleKind; police: boolean; style?: VehicleStyle }
 	| { type: "vehicleExited"; id: string; kind: GameVehicleKind }
 	| { type: "playerDied" }
 	| { type: "playerBusted" }

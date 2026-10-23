@@ -13,6 +13,7 @@ const BASE: BuildingSpec = {
 	ground: "shop",
 	tiers: [{ floors: 4, inset: 0 }],
 	tint: [1, 0.9, 0.8],
+	groundTint: [1, 0.94, 0.86],
 	trimTint: [1, 1, 1],
 	accentTint: [0.2, 0.6, 0.6],
 	cornice: true,
@@ -139,3 +140,34 @@ describe("designBuilding", () => {
 		expect(styles.size).toBeGreaterThanOrEqual(5);
 	});
 });
+
+describe("shopfronts along a street", () => {
+	it("never show the same front twice in a row: neighbours along it, or behind them across a block", () => {
+		const shops = ORION_BUILDING_MAP.map((placement, index) => ({ placement, spec: designBuilding(placement, index + 1) })).filter(({ spec }) => spec.ground === "shop");
+		let pairs = 0;
+		for (const [i, a] of shops.entries()) {
+			for (const b of shops.slice(i + 1)) {
+				const dx = Math.abs(a.placement.position[0] - b.placement.position[0]);
+				const dz = Math.abs(a.placement.position[2] - b.placement.position[2]);
+				if (Math.hypot(dx, dz) > 19) continue;
+				pairs++;
+				expect([a.spec.bayOffset, a.spec.groundTint].join(), `${a.placement.id}/${b.placement.id}`).not.toBe([b.spec.bayOffset, b.spec.groundTint].join());
+			}
+		}
+		expect(pairs).toBeGreaterThan(10);
+	});
+});
+
+describe("the building map", () => {
+	it("never stands two buildings on the same ground", () => {
+		for (const [i, a] of ORION_BUILDING_MAP.entries()) {
+			for (const b of ORION_BUILDING_MAP.slice(i + 1)) {
+				// Each footprint as its inscribed square: a real overlap, not a near miss at a corner.
+				const reach = (Math.min(...a.footprint) + Math.min(...b.footprint)) / 2;
+				const apart = Math.abs(a.position[0] - b.position[0]) >= reach || Math.abs(a.position[2] - b.position[2]) >= reach;
+				expect(apart, `${a.id} and ${b.id}`).toBe(true);
+			}
+		}
+	});
+});
+

@@ -8,9 +8,8 @@ import type { Route } from "@/engine/orion/navigation/RoadGraph";
 import { missionBlips } from "@/engine/orion/missions/MissionBlips";
 import { readCameraView } from "@/engine/orion/player/PlayerPose";
 import { policeMarkers, type PoliceMarker } from "@/engine/orion/traffic/OrionVehicle";
-import { ESTATE_NAMES } from "@/engine/orion/world/Estates";
+import { placeName } from "@/engine/orion/world/PlaceNames";
 import { isOnLand, landBounds } from "@/engine/orion/world/StateOutline";
-import { ORION_DISTRICTS } from "@/engine/orion/world/WorldModel";
 import { BLIP_LABELS, BlipIcon } from "./MapIcons";
 import { MAP_COLOURS, MapLayers } from "./MapLayers";
 import { useTouchDevice } from "./useTouchDevice";
@@ -97,14 +96,6 @@ function useRoute(target: Target | null, x: number, z: number): Route | null {
 
 function formatDistance(metres: number): string {
 	return metres >= 1000 ? `${(metres / 1000).toFixed(1)} km` : `${Math.round(metres / 10) * 10} m`;
-}
-
-/** Where the player is, by name: an estate, a district, or just the state. */
-function placeName(x: number, z: number): string {
-	const estate = ESTATE_NAMES.find((candidate) => Math.hypot(candidate.x - x, candidate.z - z) < 140);
-	if (estate) return estate.name;
-	const district = ORION_DISTRICTS.find((candidate) => Math.abs(candidate.bounds.center[0] - x) <= candidate.bounds.size[0] / 2 + 20 && Math.abs(candidate.bounds.center[2] - z) <= candidate.bounds.size[1] / 2 + 20);
-	return district ? district.name : "Orion State";
 }
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));

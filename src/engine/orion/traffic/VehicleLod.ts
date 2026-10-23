@@ -16,9 +16,11 @@ import {
 	type Texture,
 } from "playcanvas";
 
+import { timeSlicer } from "../rendering/FrameBudget";
+import { prewarmMeshInstances } from "../rendering/ModelPrewarm";
 import { buildMesh, compactGeometry, isMergeable, mergeGeometry, type MergedGeometry, type MergedStream } from "../rendering/MeshMerge";
 import { LOD_PROFILES, lodErrorBudget } from "../rendering/lod/LodPolicy";
-import type { SimplifyLevel } from "../rendering/lod/Simplify";
+import type { SimplifyInput, SimplifyLevel } from "../rendering/lod/Simplify";
 import { keepVisible } from "../rendering/lod/HiddenSurface";
 import { simplifyInBackground, visibilityInBackground } from "../rendering/lod/SimplifyClient";
 import { shadowOnlyLayer } from "../rendering/ShadowOnlyLayer";
@@ -26,6 +28,18 @@ import { averageColour, releasedAverageColour } from "../rendering/TextureBudget
 import { BRAKE_LIGHT_MATERIAL, HEADLIGHT_MATERIAL, SIREN_MATERIAL } from "./VehicleModels";
 /** At LOD2 and LOD3 a material simplified below this is a speck, not worth its draw call. */
 const MIN_FAR_TRIANGLES = 6;
+/**
+ * How much a vertex colour difference (0–1 per channel) counts against geometric error when
+ * simplifying. Code-built vehicles carry their part colours and baked occlusion in the vertices
+ * (scripts/vehicle-kit.mjs); judged on shape alone, flat panels lost the vertices holding that
+ * shading and came out blotched or darkened (the truck's cargo box most of all, Phase 3.1).
+ * 0.5 cut colour error 2–4x for 10–20% more triangles; 1 bought a little more for up to 42% more.
+ */
+const COLOUR_WEIGHT = 0.5;
+/** Most milliseconds of LOD building in one go before letting the browser draw (see buildLods). */
+const LOD_SLICE_MS = 8;
+/** The player's camera (OrionCanvas), where the flat paint is prewarmed. */
+const PREWARM_CAMERA = "third-person-camera";
 
 interface Group {
 	material: Material;
@@ -45,7 +59,21 @@ interface LodMeshes {
 	triangles: number[];
 }
 
-const cache = new Map<string, { signature: string; promise: Promise<LodMeshes | null> }>();
+/**
+ * What every paint of a model shares: LOD1, LOD2, LOD3's glass and lamps, and LOD3's body before
+ * it's painted. A fleet-painted model used to be simplified again for every paint (each costing
+ * worker jobs and main-thread mesh building), though only the body's vertex colours differ.
+ */
+interface SharedLods {
+	shaped: (Mesh | null)[][];
+	flatExtras: { group: number; mesh: Mesh }[];
+	/** LOD3's body, simplified, with only its own vertex colours; and each vertex's group. */
+	flatTemplate: { geometry: MergedGeometry; groupOf: Uint16Array } | null;
+	triangles: number[];
+}
+
+const sharedCache = new Map<string, { signature: string; promise: Promise<SharedLods | null> }>();
+const paintedCache = new Map<string, { signature: string; promise: Promise<LodMeshes | null> }>();
 let flatMaterial: StandardMaterial | null = null;
 
 /** Groups a car's visible parts by material and vertex layout, in hierarchy order. */
@@ -74,32 +102,75 @@ function kindOf(material: Material): GroupKind {
 /**
  * Builds (or fetches from the cache) the simplified meshes for a car.
  *
- * `cacheKey` identifies the model and, for fleet-painted cars, the paint. `frame` is the world
- * transform of the entity the LOD meshes will hang under at identity; `radius` is the car's
- * bounding radius in metres and `worldScale` metres per model unit.
+ * `modelKey` identifies the model and `paint` a fleet-painted car's paint ("" for a model that
+ * keeps its own). The levels are simplified once per model; another paint only recolours LOD3's
+ * body. `frame` is the world transform of the entity the LOD meshes will hang under at identity;
+ * `radius` is the car's bounding radius in metres and `worldScale` metres per model unit.
  */
 export function requestVehicleLods(
 	device: GraphicsDevice,
-	cacheKey: string,
+	modelKey: string,
+	paint: string,
 	groups: readonly Group[],
 	frame: Mat4,
 	radius: number,
 	worldScale: number,
 ): Promise<LodMeshes | null> {
 	const signature = signatureOf(groups);
-	const cached = cache.get(cacheKey);
-	if (cached && cached.signature === signature) return cached.promise;
-	const promise = buildLods(device, groups, frame, radius, worldScale).catch((error: unknown) => {
-		console.warn("Vehicle LOD build failed; the car keeps full detail at every distance.", error);
-		return null;
-	});
-	cache.set(cacheKey, { signature, promise });
+	const key = `${modelKey}|${paint}`;
+	const painted = paintedCache.get(key);
+	if (painted && painted.signature === signature) return painted.promise;
+	let shared = sharedCache.get(modelKey);
+	if (!shared || shared.signature !== signature) {
+		const promise = buildShared(device, groups, frame, radius, worldScale).catch((error: unknown) => {
+			console.warn("Vehicle LOD build failed; the car keeps full detail at every distance.", error);
+			return null;
+		});
+		sharedCache.set(modelKey, (shared = { signature, promise }));
+	}
+	const promise = shared.promise.then((levels) => (levels ? paintLevels(device, levels, groups) : null));
+	paintedCache.set(key, { signature, promise });
 	return promise;
 }
 
-async function buildLods(device: GraphicsDevice, groups: readonly Group[], frame: Mat4, radius: number, worldScale: number): Promise<LodMeshes | null> {
+/** One paint's levels: the shared ones, and LOD3's body coloured by this car's materials. */
+function paintLevels(device: GraphicsDevice, levels: SharedLods, groups: readonly Group[]): LodMeshes {
+	const flat = levels.flatTemplate ? buildMesh(device, paintedFlat(levels.flatTemplate, groups)) : null;
+	// The cache owns it for the page's lifetime, so no car's removal can free it.
+	flat?.incRefCount();
+	return { shaped: levels.shaped, flat, flatExtras: levels.flatExtras, triangles: levels.triangles };
+}
+
+/** The LOD3 body template with each vertex's own colour times its group's material colour. */
+function paintedFlat(template: NonNullable<SharedLods["flatTemplate"]>, groups: readonly Group[]): MergedGeometry {
+	const { geometry, groupOf } = template;
+	const colourByGroup = new Map<number, readonly [number, number, number]>();
+	const streams = geometry.streams.map((stream) => {
+		if (stream.semantic !== SEMANTIC_COLOR) return stream;
+		const own = stream.data as unknown as Uint8Array;
+		const colours = new Uint8Array(own.length);
+		for (let v = 0; v < geometry.vertexCount; v++) {
+			const group = groupOf[v];
+			let colour = colourByGroup.get(group);
+			if (!colour) colourByGroup.set(group, (colour = colourOf(groups[group].material)));
+			for (let c = 0; c < 3; c++) colours[v * 4 + c] = Math.round(own[v * 4 + c] * colour[c]);
+			colours[v * 4 + 3] = 255;
+		}
+		return { ...stream, data: colours as unknown as Float32Array };
+	});
+	return { ...geometry, streams };
+}
+
+async function buildShared(device: GraphicsDevice, groups: readonly Group[], frame: Mat4, radius: number, worldScale: number): Promise<SharedLods | null> {
 	if (groups.length === 0) return null;
-	const merged = groups.map((group) => mergeGeometry(group.instances, frame));
+	// Done a group at a time, letting the browser draw between slices: a car's whole set of
+	// levels built in one go took 100–330 ms of the main thread (measured, Phase 2.3).
+	const slice = timeSlicer(LOD_SLICE_MS);
+	const merged: MergedGeometry[] = [];
+	for (const group of groups) {
+		merged.push(mergeGeometry(group.instances, frame));
+		await slice();
+	}
 
 	// Hidden layers (the shell under the paint, the engine, the chassis) go first. Without this,
 	// independently simplified layers drift apart and inner ones show through the paint. Where
@@ -114,7 +185,12 @@ async function buildLods(device: GraphicsDevice, groups: readonly Group[], frame
 	const profile = LOD_PROFILES.vehicle;
 	// The simplifier works in model units, the budget is in metres.
 	const errorAt = (level: number) => lodErrorBudget(level, profile, radius) / Math.max(worldScale, 1e-6);
-	const toInput = (geometry: MergedGeometry) => ({ positions: packedPositions(geometry), indices: geometry.indices });
+	// Colours are kept only where the material draws them.
+	const toInput = (geometry: MergedGeometry, group: number): SimplifyInput => ({
+		positions: packedPositions(geometry),
+		indices: geometry.indices,
+		...(drawsVertexColour(groups[group].material) ? colourAttributes(geometry) : {}),
+	});
 
 	// LOD1 keeps every panel edge in place, so materials meet exactly as modelled. LOD2 lets
 	// edges move within its budget (under a pixel), which is what lets a car built from
@@ -123,48 +199,76 @@ async function buildLods(device: GraphicsDevice, groups: readonly Group[], frame
 		{ error: errorAt(1), prune: false, lockBorder: true },
 		{ error: errorAt(2), prune: true, lockBorder: false, minTriangles: MIN_FAR_TRIANGLES },
 	];
-	const simplified = await simplifyInBackground(geometries.map(toInput), shapedLevels);
-	const shaped = simplified.map((level) => level.map((indices, group) => (
-		indices.length > 0 ? buildMesh(device, compactGeometry(geometries[group], indices)) : null
-	)));
+	const simplified = await simplifyInBackground(geometries.map((geometry, group) => toInput(geometry, group)), shapedLevels);
+	const shaped: (Mesh | null)[][] = [];
+	for (const level of simplified) {
+		const meshes: (Mesh | null)[] = [];
+		for (let group = 0; group < level.length; group++) {
+			const indices = level[group];
+			meshes.push(indices.length > 0 ? buildMesh(device, compactGeometry(geometries[group], indices)) : null);
+			await slice();
+		}
+		shaped.push(meshes);
+	}
 
-	// LOD3 bakes each opaque material's colour into its vertices and joins them into one mesh
-	// before simplifying, so the seams between materials no longer hold edges in place.
+	// LOD3 joins every opaque material into one vertex-coloured mesh before simplifying, so the
+	// seams between materials no longer hold edges in place. Its colours are each vertex's own
+	// here; each paint's material colours go on afterwards (paintedFlat).
 	const flatGroups: number[] = [];
 	const extraGroups: number[] = [];
 	groups.forEach((group, index) => (kindOf(group.material) === "flat" ? flatGroups : extraGroups).push(index));
 	const flatSource = flatGroups.length > 0
-		? concatenate(flatGroups.map((index) => withFlatColour(geometries[index], colourOf(groups[index].material))))
+		? concatenate(flatGroups.map((index) => withFlatColour(geometries[index], [1, 1, 1])))
 		: null;
-	const farSources = [...(flatSource ? [flatSource] : []), ...extraGroups.map((index) => geometries[index])];
+	const sourceGroupOf = new Uint16Array(flatSource?.vertexCount ?? 0);
+	let filled = 0;
+	for (const index of flatGroups) {
+		sourceGroupOf.fill(index, filled, filled + geometries[index].vertexCount);
+		filled += geometries[index].vertexCount;
+	}
 	const farLevel: SimplifyLevel = { error: errorAt(3), prune: true, lockBorder: false, minTriangles: MIN_FAR_TRIANGLES };
 	const [farBody] = flatSource
-		? await simplifyInBackground([toInput(flatSource)], [{ ...farLevel, sloppy: true }])
+		? await simplifyInBackground([{ positions: packedPositions(flatSource), indices: flatSource.indices }], [{ ...farLevel, sloppy: true }])
 		: [[]];
-	const [farExtras] = await simplifyInBackground(farSources.slice(flatSource ? 1 : 0).map(toInput), [farLevel]);
-	const far = [...farBody, ...farExtras];
-	let flat: Mesh | null = null;
-	const flatExtras: LodMeshes["flatExtras"] = [];
-	far.forEach((indices, source) => {
-		if (indices.length === 0) return;
-		const mesh = buildMesh(device, compactGeometry(farSources[source], indices));
-		if (flatSource && source === 0) flat = mesh;
-		else flatExtras.push({ group: extraGroups[source - (flatSource ? 1 : 0)], mesh });
-	});
+	const [farExtras] = await simplifyInBackground(extraGroups.map((group) => toInput(geometries[group], group)), [farLevel]);
+	const bodyIndices = flatSource ? farBody[0] : null;
+	const flatTemplate = flatSource && bodyIndices && bodyIndices.length > 0
+		? { geometry: compactGeometry(flatSource, bodyIndices), groupOf: keptValues(sourceGroupOf, bodyIndices) }
+		: null;
+	const flatExtras: SharedLods["flatExtras"] = [];
+	for (let extra = 0; extra < farExtras.length; extra++) {
+		const indices = farExtras[extra];
+		if (indices.length === 0) continue;
+		flatExtras.push({ group: extraGroups[extra], mesh: buildMesh(device, compactGeometry(geometries[extraGroups[extra]], indices)) });
+		await slice();
+	}
 
-	const flatMesh = flat as Mesh | null;
-	const all = [...shaped.flat(), flatMesh, ...flatExtras.map((extra) => extra.mesh)];
 	// The cache owns these for the page's lifetime, so no car's removal can free them.
-	for (const mesh of all) mesh?.incRefCount();
+	for (const mesh of [...shaped.flat(), ...flatExtras.map((extra) => extra.mesh)]) mesh?.incRefCount();
 
 	const count = (meshes: (Mesh | null)[]) => meshes.reduce((sum, mesh) => sum + (mesh ? mesh.primitive[0].count / 3 : 0), 0);
 	const triangles = [
 		merged.reduce((sum, geometry) => sum + geometry.indices.length / 3, 0),
 		count(shaped[0]),
 		count(shaped[1]),
-		count([flatMesh, ...flatExtras.map((extra) => extra.mesh)]),
+		(flatTemplate ? flatTemplate.geometry.indices.length / 3 : 0) + count(flatExtras.map((extra) => extra.mesh)),
 	].map(Math.round);
-	return { shaped, flat: flatMesh, flatExtras, triangles };
+	return { shaped, flatExtras, flatTemplate, triangles };
+}
+
+/**
+ * `values` (one per source vertex) for the vertices `indices` keep, in the order
+ * compactGeometry numbers them: first use first.
+ */
+export function keptValues(values: Uint16Array, indices: Uint32Array): Uint16Array {
+	const seen = new Uint8Array(values.length);
+	const kept: number[] = [];
+	for (const vertex of indices) {
+		if (seen[vertex]) continue;
+		seen[vertex] = 1;
+		kept.push(values[vertex]);
+	}
+	return Uint16Array.from(kept);
 }
 
 /** One car's simplified levels, and the shadow stand-in used with LOD2. */
@@ -204,10 +308,39 @@ export function createLodEntities(app: AppBase, parent: Entity, meshes: LodMeshe
 	if (meshes.flat) flat.push(new MeshInstance(meshes.flat, sharedFlatMaterial()));
 	for (const extra of meshes.flatExtras) flat.push(new MeshInstance(extra.mesh, groups[extra.group].material));
 	levels.push(make("car-lod3", flat, true));
+	if (meshes.flat) warmFlatMaterial(app, meshes.flat);
 	const shadowProxy = shadowLayer && meshes.flat
 		? make("car-lod2-shadow", [new MeshInstance(meshes.flat, sharedFlatMaterial())], true, [shadowLayer.id])
 		: null;
 	return { levels, shadowProxy };
+}
+
+let flatWarmth: "cold" | "warming" | "warm" = "cold";
+
+/**
+ * Whether the flat paint's shaders are built. Until then a car goes no further than LOD1: LOD3
+ * draws with it and LOD2's shadow stand-in casts with it, and its first sight linked the shader in
+ * one 280–370 ms frame (measured, Phase 2.3).
+ */
+export function flatMaterialWarm(): boolean {
+	return flatWarmth === "warm";
+}
+
+/** Builds the flat paint's shaders once, from the first car whose LOD3 has a flat body. */
+function warmFlatMaterial(app: AppBase, mesh: Mesh) {
+	if (flatWarmth !== "cold") return;
+	flatWarmth = "warming";
+	const camera = app.root.findByName(PREWARM_CAMERA) as Entity | null;
+	if (!camera) {
+		// No camera to draw it at: the first LOD3 builds it, as before.
+		flatWarmth = "warm";
+		return;
+	}
+	void prewarmMeshInstances(app, camera, [new MeshInstance(mesh, sharedFlatMaterial())])
+		.catch(() => undefined)
+		.finally(() => {
+			flatWarmth = "warm";
+		});
 }
 
 /** Car paint, flattened: colour comes from the vertices, lacquer from the material. */
@@ -235,6 +368,22 @@ function packedPositions(geometry: MergedGeometry): Float32Array {
 		packed[i * 3 + 2] = stream.data[i * stream.components + 2];
 	}
 	return packed;
+}
+
+function drawsVertexColour(material: Material): boolean {
+	return material instanceof StandardMaterial && material.diffuseVertexColor;
+}
+
+/** The vertex colours (RGB, 0–1) for the simplifier to keep, if `geometry` has any. */
+function colourAttributes(geometry: MergedGeometry): Pick<SimplifyInput, "attributes" | "attributeWeights"> {
+	const colour = geometry.streams.find((stream) => stream.semantic === SEMANTIC_COLOR);
+	if (!colour) return {};
+	const scale = colour.dataType === TYPE_UINT8 ? 1 / 255 : 1;
+	const attributes = new Float32Array(geometry.vertexCount * 3);
+	for (let i = 0; i < geometry.vertexCount; i++) {
+		for (let c = 0; c < 3; c++) attributes[i * 3 + c] = colour.data[i * colour.components + c] * scale;
+	}
+	return { attributes, attributeWeights: [COLOUR_WEIGHT, COLOUR_WEIGHT, COLOUR_WEIGHT] };
 }
 
 /**

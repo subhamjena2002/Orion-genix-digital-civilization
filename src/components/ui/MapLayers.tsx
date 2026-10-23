@@ -12,6 +12,7 @@ import { HOSPITAL_REPLACED_BUILDINGS, HOSPITALS } from "@/engine/orion/world/Hos
 import { ACCESS_ROAD, BASE, BASE_BOUNDS } from "@/engine/orion/world/MilitaryBase";
 import { landPath, ORION_LAND } from "@/engine/orion/world/StateOutline";
 import { ORION_DISTRICTS, ORION_PARCELS } from "@/engine/orion/world/WorldModel";
+import { districtName } from "@/engine/orion/world/PlaceNames";
 import { HIGHWAY_MAP, mapRelief, type ReliefImage } from "./MapRelief";
 
 /**
@@ -176,7 +177,7 @@ export const MapLayers = memo(function MapLayers({ unit, labels }: Readonly<{ un
 					{/* District names only once zoomed in: at full extent they crowd each other. */}
 					{unit < DISTRICT_LABEL_UNIT && ORION_DISTRICTS.map((district) => (
 						<Label key={district.id} x={district.bounds.center[0]} y={district.bounds.center[2] + px(4)} size={px(9)} spacing={px(0.6)} colour="rgba(59,56,50,0.75)">
-							{district.name.replace(/ District$/, "").replace("Low-Density Residential", "Residential").replace("High-Density Residential", "Uptown").toUpperCase()}
+							{districtName(district).replace(/ District$/, "").replace("High-Density Residential", "Uptown").toUpperCase()}
 						</Label>
 					))}
 					{ESTATE_NAMES.map((estate) => (

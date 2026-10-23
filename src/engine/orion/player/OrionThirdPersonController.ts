@@ -1,6 +1,7 @@
 import { Entity, Quat, Script, Vec3 } from "playcanvas";
 
-import { modelsToPrewarm, prewarmModels } from "../rendering/ModelPrewarm";
+import { gameShowing, setPlayerControllerReady } from "../loading/GameReadiness";
+import { modelsToPrewarm, prewarmModels, prewarmSceneMaterials } from "../rendering/ModelPrewarm";
 import { resetWorld } from "../world/WorldReset";
 import { emitGameEvent } from "../missions/GameEvents";
 import { pavedHeightAt } from "../roads/RoadNetwork";
@@ -112,6 +113,8 @@ const PLAYER_BODY_RADIUS = 0.3;
 const SEPARATION_SPEED = 3;
 /** How long the shader warm-up props stay in front of the lens. */
 const PREWARM_SECONDS = 1.5;
+/** Parts of the world prewarmed while loading (see prewarmSceneMaterials), by entity name. */
+const HEAVY_SHADER_ROOTS = ["street-dressing", "estate-streets", "rail-track", "spawn-district", "downtown-dressing"];
 /** Lying dead before coming back at the spawn point. */
 const WASTED_SECONDS = 4;
 /** Burning cars within this far of the spawn point are cleared away as the player comes back. */
@@ -265,6 +268,7 @@ export class OrionThirdPersonController extends Script {
 	private prewarmProps: Entity[] = [];
 	private prewarmTimer = 0;
 	private cancelModelPrewarm: (() => void) | null = null;
+	private cancelScenePrewarm: (() => void) | null = null;
 	private characterLight: CharacterLight | null = null;
 
 	private isPointerLocked() {
@@ -394,6 +398,8 @@ export class OrionThirdPersonController extends Script {
 		this.prewarmEffects();
 		this.characterLight = new CharacterLight(this.app);
 		this.on("destroy", this.destroy, this);
+		// Input is wired and the body is ours to move: the loading screen may now call it ready.
+		setPlayerControllerReady(true);
 	}
 
 	public update(dt: number) {
@@ -603,6 +609,9 @@ export class OrionThirdPersonController extends Script {
 		// And every building, vehicle and train model, so a first drive into a new district
 		// doesn't stop to load and compile them.
 		this.cancelModelPrewarm = prewarmModels(this.app, this.camera, modelsToPrewarm());
+		// And the parts of the world whose shaders took 0.3–1.3 s to link when first seen after the
+		// loading screen (palms and street lights, the estates' streets, the railway track).
+		this.cancelScenePrewarm = prewarmSceneMaterials(this.app, this.camera, HEAVY_SHADER_ROOTS, gameShowing);
 	}
 
 	/** The capsule is switched off while in a car, so the body can be placed directly. */
@@ -705,7 +714,7 @@ export class OrionThirdPersonController extends Script {
 				this.characterYaw = car.heading;
 				car.driver = "player";
 				this.doorCloseTimer = CARJACK.doorCloseSeconds;
-				emitGameEvent({ type: "vehicleEntered", id: car.entity.name, kind: "car", police: car.police });
+				emitGameEvent({ type: "vehicleEntered", id: car.entity.name, kind: "car", police: car.police, style: car.style });
 			}
 		}
 		this.applyFacing();
@@ -1392,7 +1401,9 @@ export class OrionThirdPersonController extends Script {
 	}
 
 	public destroy() {
+		setPlayerControllerReady(false);
 		this.cancelModelPrewarm?.();
+		this.cancelScenePrewarm?.();
 		this.characterLight?.destroy();
 		this.characterLight = null;
 		for (const prop of this.prewarmProps) prop.destroy();

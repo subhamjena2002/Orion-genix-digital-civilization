@@ -21,6 +21,7 @@ import { pickVehicleModel, VEHICLE_MODEL_BASE, type VehicleModelSpec } from "@/e
 import { ROAD_TOP_Y } from "@/engine/orion/traffic/TrafficSignals";
 import { ORION_VEHICLES, VEHICLE_SHAPES, type VehicleSpawn, type VehicleStyle } from "@/engine/orion/traffic/Vehicles";
 import { KinematicBody } from "./KinematicBody";
+import { useDeferredModel } from "./useDeferredModel";
 
 export interface VehicleMaterials {
 	body: Material;
@@ -271,8 +272,9 @@ function GlbCar({ spec, vehicle, materials, offsetY }: Readonly<{
 	materials: VehicleMaterials;
 	offsetY: number;
 }>) {
-	const { asset, error } = useModel(`${VEHICLE_MODEL_BASE}/${spec.file}`);
-	if (error || !asset) {
+	// Most models load with the game; a few wait until it's showing (`deferred`, see DeferredModels).
+	const asset = useDeferredModel(`${VEHICLE_MODEL_BASE}/${spec.file}`);
+	if (!asset) {
 		return <CarModel style={vehicle.style} paint={vehicle.colour} materials={materials} offsetY={offsetY} />;
 	}
 	return (

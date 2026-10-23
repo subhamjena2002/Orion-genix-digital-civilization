@@ -23,10 +23,12 @@ export interface VehicleShape {
 }
 
 export const VEHICLE_SHAPES: Readonly<Record<VehicleStyle, VehicleShape>> = {
-	hatchback: { length: 3.8, width: 1.66, bodyHeight: 0.72, clearance: 0.18, cabinLength: 2.1, cabinHeight: 0.62, cabinOffset: -0.2, wheelRadius: 0.3, maxSpeed: 10 },
+	// The hatchback (see VEHICLE_MODELS), at its built size.
+	hatchback: { length: 4.15, width: 1.74, bodyHeight: 0.7, clearance: 0.17, cabinLength: 2.3, cabinHeight: 0.58, cabinOffset: -0.1, wheelRadius: 0.31, maxSpeed: 10 },
 	// The taxi's sedan in plain paint (see VEHICLE_MODELS), at its measured size.
 	sedan: { length: 4.7, width: 1.8, bodyHeight: 0.66, clearance: 0.17, cabinLength: 2.3, cabinHeight: 0.56, cabinOffset: -0.15, wheelRadius: 0.32, maxSpeed: 11.5 },
-	suv: { length: 4.6, width: 1.86, bodyHeight: 0.92, clearance: 0.26, cabinLength: 2.8, cabinHeight: 0.7, cabinOffset: -0.35, wheelRadius: 0.38, maxSpeed: 11 },
+	// The SUV (see VEHICLE_MODELS), at its built size.
+	suv: { length: 4.95, width: 1.92, bodyHeight: 0.85, clearance: 0.3, cabinLength: 2.7, cabinHeight: 0.68, cabinOffset: -0.25, wheelRadius: 0.38, maxSpeed: 11 },
 	// The Vesper GT (see VEHICLE_MODELS), at its built size: the supercar the races and the
 	// garage use.
 	luxury: { length: 4.6, width: 2.0, bodyHeight: 0.6, clearance: 0.11, cabinLength: 1.9, cabinHeight: 0.43, cabinOffset: -0.2, wheelRadius: 0.35, maxSpeed: 13 },
@@ -60,7 +62,8 @@ export interface VehicleSpawn {
 }
 
 const EVERYDAY_COLOURS = ["#f1f1ee", "#b9bcc0", "#8f1d1d", "#5c6166", "#1f4f8a", "#1a1a1c", "#d8cfbd", "#7a2f2f", "#e3e1dc", "#2f6d5a"];
-const LUXURY_COLOURS = ["#0d0d10", "#0f2a5c", "#b3121b", "#e8e8e8", "#3b3f45"];
+/** Deep metallics rather than black, which read as a flat mass with little shape (Phase 3.0 V4). */
+const LUXURY_COLOURS = ["#123c86", "#b3121b", "#d6d8dc", "#2c3036", "#e9e6dc"];
 /** Autos wear the familiar green-and-yellow or black-and-yellow liveries. */
 const AUTO_COLOURS = ["#2e8b3d", "#1c1c1c", "#2e8b3d"];
 
@@ -69,26 +72,26 @@ const AUTO_COLOURS = ["#2e8b3d", "#1c1c1c", "#2e8b3d"];
  * without one falls back to a box built from primitives, and those are off the streets until
  * there is art for them.
  *
- * That leaves TWO models to fill a city, which is thin — the counts below are up against how
- * much repetition is bearable rather than what the city wants. Every ordinary car added to
- * VEHICLE_MODELS (a hatchback, a sedan, a taxi) can take its style's line back.
- *
- * `luxury` is the Vesper GT: a handful of them, in the luxury paints, so a supercar turns up now
- * and then rather than on every corner. `sedan` (the taxi out of livery) is still kept for the
- * missions. (The two supercars that once served `luxury` were real manufacturers' designs, taken
- * out of the build: see reference-assets/README.md.)
+ * Mostly everyday cars — hatchbacks and SUVs in the everyday paints, and cabs — with the civic
+ * fleet among them. (The plain saloon stays a mission car: its model loads after the loading
+ * screen, and nothing in traffic may wait on a deferred model, see DeferredModels.test.) `luxury` is the Vesper GT: a few, in the luxury paints, so a supercar turns
+ * up now and then rather than on every corner. The army wagon is the base's (see MilitaryBase):
+ * one in traffic, so it isn't a sixth of the city's cars. (The two supercars that once served
+ * `luxury` were real manufacturers' designs, taken out of the build: see reference-assets/README.md.)
  */
 const FLEET: readonly [VehicleStyle, number][] = [
-	["truck", 6],
-	["militaryWagon", 6],
-	["taxi", 6],
+	["hatchback", 7],
+	["suv", 5],
+	["taxi", 5],
+	["truck", 4],
+	["militaryWagon", 1],
 	["van", 3],
 	["serviceTruck", 2],
-	["towTruck", 2],
-	["bus", 3],
+	["towTruck", 1],
+	["bus", 2],
 	["schoolBus", 2],
-	["garbageTruck", 2],
-	["luxury", 4],
+	["garbageTruck", 1],
+	["luxury", 3],
 	// Ambulances wait outside the hospitals and fire trucks only turn out to fires: neither
 	// drives around in ordinary traffic (see Hospital and FireService).
 ];

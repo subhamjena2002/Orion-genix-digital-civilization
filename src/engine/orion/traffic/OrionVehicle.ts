@@ -244,6 +244,10 @@ export interface MissionDriving {
 	racer?: boolean;
 	/** The driver gives up and pulls over once the car's knocked below this integrity. */
 	disableBelow?: number;
+	/** Placed already damaged (a crash scene), 0..100. */
+	integrity?: number;
+	/** Placed on fire, the fire held steady until the mission lets it burn (see holdFire). */
+	burning?: boolean;
 }
 
 /**
@@ -312,6 +316,8 @@ export class OrionVehicle extends Script {
 	/** Body colour, so a burnt-out shell can be put back to it when the car is recycled. */
 	public paint = "#ffffff";
 	public police = false;
+	/** Turns an ambulance's or fire engine's beacons on whoever is driving (a mission's call-out). */
+	public sirenOn = false;
 	/**
 	 * A car kept at a fixed spot (the police station's car park) instead of joining traffic:
 	 * parked there with nobody in it, and put back there once it's been left somewhere out of
@@ -516,6 +522,8 @@ export class OrionVehicle extends Script {
 	private reverseSeconds = 0;
 	private reverseSteer = 1;
 	private fireTimer = 0;
+	/** A mission's crash-scene fire, burning steadily without burning down (holdFire). */
+	private fireHeld = false;
 	/** Officers out of the car on foot, and the timers for putting them out. */
 	private crew: OrionFootOfficer[] = [];
 	private dismountSeconds = 0;
@@ -735,12 +743,21 @@ export class OrionVehicle extends Script {
 		return this.manual && this.physics ? this.physics.rearSlide : 0;
 	}
 
+	/** An ambulance or a fire engine: its beacons flash in their own pattern (OrionVehicleModel). */
+	public get emergency(): boolean {
+		return EMERGENCY_STYLES.has(this.style);
+	}
+
 	/**
-	 * Whether a police car's lights are going: on a chase or driven by the player; off parked,
-	 * and off for a unit that's been called off and is heading back.
+	 * Whether the beacons are going. A police car's: on a chase or driven by the player; off
+	 * parked, and off for a unit that's been called off and is heading back. An ambulance's or a
+	 * fire engine's: with the player at the wheel, an engine out on a call, or `sirenOn` — which
+	 * holds parked too, as at the scene of a call.
 	 */
 	public get lightsFlashing(): boolean {
-		if (!this.police || this.driver === "parked" || this.driver === "wrecked" || this.integrity <= 0) return false;
+		if (this.driver === "wrecked" || this.integrity <= 0) return false;
+		if (this.emergency) return this.sirenOn || this.driver === "player" || this.onCall;
+		if (!this.police || this.driver === "parked") return false;
 		return !(this.pursuitSlot >= 0 && readWanted().stars === 0);
 	}
 
@@ -885,6 +902,7 @@ export class OrionVehicle extends Script {
 		this.integrity = 100;
 		this.burnTimer = 0;
 		this.burnedFor = 0;
+		this.fireHeld = false;
 		if (this.physics) this.physics.powerFactor = 1;
 	}
 
@@ -1068,8 +1086,9 @@ export class OrionVehicle extends Script {
 		if (this.burnedOut) {
 			this.burnedFor += dt;
 		} else {
-			// Once alight, the fire eats what's left of the car, then the tank goes.
-			this.integrity = burnDown(this.integrity, dt);
+			// Once alight, the fire eats what's left of the car, then the tank goes — unless a
+			// mission is holding it (a crash scene).
+			if (!this.fireHeld) this.integrity = burnDown(this.integrity, dt);
 			if (this.integrity <= 0) {
 				this.burnTimer += dt;
 				if (this.burnTimer >= BURN_SECONDS) {
@@ -1419,6 +1438,25 @@ export class OrionVehicle extends Script {
 		this.missionHeld = this.missionRacer;
 		this.missionDisableBelow = options.disableBelow ?? 0;
 		this.driver = this.missionRoute ? "convoy" : "parked";
+		if (options.integrity !== undefined) this.integrity = Math.max(1, Math.min(100, options.integrity));
+		if (options.burning) this.holdFire();
+	}
+
+	/**
+	 * A mission car catches fire and keeps burning without burning down: the fire's held until
+	 * the mission lets it burn (letBurn) — then it goes up about twenty seconds later, as any
+	 * burning car does — or a fire crew puts it out. A crash scene stays a scene until the
+	 * player has done something about it.
+	 */
+	public holdFire() {
+		if (!this.missionClaimed || this.burnedOut) return;
+		this.integrity = Math.min(this.integrity, BURNING_BELOW - 1);
+		this.fireHeld = true;
+	}
+
+	/** A held fire burns on as any other does: down to nothing, then the car goes up. */
+	public letBurn() {
+		this.fireHeld = false;
 	}
 
 	/**
@@ -1426,6 +1464,11 @@ export class OrionVehicle extends Script {
 	 * nobody's looking — wrecks included, so nothing vanishes in front of the player.
 	 */
 	public releaseFromMission() {
+		// A crash-scene fire the mission was holding is put out, not left to go up later.
+		if (this.fireHeld) {
+			this.fireHeld = false;
+			this.extinguish();
+		}
 		this.missionRoute = null;
 		this.missionClaimed = false;
 		this.missionRacer = false;
@@ -1435,10 +1478,10 @@ export class OrionVehicle extends Script {
 	}
 
 	/** Where it is and what shape it's in, while a mission has it out. */
-	public get missionState(): { x: number; z: number; integrity: number } | null {
+	public get missionState(): { x: number; z: number; integrity: number; onFire: boolean } | null {
 		if (!this.missionClaimed || this.stowed) return null;
 		const car = this.carPhysics();
-		return { x: car.x, z: car.z, integrity: this.burnedOut ? 0 : this.integrity };
+		return { x: car.x, z: car.z, integrity: this.burnedOut ? 0 : this.integrity, onFire: this.onFire };
 	}
 
 	/** Keeps to its road at a new speed. */
@@ -2361,6 +2404,8 @@ export class OrionVehicle extends Script {
 
 const DEGREES = 180 / Math.PI;
 
+const EMERGENCY_STYLES: ReadonlySet<VehicleStyle> = new Set(["ambulance", "fireTruck"]);
+
 function bezier(a: readonly number[], c: readonly number[], b: readonly number[], t: number): [number, number] {
 	const u = 1 - t;
 	return [u * u * a[0] + 2 * u * t * c[0] + t * t * b[0], u * u * a[1] + 2 * u * t * c[1] + t * t * b[1]];
@@ -2526,7 +2571,7 @@ export function missionVehicleProgress(id: string): { passed: number; x: number;
 }
 
 /** Where a mission car is and what shape it's in, if it's out. */
-export function missionVehicleState(id: string): { x: number; z: number; integrity: number } | null {
+export function missionVehicleState(id: string): { x: number; z: number; integrity: number; onFire: boolean } | null {
 	return missionCars.get(id)?.missionState ?? null;
 }
 
@@ -2538,6 +2583,16 @@ export function paceMissionVehicle(id: string, cruise: number): void {
 /** Sends a mission car off along a new road. */
 export function rerouteMissionVehicle(id: string, route: readonly (readonly [number, number])[], cruise?: number): void {
 	missionCars.get(id)?.reroute(route, cruise);
+}
+
+/** A mission car catches fire, held steady (see OrionVehicle.holdFire). */
+export function igniteMissionVehicle(id: string): void {
+	missionCars.get(id)?.holdFire();
+}
+
+/** A mission car's held fire burns down; it goes up unless someone puts it out first. */
+export function letMissionVehicleBurn(id: string): void {
+	missionCars.get(id)?.letBurn();
 }
 
 /** Takes a mission's cars out of the world again (bar the one the player's in). */

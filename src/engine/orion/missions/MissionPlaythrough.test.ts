@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { clearWaypoint, setObjective } from "../navigation/Navigation";
 import { emitGameEvent } from "./GameEvents";
 import { ALL_MISSIONS, JOBS, MISSIONS } from "./MissionCatalog";
+import type { VehicleStyle } from "../traffic/Vehicles";
 import { MissionDirector, RACE_COUNTDOWN, type ActorState, type MissionDefinition, type MissionEvent, type MissionSpawn, type MissionStage, type PlayerView } from "./MissionDirector";
 
 /**
@@ -89,13 +90,13 @@ function play(mission: MissionDefinition, picks: readonly number[], saved: reado
 	const choices: string[] = [];
 	const view: PlayerView = { x: 0, y: 0, z: 0, vehicleIntegrity: 100, wantedStars: 0 };
 	// Read through a function so TypeScript doesn't narrow it across the event calls.
-	let seat: { id: string; kind: "car" | "jet" | "gunship"; police: boolean } | null = null;
+	let seat: { id: string; kind: "car" | "jet" | "gunship"; police: boolean; style?: VehicleStyle } | null = null;
 	const seated = () => seat;
-	const enter = (id: string, kind: "car" | "jet" | "gunship" = "car", police = false) => {
+	const enter = (id: string, kind: "car" | "jet" | "gunship" = "car", police = false, style?: VehicleStyle) => {
 		const current = seated();
 		if (current) emitGameEvent({ type: "vehicleExited", id: current.id, kind: current.kind });
-		seat = { id, kind, police };
-		emitGameEvent({ type: "vehicleEntered", id, kind, police });
+		seat = { id, kind, police, style };
+		emitGameEvent({ type: "vehicleEntered", id, kind, police, style });
 	};
 	const leave = () => {
 		const current = seated();
@@ -120,14 +121,22 @@ function play(mission: MissionDefinition, picks: readonly number[], saved: reado
 				tick();
 				break;
 			case "enterVehicle":
-				enter(objective.vehicle ?? "sim-car", objective.vehicleKind ?? "car", objective.police ?? false);
+				enter(objective.vehicle ?? "sim-car", objective.vehicleKind ?? "car", objective.police ?? false, objective.style);
 				break;
-			case "deliver":
-				if (!seated() || (objective.vehicle && seated()?.id !== objective.vehicle)) enter(objective.vehicle ?? "sim-car", objective.vehicleKind ?? "car", objective.police ?? false);
+			case "deliver": {
+				const current = seated();
+				if (!current || (objective.vehicle && current.id !== objective.vehicle) || (objective.style && current.style !== objective.style)) {
+					enter(objective.vehicle ?? "sim-car", objective.vehicleKind ?? "car", objective.police ?? false, objective.style);
+				}
+				if (objective.person) {
+					expect(stage.following.has(objective.person), `${mission.id}: ${objective.person} follows`).toBe(true);
+					stage.actors.get(objective.person)!.aboard = true;
+				}
 				view.wantedStars = 0;
 				at(objective.x, objective.z);
 				tick();
 				break;
+			}
 			case "eliminate":
 				for (const id of objective.targets) emitGameEvent({ type: "personKilled", id, byPlayer: true });
 				break;

@@ -83,6 +83,20 @@ function stream(seed: number): () => number {
 	};
 }
 
+/** Shopfront tints, by variant: plain, warm, cool, rosy. Light enough to keep the glass glass. */
+const SHOP_TINTS: readonly Rgb[] = [[1, 1, 1], [1, 0.94, 0.86], [0.9, 0.96, 1], [1, 0.9, 0.92]];
+/** Parcel spacing within a block (WorldModel). */
+const PARCEL_PITCH = 18;
+
+/**
+ * Which shopfront a building shows (0–3), from where it stands: neighbours along a street, and
+ * across the back of a block, always differ — a random pick matched one pair in four.
+ */
+export function shopVariant(x: number, z: number): number {
+	const wrap = (n: number) => ((n % 4) + 4) % 4;
+	return wrap(Math.round(x / PARCEL_PITCH) + 2 * Math.round(z / PARCEL_PITCH));
+}
+
 export function designBuilding(placement: BuildingPlacement, seed: number): BuildingSpec {
 	const r = stream(seed);
 	const design = DESIGNS[placement.districtKind] ?? DESIGNS["mixed-use"];
@@ -110,8 +124,14 @@ export function designBuilding(placement: BuildingPlacement, seed: number): Buil
 	}
 
 	const tint = tintFor(style, r());
+	const variant = shopVariant(placement.position[0], placement.position[2]);
 	const fin = (style === "deco") && floors >= 3 && r() < 0.45;
 	const plaster = style === "deco" || style === "apartment";
+	// Drawn in the order they always were, so every building keeps its look.
+	const accentTint = pick(ACCENTS, r());
+	const rooftop = style === "industrial" ? 2 : 2 + Math.floor(r() * 4);
+	const randomOffset = Math.floor(r() * 4);
+	const floorOffset = Math.floor(r() * 4);
 	return {
 		width: placement.footprint[0] * LOT_FILL,
 		depth: placement.footprint[1] * LOT_FILL,
@@ -119,15 +139,16 @@ export function designBuilding(placement: BuildingPlacement, seed: number): Buil
 		ground,
 		tiers: tiers.filter((tier) => tier.floors > 0),
 		tint,
+		groundTint: shops ? SHOP_TINTS[variant] : [1, 1, 1],
 		trimTint: plaster || style === "brick" ? WHITE_TRIM : style === "glass" ? hex("#b9c3c6") : hex("#d8d4cb"),
-		accentTint: pick(ACCENTS, r()),
+		accentTint,
 		cornice: style !== "glass" && style !== "industrial",
 		canopy: ground === "shop",
 		fin,
 		door: !ground,
-		rooftop: style === "industrial" ? 2 : 2 + Math.floor(r() * 4),
-		bayOffset: Math.floor(r() * 4),
-		floorOffset: Math.floor(r() * 4),
+		rooftop,
+		bayOffset: shops ? variant : randomOffset,
+		floorOffset,
 		seed,
 	};
 }

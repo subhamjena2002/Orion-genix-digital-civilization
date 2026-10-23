@@ -2,16 +2,17 @@
 
 import { Container, Entity } from "@playcanvas/react";
 import { Collision, Script } from "@playcanvas/react/components";
-import { useModel } from "@playcanvas/react/hooks";
 import type { Entity as PlayCanvasEntity } from "playcanvas";
 import { memo, useState } from "react";
 
 import { KinematicBody } from "./KinematicBody";
+import { useDeferredModel } from "./useDeferredModel";
 import { useDistanceCull } from "./useDistanceCull";
 
 import { JET_CG_HEIGHT } from "@/engine/orion/aircraft/JetFlight";
 import { JET_GEOMETRY, JET_MODEL } from "@/engine/orion/aircraft/JetModel";
 import { OrionJet } from "@/engine/orion/aircraft/OrionJet";
+import { ARMY_BASE_AREA } from "@/engine/orion/rendering/DeferredModels";
 
 const [, CG_Y, CG_Z] = JET_GEOMETRY.centreOfMass;
 
@@ -24,7 +25,8 @@ export const Jet = memo(function Jet({ x, z, ground, heading }: Readonly<{ x: nu
 	const [model, setModel] = useState<PlayCanvasEntity | null>(null);
 	// Parked across the city, it's a speck in the haze: not drawn beyond 280 m.
 	useDistanceCull(model, 280, 10);
-	const { asset } = useModel(JET_MODEL);
+	// Loads after the loading screen, or at once if the player heads for the base (DeferredModels).
+	const asset = useDeferredModel(JET_MODEL, ARMY_BASE_AREA);
 	return (
 		<Entity name="jet" position={[x, ground + JET_CG_HEIGHT, z]} rotation={[0, heading, 0]}>
 			<Collision type="box" halfExtents={[1.6, 1.3, 9.5]} linearOffset={[0, 0.2, 1.4]} />

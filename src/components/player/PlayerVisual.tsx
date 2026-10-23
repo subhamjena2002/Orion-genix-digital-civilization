@@ -3,12 +3,15 @@
 import { Container, Entity } from "@playcanvas/react";
 import { Render, Script } from "@playcanvas/react/components";
 import { useMaterial, useModel } from "@playcanvas/react/hooks";
+import { useState } from "react";
 
 import { ORION_ASSET_PATHS } from "@/engine/orion/assets/AssetPaths";
 import { OrionCharacterAnimation } from "@/engine/orion/player/OrionCharacterAnimation";
 import { OrionPlayerBody } from "@/engine/orion/player/OrionPlayerBody";
 import { OrionSkinnedCharacterAnimation } from "@/engine/orion/player/OrionSkinnedCharacterAnimation";
 import { PLAYER_VISUAL_NAME } from "@/engine/orion/player/PlayerPose";
+import { loadGraphicsSettings } from "@/engine/orion/rendering/GraphicsSettings";
+import { TEXTURE_CAP, textureCapFor, thisDeviceClass } from "@/engine/orion/rendering/TextureBudget";
 
 /**
  * The GLB's skeleton measures ~4.75 units tall (its armature carries a 100x scale), while the
@@ -23,12 +26,24 @@ const PRIMITIVE_SCALE = 1.8 / 2.59;
 const PRIMITIVE_FOOT_LIFT = 0.32 * PRIMITIVE_SCALE;
 
 /**
+ * Which file the player's body loads from. Textures are capped as they're decoded (TextureBudget,
+ * the same rule as OrionCanvas): at the usual cap the 1024 copy looks the same and is half the
+ * download; with full quality pinned, the original.
+ */
+export function playerBodyUrl(): string {
+	return textureCapFor(thisDeviceClass(!loadGraphicsSettings().adaptiveQuality)) > TEXTURE_CAP
+		? ORION_ASSET_PATHS.playerCharacter
+		: ORION_ASSET_PATHS.playerCharacter1k;
+}
+
+/**
  * Real rigged/animated character (Quaternius "Animated Men Pack", CC0). Falls back to the
  * primitive placeholder while it streams in, matching the pattern used for hero buildings.
  */
 export function PlayerVisual() {
 	const { asset, loading } = useModel(ORION_ASSET_PATHS.character);
-	const { asset: bodyAsset } = useModel(ORION_ASSET_PATHS.playerCharacter);
+	const [bodyUrl] = useState(playerBodyUrl);
+	const { asset: bodyAsset } = useModel(bodyUrl);
 
 	// The player's own entity is a dynamic rigidbody with its rotation locked by physics,
 	// which overwrites any transform the controller sets on it. So facing is applied to this

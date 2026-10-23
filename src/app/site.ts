@@ -50,7 +50,5 @@ export const GAME_FACTS = {
 	weapons: 6,
 	/** End to end, the expressway's top to the far end of the sea link. */
 	worldKm: 1.7,
-	/** First load, then cached for offline play. */
-	downloadMb: 260,
 	qualityLevels: 6,
 } as const;

@@ -1,5 +1,5 @@
 import { alertMissionHostiles, missionHostileMarkers, missionPersonState, placeMissionHostile, releaseMissionHostiles, setMissionFollow } from "../characters/OrionPedestrian";
-import { missionVehicleMarkers, missionVehicleProgress, missionVehicleState, paceMissionVehicle, placeMissionVehicle, releaseMissionVehicles, rerouteMissionVehicle, startMissionRacers } from "../traffic/OrionVehicle";
+import { igniteMissionVehicle, letMissionVehicleBurn, missionVehicleMarkers, missionVehicleProgress, missionVehicleState, paceMissionVehicle, placeMissionVehicle, releaseMissionVehicles, rerouteMissionVehicle, startMissionRacers } from "../traffic/OrionVehicle";
 import { readPlayerPose } from "../player/PlayerPose";
 import { raiseWanted } from "../police/Wanted";
 import type { MissionSpawn, MissionStage } from "./MissionDirector";
@@ -21,7 +21,9 @@ const racing = new Set<string>();
 function place(spawn: MissionSpawn): boolean {
 	if (spawn.type === "vehicle") {
 		vehicles.add(spawn.id);
-		const placed = placeMissionVehicle(spawn.id, spawn.x, spawn.z, spawn.yaw, spawn.route ?? null, { cruise: spawn.cruise, racer: spawn.racer, disableBelow: spawn.disableBelow });
+		const placed = placeMissionVehicle(spawn.id, spawn.x, spawn.z, spawn.yaw, spawn.route ?? null, {
+			cruise: spawn.cruise, racer: spawn.racer, disableBelow: spawn.disableBelow, integrity: spawn.integrity, burning: spawn.burning,
+		});
 		if (placed && racing.has(spawn.id)) startMissionRacers([spawn.id]);
 		return placed;
 	}
@@ -77,6 +79,12 @@ export const missionStage: MissionStage = {
 	},
 	pace(id, cruise) {
 		paceMissionVehicle(id, cruise);
+	},
+	ignite(id) {
+		igniteMissionVehicle(id);
+	},
+	letBurn(id) {
+		letMissionVehicleBurn(id);
 	},
 };
 

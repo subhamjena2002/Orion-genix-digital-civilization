@@ -5,9 +5,9 @@ import { SOUND_FILES } from "./SoundManifest";
  * Recorded sounds: fetched and decoded once, then played as many times as needed.
  *
  * The files are studio recordings (see SoundManifest and CREDITS.md), cut, levelled and looped
- * by scripts/prepare-sounds.py. Everything is loaded as soon as the audio context exists — the
- * whole set is a few megabytes — so the first shot already sounds right; until a file has
- * arrived, callers fall back to the synthesised sound they had before.
+ * by scripts/prepare-sounds.py. Everything is loaded once the game becomes audible (the loading
+ * screen has gone) — the whole set is a few megabytes, the sounds heard at once first; until a
+ * file has arrived, callers fall back to the synthesised sound they had before.
  *
  * One-shots are played with a little random pitch and level, and pick among the takes recorded
  * of each, so a burst of fire or a pile-up never repeats the same waveform twice in a row.
@@ -45,7 +45,18 @@ const active = new Map<string, ActiveVoice[]>();
 
 /** Starts loading every recorded sound; cheap to call again. */
 export function preloadSounds(context: BaseAudioContext): void {
-	for (const files of Object.values(SOUND_FILES)) for (const file of files) load(context, file);
+	for (const sound of preloadOrder(Object.keys(SOUND_FILES))) for (const file of SOUND_FILES[sound]) load(context, file);
+}
+
+/** Heard from the first second of play: engines, the street, footsteps, the player's own hands. */
+const FIRST_SOUNDS = /^(engine-|amb-|foot|punch|whoosh|door)/;
+
+/**
+ * The order recordings are fetched in: the ones heard at once first, the rest after. The browser
+ * runs a handful of requests at a time, so this decides which arrive within the first seconds.
+ */
+export function preloadOrder(sounds: readonly string[]): string[] {
+	return [...sounds.filter((sound) => FIRST_SOUNDS.test(sound)), ...sounds.filter((sound) => !FIRST_SOUNDS.test(sound))];
 }
 
 function load(context: BaseAudioContext, file: string): void {

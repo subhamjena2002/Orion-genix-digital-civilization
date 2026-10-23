@@ -579,8 +579,9 @@ const material = (name, base, { metallic = 0, roughness = 0.5, emissive, alpha, 
 	return m;
 };
 const MATERIALS = {
-	paint: material("carpaint", [0.9, 0.9, 0.9], { metallic: 0.6, roughness: 0.24, doubleSided: true }),
-	glass: material("glass", [0.025, 0.035, 0.045], { roughness: 0.02, alpha: 0.6, doubleSided: true }),
+	paint: material("carpaint", [0.9, 0.9, 0.9], { metallic: 0.72, roughness: 0.2, doubleSided: true }),
+	// Clear enough that the tan cabin reads through it.
+	glass: material("glass", [0.05, 0.06, 0.075], { roughness: 0.02, alpha: 0.48, doubleSided: true }),
 	trim: material("trim", [0.022, 0.023, 0.025], { roughness: 0.38 }),
 	carbon: material("carbon", [0.045, 0.047, 0.05], { metallic: 0.4, roughness: 0.26 }),
 	accent: material("accent_bronze", [0.62, 0.36, 0.12], { metallic: 0.9, roughness: 0.3 }),
@@ -593,12 +594,12 @@ const MATERIALS = {
 	intake: material("intake", [0.012, 0.012, 0.014], { roughness: 0.7, doubleSided: true }),
 	marker: material("side_marker", [0.95, 0.45, 0.05], { roughness: 0.15, emissive: [0.4, 0.17, 0.01] }),
 	taillight: material("tail_light", [0.55, 0.02, 0.02], { roughness: 0.15, emissive: [0.35, 0.01, 0.01] }),
-	interior: material("interior", [0.07, 0.065, 0.065], { roughness: 0.65 }),
+	interior: material("interior", [0.36, 0.21, 0.11], { roughness: 0.55 }),
 	accentInside: material("interior_accent", [0.62, 0.05, 0.035], { roughness: 0.5 }),
 	screen: material("screen", [0.02, 0.03, 0.05], { roughness: 0.1, emissive: [0.05, 0.16, 0.28] }),
 	jamb: material("jamb", [0.5, 0.5, 0.5], { metallic: 0.3, roughness: 0.5, doubleSided: true }),
 	tyre: material("tyre_rubber", [0.032, 0.032, 0.034], { roughness: 0.9 }),
-	rim: material("rim", [0.3, 0.31, 0.33], { metallic: 1, roughness: 0.3 }),
+	rim: material("rim", [0.74, 0.75, 0.78], { metallic: 1, roughness: 0.2 }),
 	rotor: material("rotor", [0.42, 0.42, 0.43], { metallic: 1, roughness: 0.42 }),
 	caliper: material("caliper", [0.95, 0.72, 0.04], { roughness: 0.32 }),
 };

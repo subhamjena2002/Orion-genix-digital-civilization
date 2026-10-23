@@ -197,4 +197,14 @@ export const ORION_BUILDING_MAP: readonly BuildingPlacement[] = ORION_PARCELS
 			renderMode: "asset",
 		};
 	})
-	.filter((placement) => !railBlocks(placement.position[0], placement.position[2], placement.footprint[0], placement.footprint[1]));
+	.filter((placement) => !railBlocks(placement.position[0], placement.position[2], placement.footprint[0], placement.footprint[1]))
+	// The spawn district's first block once held four "property" parcels (parcel-001…004) at
+	// (±19, ±19), from before it was a grid like the rest; three of them stand on top of a grid
+	// building two metres away. The grid building stays; ids are already handed out, so nothing
+	// else is renumbered.
+	.filter((placement, _, all) => !(placement.parcelId.startsWith("parcel-") && all.some((other) => other !== placement && footprintsOverlap(placement, other))));
+
+function footprintsOverlap(a: BuildingPlacement, b: BuildingPlacement): boolean {
+	const reach = (placement: BuildingPlacement) => Math.max(...placement.footprint) / 2;
+	return Math.abs(a.position[0] - b.position[0]) < reach(a) + reach(b) && Math.abs(a.position[2] - b.position[2]) < reach(a) + reach(b);
+}

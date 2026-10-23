@@ -5,7 +5,8 @@ import type { OrionVehicle } from "../traffic/OrionVehicle";
 import { readWanted } from "../police/Wanted";
 
 /**
- * The siren of the nearest patrol car on a chase.
+ * The siren of the nearest patrol car on a chase, or ambulance or fire engine with its beacons
+ * going (driven by the player, out on a call, or turned on by a mission).
  *
  * A wail: a recorded siren (a generic electronic wail, no force's own tones), looped over whole
  * sweeps so the repeat isn't heard. Until it has loaded, a synthesised wail stands in: one tone
@@ -52,8 +53,10 @@ class PoliceSirens {
 		let nearestDistance = RANGE;
 		const stars = readWanted().stars;
 		for (const car of drivableCars()) {
-			// Only units on the chase: a wreck, or one called off and heading back, is silent.
-			if (!car.chasing || stars === 0) continue;
+			// Only units on the chase (a wreck, or one called off and heading back, is silent), and
+			// emergency vehicles with their lights on.
+			const sounding = (car.chasing && stars > 0) || (car.emergency && car.lightsFlashing);
+			if (!sounding) continue;
 			const position = car.entity.getPosition();
 			const placed = bus.place(position.x, position.y, position.z, this.place);
 			if (placed.distance < nearestDistance) {

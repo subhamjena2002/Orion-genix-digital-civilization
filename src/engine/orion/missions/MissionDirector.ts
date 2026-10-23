@@ -72,11 +72,20 @@ interface ObjectiveBase {
 	followers?: readonly string[];
 }
 
-/** Which vehicle will do: a named one, or any that fits (any police car, any jet). */
+/** Which vehicle will do: a named one, or any that fits (any police car, any jet, any ambulance). */
 export interface VehicleMatch {
 	vehicle?: string;
 	police?: boolean;
 	vehicleKind?: GameVehicleKind;
+	style?: VehicleStyle;
+}
+
+/** The vehicle the player's in, as the director knows it. */
+interface PlayerVehicle {
+	id: string;
+	kind: GameVehicleKind;
+	police: boolean;
+	style?: VehicleStyle;
 }
 
 export interface ChoiceOption {
@@ -100,7 +109,7 @@ export type Objective = ObjectiveBase & (
 	 * Drive somewhere in a vehicle that fits, and arrive in good enough shape (0..100) — and with
 	 * no police on your tail, if `clean`.
 	 */
-	| ({ kind: "deliver"; x: number; z: number; radius: number; minIntegrity?: number; clean?: boolean } & VehicleMatch)
+	| ({ kind: "deliver"; x: number; z: number; radius: number; minIntegrity?: number; clean?: boolean; person?: string } & VehicleMatch)
 	| { kind: "eliminate"; x: number; z: number; targets: readonly string[] }
 	| { kind: "destroyVehicles"; x: number; z: number; ids: readonly string[] }
 	| { kind: "survive"; x: number; z: number; seconds: number }
@@ -163,6 +172,10 @@ export type MissionSpawn =
 		racer?: boolean;
 		/** Its driver pulls over and gives up once the car's knocked below this integrity. */
 		disableBelow?: number;
+		/** Placed already damaged (a crash), 0..100. */
+		integrity?: number;
+		/** Placed on fire, burning steadily until a trigger lets it burn (`letBurn`) or a crew puts it out. */
+		burning?: boolean;
 	}
 	/**
 	 * Someone in the mission. A `guard` fights the player on sight from any side; a `sentry`
@@ -230,6 +243,8 @@ export interface MissionTrigger {
 		targetNear?: { id: string; x: number; z: number; radius: number };
 		/** All of these killed or destroyed. */
 		gone?: readonly string[];
+		/** This mission car's fire is out (a crew put it out), and it's still in one piece. */
+		putOut?: string;
 	};
 	say?: readonly Line[];
 	spawns?: readonly MissionSpawn[];
@@ -246,6 +261,10 @@ export interface MissionTrigger {
 	pace?: { id: string; cruise: number };
 	/** A short line across the HUD: "The deal's moved". */
 	notice?: string;
+	/** A mission car catches fire, burning steadily (the fire spreading at a crash scene). */
+	ignite?: string;
+	/** A mission car's steady fire burns down: it goes up in about twenty seconds unless it's put out. */
+	letBurn?: string;
 }
 
 export type MissionChapter = "story" | "side" | "race" | "job";
@@ -287,6 +306,8 @@ export interface ActorState {
 	integrity: number;
 	/** A person riding in the player's vehicle. */
 	aboard?: boolean;
+	/** A car with flames showing. */
+	onFire?: boolean;
 }
 
 /** Puts a mission's cars and people into the world, and takes them away again. */
@@ -309,6 +330,10 @@ export interface MissionStage {
 	reroute?(id: string, route: readonly (readonly [number, number])[], cruise?: number): void;
 	/** A mission car changes speed. */
 	pace?(id: string, cruise: number): void;
+	/** A mission car catches fire (held steady). */
+	ignite?(id: string): void;
+	/** A mission car's held fire burns down. */
+	letBurn?(id: string): void;
 }
 
 /** What the director needs to know about the player each frame. */
@@ -397,10 +422,11 @@ export function ratingFor(results: readonly BonusResult[]): number | null {
 	return 1 + Math.round((2 * met) / results.length);
 }
 
-function fits(match: VehicleMatch, vehicle: { id: string; kind: GameVehicleKind; police: boolean }): boolean {
+function fits(match: VehicleMatch, vehicle: PlayerVehicle): boolean {
 	return (match.vehicle === undefined || match.vehicle === vehicle.id)
 		&& (match.police === undefined || match.police === vehicle.police)
-		&& (match.vehicleKind === undefined || match.vehicleKind === vehicle.kind);
+		&& (match.vehicleKind === undefined || match.vehicleKind === vehicle.kind)
+		&& (match.style === undefined || match.style === vehicle.style);
 }
 
 /** Every spawn in a mission, wherever it's listed. */
@@ -438,7 +464,7 @@ export class MissionDirector {
 	/** Everyone killed and everything destroyed since the mission began (a convoy hit before the order came). */
 	private readonly gone = new Set<string>();
 	/** The vehicle the player is in, from the game events. */
-	private vehicle: { id: string; kind: GameVehicleKind; police: boolean } | null = null;
+	private vehicle: PlayerVehicle | null = null;
 	private stage: MissionStage = NO_STAGE;
 	private failReason = "";
 	private readonly listeners = new Set<(event: MissionEvent) => void>();
@@ -689,6 +715,11 @@ export class MissionDirector {
 				this.hint = objective.clean && player.wantedStars > 0 ? "Lose the cops first" : "";
 				if (Math.hypot(objective.x - player.x, objective.z - player.z) > objective.radius) break;
 				if (!this.vehicle || !fits(objective, this.vehicle) || this.hint) break;
+				// A passenger to bring: not without them aboard.
+				if (objective.person && !this.stage.actor?.(objective.person)?.aboard) {
+					this.hint = "Wait for them to get in";
+					break;
+				}
 				if (objective.minIntegrity !== undefined && player.vehicleIntegrity < objective.minIntegrity) {
 					this.fail("The car's too damaged");
 					return;
@@ -882,7 +913,7 @@ export class MissionDirector {
 	// ---- Judging --------------------------------------------------------------------------------
 
 	private onGame(event: GameEvent): void {
-		if (event.type === "vehicleEntered") this.vehicle = { id: event.id, kind: event.kind, police: event.police };
+		if (event.type === "vehicleEntered") this.vehicle = { id: event.id, kind: event.kind, police: event.police, style: event.style };
 		else if (event.type === "vehicleExited" && this.vehicle?.id === event.id) this.vehicle = null;
 		else if (event.type === "playerDied") this.vehicle = null;
 
@@ -962,6 +993,8 @@ export class MissionDirector {
 			if (trigger.alertAll) this.stage.alertAll?.();
 			if (trigger.reroute) this.stage.reroute?.(trigger.reroute.id, trigger.reroute.route, trigger.reroute.cruise);
 			if (trigger.pace) this.stage.pace?.(trigger.pace.id, trigger.pace.cruise);
+			if (trigger.ignite) this.stage.ignite?.(trigger.ignite);
+			if (trigger.letBurn) this.stage.letBurn?.(trigger.letBurn);
 			if (trigger.goto) {
 				this.jump(trigger.goto);
 				return;
@@ -983,6 +1016,10 @@ export class MissionDirector {
 			if (!target || Math.hypot(when.targetNear.x - target.x, when.targetNear.z - target.z) > when.targetNear.radius) return false;
 		}
 		if (when.gone && !when.gone.every((id) => this.gone.has(id))) return false;
+		if (when.putOut !== undefined) {
+			const car = this.stage.actor?.(when.putOut);
+			if (!car || car.onFire || car.integrity <= 0) return false;
+		}
 		return true;
 	}
 

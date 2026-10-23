@@ -13,6 +13,8 @@ import {
 	type MeshInstance,
 } from "playcanvas";
 
+type NumberArray = Float32Array | Uint8Array | Int8Array | Uint16Array | Int16Array | Uint32Array | Int32Array;
+
 const relative = new Mat4();
 const normalMatrix = new Mat3();
 
@@ -86,7 +88,7 @@ export function mergeGeometry(instances: readonly MeshInstance[], frameWorld: Ma
 
 		for (const stream of streams) {
 			const target = stream.data.subarray(vertexBase * stream.components, (vertexBase + count) * stream.components);
-			mesh.getVertexStream(stream.semantic, target);
+			readVertexStream(mesh, stream.semantic, target);
 			if (stream.semantic === SEMANTIC_POSITION) transformPoints(target, stream.components, relative);
 			// Normals are covectors and go through the inverse-transpose; tangents lie in the surface
 			// and move with it, so they take the transform itself.
@@ -114,6 +116,37 @@ export function mergeGeometry(instances: readonly MeshInstance[], frameWorld: Ma
 }
 
 /**
+ * Copies one vertex attribute of `mesh` into `target`, as `mesh.getVertexStream` does, and returns
+ * the vertex count. A loaded model's buffers are interleaved, and the engine reads those back a
+ * vertex at a time through a per-vertex accessor call; this reads the buffer's CPU copy with a
+ * strided loop instead (the same values, about 3.6x faster on a real car model, Phase 2.6).
+ * Anything else (a mesh still holding its source streams, a missing copy, an attribute not aligned
+ * to its own size, a target of another type) goes to the engine.
+ */
+export function readVertexStream(mesh: Mesh, semantic: string, target: NumberArray): number {
+	const buffer = mesh.vertexBuffer;
+	const element = buffer?.format.elements.find((candidate) => candidate.name === semantic);
+	const storage = (buffer as unknown as { storage?: ArrayBuffer } | null)?.storage;
+	const ArrayType = element && (typedArrayTypes[element.dataType] as unknown as (new (buffer: ArrayBuffer) => NumberArray) & { BYTES_PER_ELEMENT: number });
+	const size = ArrayType?.BYTES_PER_ELEMENT ?? 1;
+	const held = (mesh as unknown as { _geometryData?: { vertexStreamDictionary?: Record<string, unknown> } | null })._geometryData?.vertexStreamDictionary?.[semantic];
+	if (!buffer || !element || !ArrayType || !storage || held
+		|| element.offset % size !== 0 || element.stride % size !== 0 || target.constructor !== ArrayType) {
+		return mesh.getVertexStream(semantic, target);
+	}
+	const source = new ArrayType(storage);
+	const components = element.numComponents;
+	const stride = element.stride / size;
+	const count = Math.min(buffer.numVertices, Math.floor(target.length / components));
+	let from = element.offset / size;
+	let to = 0;
+	for (let vertex = 0; vertex < count; vertex++, from += stride) {
+		for (let c = 0; c < components; c++) target[to++] = source[from + c];
+	}
+	return buffer.numVertices;
+}
+
+/**
  * Uploads merged geometry as a mesh. The bounding box is computed from the positions: the
  * engine culls (and shadow-culls) against it, so a stale or default box makes the mesh vanish.
  */
@@ -138,20 +171,29 @@ export function mergeMeshInstances(device: GraphicsDevice, instances: readonly M
  */
 export function compactGeometry(geometry: MergedGeometry, indices: Uint32Array): MergedGeometry {
 	const remap = new Int32Array(geometry.vertexCount).fill(-1);
+	// Which source vertex each kept one came from: the copy below then visits only the vertices a
+	// simplified level still uses, not the whole source mesh for every stream (on the main thread
+	// that was most of a 100–160 ms LOD task; measured, Phase 2.3).
+	const order = new Uint32Array(Math.min(indices.length, geometry.vertexCount));
 	let used = 0;
 	const renumbered = new Uint32Array(indices.length);
 	for (let i = 0; i < indices.length; i++) {
 		const vertex = indices[i];
-		if (remap[vertex] < 0) remap[vertex] = used++;
+		if (remap[vertex] < 0) {
+			order[used] = vertex;
+			remap[vertex] = used++;
+		}
 		renumbered[i] = remap[vertex];
 	}
 	const streams = geometry.streams.map((stream) => {
 		const ArrayType = stream.data.constructor as new (length: number) => Float32Array;
-		const data = new ArrayType(used * stream.components);
-		for (let vertex = 0; vertex < geometry.vertexCount; vertex++) {
-			const to = remap[vertex];
-			if (to < 0) continue;
-			for (let c = 0; c < stream.components; c++) data[to * stream.components + c] = stream.data[vertex * stream.components + c];
+		const components = stream.components;
+		const data = new ArrayType(used * components);
+		const source = stream.data;
+		for (let to = 0; to < used; to++) {
+			const from = order[to] * components;
+			const at = to * components;
+			for (let c = 0; c < components; c++) data[at + c] = source[from + c];
 		}
 		return { ...stream, data };
 	});
@@ -185,7 +227,8 @@ function transformNormals(data: Float32Array, components: number, matrix: Mat3) 
 		const nx = x * m[0] + y * m[3] + z * m[6];
 		const ny = x * m[1] + y * m[4] + z * m[7];
 		const nz = x * m[2] + y * m[5] + z * m[8];
-		const length = Math.hypot(nx, ny, nz) || 1;
+		// A plain square root: the same result here as hypot, five times faster per vertex (Phase 2.6).
+		const length = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
 		data[i] = nx / length;
 		data[i + 1] = ny / length;
 		data[i + 2] = nz / length;
@@ -205,7 +248,7 @@ function transformTangents(data: Float32Array, components: number, matrix: Mat4,
 		const tx = x * m[0] + y * m[4] + z * m[8];
 		const ty = x * m[1] + y * m[5] + z * m[9];
 		const tz = x * m[2] + y * m[6] + z * m[10];
-		const length = Math.hypot(tx, ty, tz) || 1;
+		const length = Math.sqrt(tx * tx + ty * ty + tz * tz) || 1;
 		data[i] = tx / length;
 		data[i + 1] = ty / length;
 		data[i + 2] = tz / length;

@@ -12,6 +12,9 @@ export const ORION_ASSET_PATHS = {
   // https://sketchfab.com/3d-models/casual-male-char-rigged-9034a1acc95e494592441a057d319953).
   // It has no animations of its own; the citizen rig's are retargeted onto it (player/Retarget).
   playerCharacter: "/models/characters/player-casual.glb",
+  // The same body with its two 2048 textures at 1024 (scripts/make-texture-variant.mjs): what
+  // TextureBudget shows anyway unless full quality is pinned, at under half the download.
+  playerCharacter1k: "/models/characters/player-casual-1k.glb",
 } as const;
 
 /**

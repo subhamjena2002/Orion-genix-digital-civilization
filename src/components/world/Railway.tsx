@@ -2,7 +2,7 @@
 
 import { Container, Entity } from "@playcanvas/react";
 import { Script } from "@playcanvas/react/components";
-import { useApp, useModel } from "@playcanvas/react/hooks";
+import { useApp } from "@playcanvas/react/hooks";
 import { Color, Entity as PlayCanvasEntity, MeshInstance, StandardMaterial, type GraphicsDevice, type Mesh } from "playcanvas";
 import { memo, useEffect, useMemo, useState } from "react";
 
@@ -11,6 +11,8 @@ import { carriageFitName, carriageName, OrionTrain } from "@/engine/orion/rail/O
 import { RAIL_CROSSINGS, type LevelCrossing } from "@/engine/orion/rail/RailLine";
 import { BARRIER, BARRIER_GROUND_Y, buildBarrierLamps, buildBarrierPost, buildBoom, buildTrack } from "@/engine/orion/rail/RailMeshes";
 import { CARRIAGE_COUNT } from "@/engine/orion/rail/RailTraffic";
+import { TRAIN_MODEL } from "@/engine/orion/rendering/DeferredModels";
+import { useDeferredModel } from "./useDeferredModel";
 import { useNearby } from "./useNearby";
 
 /**
@@ -22,7 +24,6 @@ import { useNearby } from "./useNearby";
  * here never rebuilds a kilometre of rail.
  */
 
-const TRAIN_MODEL = "/models/rail/metro-train.glb";
 /**
  * Where the train starts its first lap: on the north side, heading west, a few seconds short of
  * the player's spawn — so the first thing it does is run past them.
@@ -154,10 +155,16 @@ function Barrier({ crossing, side }: Readonly<{ crossing: LevelCrossing; side: 1
 	);
 }
 
-/** The train: three carriages, each instancing the same set and showing one third of it. */
+/**
+ * The train: three carriages, each instancing the same set and showing one third of it.
+ *
+ * Its model loads after the loading screen (see DeferredModels), and the train only starts going
+ * round once it has arrived — never an invisible train on the line. Until then the crossings stay
+ * open.
+ */
 function Train() {
-	const { asset, error } = useModel(TRAIN_MODEL);
-	if (error || !asset) return null;
+	const asset = useDeferredModel(TRAIN_MODEL);
+	if (!asset) return null;
 	return (
 		<Entity name="orion-train">
 			{Array.from({ length: CARRIAGE_COUNT }, (_, index) => (

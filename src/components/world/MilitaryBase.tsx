@@ -2,7 +2,7 @@
 
 import { Entity } from "@playcanvas/react";
 import { Collision, Render, RigidBody } from "@playcanvas/react/components";
-import { useApp, useMaterial, useModel } from "@playcanvas/react/hooks";
+import { useApp, useMaterial } from "@playcanvas/react/hooks";
 import {
 	ADDRESS_CLAMP_TO_EDGE,
 	Entity as PlayCanvasEntity,
@@ -14,10 +14,13 @@ import {
 	type Material,
 	type RenderComponent,
 } from "playcanvas";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 
+import { ARMY_BASE_AREA, MILITARY_KIT_MODEL } from "@/engine/orion/rendering/DeferredModels";
+import { runInFrames } from "@/engine/orion/rendering/FrameBudget";
 import { addSolidBody, localBounds } from "@/engine/orion/rendering/ModelBounds";
 import { AIRFIELD_BOUNDS, AIRFIELD_LAYOUT } from "@/engine/orion/world/Airfield";
+import { PERIMETER_WALL_RUNS, WALL_PANEL_SIZE } from "@/engine/orion/world/BasePerimeter";
 import {
 	ACCESS_ROAD,
 	BASE,
@@ -32,11 +35,11 @@ import {
 
 import { Gunship } from "./Gunship";
 import { cullBatchGroup } from "./useDistanceCull";
+import { useDeferredModel } from "./useDeferredModel";
 import { ParkedVehicle } from "./Vehicles";
 
 type Vec3Tuple = [number, number, number];
 
-const KIT = "/models/military/military-base-kit.glb";
 /** The terrain plane, and the yard laid a hair above it. */
 const GROUND_Y = -0.65;
 /** The compound's walls, towers and kit aren't drawn from further than this (metres). */
@@ -44,6 +47,14 @@ const SET_PIECE_DRAW_DISTANCE = 300;
 const YARD_THICKNESS = 0.04;
 const PAD_THICKNESS = 0.06;
 const GROUND_TOP = GROUND_Y + PAD_THICKNESS;
+/** The kit's concrete wall, averaged: the stand-ins read as the same wall from a distance. */
+const STAND_IN_WALL_COLOUR = "#c3c3be";
+/** Frames to wait for the kit walls' colliders before leaving the stand-ins up for good. */
+const STAND_IN_CHECKS = 300;
+/** Milliseconds per frame spent laying the kit's pieces (see FrameBudget). */
+const PLACEMENT_BUDGET_MS = 4;
+/** Wall panels per batch: the wall's ~425 panels go into a batch per this many (see the kit effect). */
+const WALLS_PER_BATCH = 48;
 
 /**
  * The army base (see engine/world/MilitaryBase): walls, towers, barracks, tents and props from
@@ -51,12 +62,31 @@ const GROUND_TOP = GROUND_Y + PAD_THICKNESS;
  * and helipad, reached from the city by its own road.
  *
  * Every kit piece goes into one static batch, so the whole compound costs a draw call per
- * material rather than one per wall panel.
+ * material rather than one per wall panel. The kit loads after the loading screen (see
+ * DeferredModels); the yard, roads and pads are here from the start, the compound once it arrives.
+ *
+ * Until then the perimeter is held by plain stand-in walls, solid and visible, laid along the
+ * same lines with the same gates open (see BasePerimeter): the base can't be driven into through
+ * a wall that hasn't downloaded yet. They go the moment the kit's own walls are solid.
  */
 export const MilitaryBase = memo(function MilitaryBase({ asphaltDiffuse, asphaltNormal }: Readonly<{ asphaltDiffuse: Texture | null; asphaltNormal: Texture | null }>) {
 	const app = useApp();
-	const { asset } = useModel(KIT);
+	const asset = useDeferredModel(MILITARY_KIT_MODEL, ARMY_BASE_AREA);
 	const [root, setRoot] = useState<PlayCanvasEntity | null>(null);
+	const standInPaint = useMaterial({ diffuse: STAND_IN_WALL_COLOUR, gloss: 0.3 });
+	/** Takes the stand-in walls down; null once they're gone. */
+	const removeStandIns = useRef<(() => void) | null>(null);
+	const kitPlaced = useRef(false);
+
+	useEffect(() => {
+		if (!app || !root || kitPlaced.current) return;
+		const remove = buildStandInWalls(root, standInPaint, GROUND_TOP);
+		removeStandIns.current = remove;
+		return () => {
+			remove();
+			if (removeStandIns.current === remove) removeStandIns.current = null;
+		};
+	}, [app, root, standInPaint]);
 
 	useEffect(() => {
 		const resource = asset?.resource as ContainerResource | undefined;
@@ -65,13 +95,32 @@ export const MilitaryBase = memo(function MilitaryBase({ asphaltDiffuse, asphalt
 		toneDownMirrorMetal(kit);
 		const templates = buildTemplates(kit);
 		const batcher = app.batcher;
-		const group = batcher?.addGroup("military-base", false, 400) ?? null;
+		const placements = [...BASE_LAYOUT, ...AIRFIELD_LAYOUT];
+		// The airfield's wall, towers and lamps come from the same kit. They're batched in sections
+		// — the wall in runs of WALLS_PER_BATCH panels (laid along its lines, so each run is a
+		// stretch of wall), everything else a batch per kind of piece — because building one batch
+		// of all ~490 pieces took ~150 ms in one frame; a section a frame is a few ms each
+		// (measured: walls 3–7 ms; all the other pieces together were still 59 ms).
+		const sectionOf: string[] = [];
+		let walls = 0;
+		for (const placement of placements) sectionOf.push(placement.piece === "wall" ? `wall-${Math.floor(walls++ / WALLS_PER_BATCH)}` : placement.piece);
+		const sectionIndex = new Map<string, number>();
+		const sections: { renders: RenderComponent[]; groupId: number | null }[] = [];
+		for (const name of sectionOf) {
+			if (sectionIndex.has(name)) continue;
+			sectionIndex.set(name, sections.length);
+			sections.push({ renders: [], groupId: batcher?.addGroup(`military-base-${name}`, false, 400)?.id ?? null });
+		}
 		const cleanups: (() => void)[] = [];
 		const placed: PlayCanvasEntity[] = [];
-		// The airfield's wall, towers and lamps come from the same kit, into the same batch.
-		for (const placement of [...BASE_LAYOUT, ...AIRFIELD_LAYOUT]) {
+		// Laid a few milliseconds' worth per frame (FrameBudget): all ~490 pieces and their
+		// colliders at once froze a frame for up to 360 ms. Not drawn until all are down: then each
+		// section goes into its batch whole — one build each — and nothing is ever drawn unbatched,
+		// whose shaders the prewarm doesn't build (it builds the batched ones; see DeferredModels
+		// STATIC_BATCHED_MODELS).
+		const jobs = placements.map((placement, index) => () => {
 			const template = templates.get(placement.piece);
-			if (!template) continue;
+			if (!template) return;
 			const holder = new PlayCanvasEntity(`base-${placement.piece}`);
 			// In the scene first: a static body stays where it's created (see ModelBounds).
 			root.addChild(holder);
@@ -83,31 +132,84 @@ export const MilitaryBase = memo(function MilitaryBase({ asphaltDiffuse, asphalt
 			const offset = new PlayCanvasEntity("offset");
 			offset.setLocalPosition(template.offset);
 			for (const part of template.parts) offset.addChild(buildPart(part));
-			holder.addChild(offset);
-			for (const render of holder.findComponents("render") as RenderComponent[]) {
+			for (const render of offset.findComponents("render") as RenderComponent[]) {
 				render.castShadows = true;
 				render.receiveShadows = true;
-				if (group) render.batchGroupId = group.id;
+				render.enabled = false;
+				sections[sectionIndex.get(sectionOf[index])!].renders.push(render);
 			}
+			holder.addChild(offset);
 			if (!WALK_THROUGH_PIECES.has(placement.piece)) cleanups.push(addSolidBody(holder, false));
 			placed.push(holder);
-		}
-		// Seen from across the city the compound is a smudge on the horizon: its batch isn't drawn
-		// from further than this. The batch holds the airfield's wall and towers too, so the box
+		});
+		let frame = 0;
+		let checks = 0;
+		let live = true;
+		let revealing: ReturnType<typeof runInFrames> | null = null;
+		// Seen from across the city the compound is a smudge on the horizon: its batches aren't
+		// drawn from further than this. They hold the airfield's wall and towers too, so the box
 		// takes in the whole airfield, not just the base.
-		if (group) {
-			const minX = Math.min(BASE.centre[0] - BASE.size[0] / 2, AIRFIELD_BOUNDS.minX);
-			const maxX = Math.max(BASE.centre[0] + BASE.size[0] / 2, AIRFIELD_BOUNDS.maxX);
-			const minZ = Math.min(BASE.centre[1] - BASE.size[1] / 2, AIRFIELD_BOUNDS.minZ);
-			const maxZ = Math.max(BASE.centre[1] + BASE.size[1] / 2, AIRFIELD_BOUNDS.maxZ);
-			cleanups.push(cullBatchGroup(app, group.id, { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2, halfX: (maxX - minX) / 2, halfZ: (maxZ - minZ) / 2 }, SET_PIECE_DRAW_DISTANCE));
-		}
+		const minX = Math.min(BASE.centre[0] - BASE.size[0] / 2, AIRFIELD_BOUNDS.minX);
+		const maxX = Math.max(BASE.centre[0] + BASE.size[0] / 2, AIRFIELD_BOUNDS.maxX);
+		const minZ = Math.min(BASE.centre[1] - BASE.size[1] / 2, AIRFIELD_BOUNDS.minZ);
+		const maxZ = Math.max(BASE.centre[1] + BASE.size[1] / 2, AIRFIELD_BOUNDS.maxZ);
+		const area = { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2, halfX: (maxX - minX) / 2, halfZ: (maxZ - minZ) / 2 };
+		const laying = runInFrames(jobs, { budgetMs: PLACEMENT_BUDGET_MS });
+		void laying.done.then((complete) => {
+			if (!complete || !live) return;
+			// A section a frame into its batch (budget 0: one job per frame), built there and then
+			// and kept hidden: shown a section at a time, the kit's walls stood inside the stand-ins
+			// for a second (both drawn, flickering against each other) — Phase 2.3.
+			revealing = runInFrames(sections.map((section) => () => {
+				for (const render of section.renders) {
+					if (section.groupId !== null) render.batchGroupId = section.groupId;
+					render.enabled = true;
+				}
+				if (section.groupId === null || !batcher) return;
+				batcher.generate([section.groupId]);
+				for (const batch of batchesIn(app, section.groupId)) batch.meshInstance.visible = false;
+			}), { budgetMs: 0 });
+			return revealing.done;
+		}).then((complete) => {
+			if (!complete || !live) return;
+			kitPlaced.current = true;
+			// Shows the kit in the same moment the stand-ins go (one task, so no frame draws both or
+			// neither), and from then on lets distance culling decide.
+			const showKit = () => {
+				for (const section of sections) {
+					if (section.groupId === null) continue;
+					for (const batch of batchesIn(app, section.groupId)) batch.meshInstance.visible = true;
+					cleanups.push(cullBatchGroup(app, section.groupId, area, SET_PIECE_DRAW_DISTANCE));
+				}
+			};
+			// The stand-ins go once every kit wall has its collider, never before: no moment with
+			// neither, seen or solid. If the colliders never come, the kit is shown and the
+			// stand-ins stay, as before.
+			const kitWalls = placed.filter((holder) => holder.name === "base-wall");
+			const wallsSolid = () => kitWalls.every((holder) => holder.findByName("solid-body") !== null);
+			const retire = () => {
+				if (wallsSolid()) {
+					showKit();
+					removeStandIns.current?.();
+					removeStandIns.current = null;
+				} else if (++checks < STAND_IN_CHECKS) {
+					frame = requestAnimationFrame(retire);
+				} else {
+					showKit();
+				}
+			};
+			retire();
+		});
 		return () => {
+			live = false;
+			laying.cancel();
+			revealing?.cancel();
+			cancelAnimationFrame(frame);
 			for (const cleanup of cleanups) cleanup();
 			for (const holder of placed) holder.destroy();
 			// Last: the pieces were cloned from it and share its meshes.
 			kit.destroy();
-			if (group && batcher) batcher.removeGroup(group.id);
+			if (batcher) for (const section of sections) if (section.groupId !== null) batcher.removeGroup(section.groupId);
 		};
 	}, [app, root, asset]);
 
@@ -312,4 +414,39 @@ function useBaseSign(): Material {
 	return useMaterial(texture
 		? { diffuse: "#ffffff", diffuseMap: texture, emissive: "#ffffff", emissiveMap: texture, emissiveIntensity: 0.25, gloss: 0.3 }
 		: { diffuse: "#2f3a24" });
+}
+
+/** The batches the batcher has built for a group (its list isn't public API; see cullBatchGroup). */
+function batchesIn(app: NonNullable<ReturnType<typeof useApp>>, groupId: number): { meshInstance: { visible: boolean } }[] {
+	const list = (app.batcher as unknown as { _batchList?: { batchGroupId: number; meshInstance: { visible: boolean } }[] } | null)?._batchList ?? [];
+	return list.filter((batch) => batch.batchGroupId === groupId);
+}
+
+/**
+ * Plain walls along the perimeter runs: one box and one static collider per straight run, the
+ * kit wall's height and thickness. Returns the teardown (safe to call twice).
+ */
+function buildStandInWalls(root: PlayCanvasEntity, paint: Material, groundTop: number): () => void {
+	const holder = new PlayCanvasEntity("base-stand-in-walls");
+	root.addChild(holder);
+	const { height, thickness } = WALL_PANEL_SIZE;
+	for (const run of PERIMETER_WALL_RUNS) {
+		const wall = new PlayCanvasEntity("stand-in-wall");
+		// In the scene before its body is made: a static body stays where it's created.
+		holder.addChild(wall);
+		wall.setPosition(run.x, groundTop + height / 2, run.z);
+		wall.setEulerAngles(0, run.yaw, 0);
+		const look = new PlayCanvasEntity("stand-in-wall-look");
+		look.setLocalScale(run.length, height, thickness);
+		look.addComponent("render", { type: "box", material: paint, castShadows: true, receiveShadows: true });
+		wall.addChild(look);
+		wall.addComponent("collision", { type: "box", halfExtents: new Vec3(run.length / 2, height / 2, thickness / 2) });
+		wall.addComponent("rigidbody", { type: "static" });
+	}
+	let removed = false;
+	return () => {
+		if (removed) return;
+		removed = true;
+		holder.destroy();
+	};
 }

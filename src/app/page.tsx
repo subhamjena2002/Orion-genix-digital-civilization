@@ -65,7 +65,7 @@ const REQUIREMENTS = [
 	{ spec: "Processor", min: "4 threads (Intel Core i3 / Ryzen 3)", rec: "8 threads (Core i5 / Ryzen 5)", ultra: "8+ threads (Core i7 / Ryzen 7, Apple M-series)" },
 	{ spec: "Graphics", min: "Integrated: Intel UHD 620, AMD Vega 8, Apple M1", rec: "GTX 1050 Ti / RX 570, Iris Xe, Apple M1 Pro", ultra: "RTX 2060 / RX 6600 or better" },
 	{ spec: "Display", min: "1280 × 720", rec: "1920 × 1080", ultra: "1440p and up" },
-	{ spec: "Download", min: `~${GAME_FACTS.downloadMb} MB on first play, then cached`, rec: "Broadband for the first load", ultra: "Plays offline once installed" },
+	{ spec: "Download", min: "Game data loads on first play, then cached", rec: "Broadband for the first load", ultra: "Plays offline once installed" },
 	{ spec: "Controls", min: "Touch screen", rec: "Keyboard + mouse", ultra: "Keyboard + mouse" },
 ] as const;
 
@@ -76,7 +76,7 @@ const FAQ = [
 	},
 	{
 		q: "Do I need to download or install anything?",
-		a: `No. OrionGenix runs in your web browser using WebGL 2. The first visit loads about ${GAME_FACTS.downloadMb} MB of game data, which is then cached, so the next start is much faster. You can also install it as an app from your browser and play offline.`,
+		a: "No. OrionGenix runs in your web browser using WebGL 2. The first visit downloads the game's models, textures and sounds, which are then cached, so the next start is much faster. You can also install it as an app from your browser and play offline.",
 	},
 	{
 		q: "Will it run on my laptop without a graphics card?",
@@ -137,7 +137,6 @@ function JsonLd() {
 			offers: { "@type": "Offer", price: "0", priceCurrency: "USD", availability: "https://schema.org/InStock", url: absolute("/play") },
 			memoryRequirements: "4 GB RAM minimum, 8 GB recommended",
 			processorRequirements: "4 threads minimum, 8 recommended",
-			storageRequirements: `About ${GAME_FACTS.downloadMb} MB browser cache`,
 			contentRating: "16+ (action violence)",
 		},
 		{

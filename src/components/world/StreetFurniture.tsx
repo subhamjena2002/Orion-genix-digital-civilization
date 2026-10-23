@@ -444,6 +444,9 @@ function addSignal(approach: (typeof SIGNAL_APPROACHES)[number], builders: Signa
 	const head = (hx: number, hy: number, hz: number) => {
 		border.addBox([hx - fx * 0.17, hy, hz - fz * 0.17], faceSize(0.02, PLATE_WIDTH, PLATE_HEIGHT));
 		housing.addBox([hx - fx * 0.155, hy, hz - fz * 0.155], faceSize(0.022, PLATE_WIDTH - 2 * PLATE_BORDER, PLATE_HEIGHT - 2 * PLATE_BORDER));
+		// The back of the plate is the head's dark powder-coat, as on real signals: only the face
+		// carries the yellow edge. Seen from behind, the plates read as yellow slabs before.
+		housing.addBox([hx - fx * 0.183, hy, hz - fz * 0.183], faceSize(0.006, PLATE_WIDTH + 0.004, PLATE_HEIGHT + 0.004));
 		housing.addBox([hx, hy, hz], faceSize(HEAD_DEPTH, HEAD_WIDTH, HEAD_HEIGHT));
 		COLOURS.forEach((colour, index) => {
 			const key: LampKey = `${group}-${axis}-${colour}`;

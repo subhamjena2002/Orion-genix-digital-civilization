@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 import { visibleTriangles, type VisibilityInput } from "./HiddenSurface";
-import { simplifyLevels, type SimplifyInput, type SimplifyLevel } from "./Simplify";
+import { simplifyLevels, transferList, type SimplifyInput, type SimplifyLevel } from "./Simplify";
 
 type Request =
 	| { id: number; kind: "simplify"; inputs: SimplifyInput[]; levels: SimplifyLevel[] }
@@ -17,11 +17,11 @@ scope.onmessage = async (event: MessageEvent<Request>) => {
 	try {
 		if (request.kind === "visibility") {
 			const result = visibleTriangles(request.inputs);
-			scope.postMessage({ id: request.id, result }, result ? result.map((flags) => flags.buffer as ArrayBuffer) : []);
+			scope.postMessage({ id: request.id, result }, result ? transferList(result) : []);
 			return;
 		}
 		const result = await simplifyLevels(request.inputs, request.levels);
-		scope.postMessage({ id: request.id, result }, result.flatMap((level) => level.map((indices) => indices.buffer as ArrayBuffer)));
+		scope.postMessage({ id: request.id, result }, transferList(result.flat()));
 	} catch (error) {
 		scope.postMessage({ id: request.id, error: String(error) });
 	}

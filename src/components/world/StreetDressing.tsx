@@ -21,6 +21,8 @@ import { makeCanvas, normalsFromHeight, rgb, seededRandom, textureFromCanvas, te
 import { ORION_ACTIVE_TIME_OF_DAY } from "@/engine/orion/rendering/Environment";
 import { estateDressing } from "@/engine/orion/world/Estates";
 import { LAND_Y } from "@/engine/orion/world/Mountains";
+import { downtownTrees } from "@/engine/orion/world/DowntownCore";
+import { spawnDistrictTrees } from "@/engine/orion/world/SpawnDistrict";
 import { buildDressingChunks, dressingCollider, parkGroves, streetDressing } from "@/engine/orion/world/StreetDressing";
 import { ORION_PARCELS } from "@/engine/orion/world/WorldModel";
 import type { MeshData } from "@/engine/orion/world/MeshData";
@@ -188,7 +190,7 @@ export const StreetDressing = memo(function StreetDressing() {
 		const phone = window.matchMedia?.("(pointer: coarse)").matches ?? false;
 		// The city's kerbs and the estates' streets and gardens, merged chunk by chunk together.
 		const parks = ORION_PARCELS.filter((parcel) => parcel.zoning === "park");
-		const items = [...streetDressing(phone ? PHONE_SPACING : undefined), ...estateDressing(), ...parkGroves(parks, LAND_Y)];
+		const items = [...streetDressing(phone ? PHONE_SPACING : undefined), ...estateDressing(), ...parkGroves(parks, LAND_Y), ...spawnDistrictTrees(), ...downtownTrees()];
 		const chunks = buildDressingChunks(items);
 		const materials = makeMaterials(device);
 		const meshes: Mesh[] = [];

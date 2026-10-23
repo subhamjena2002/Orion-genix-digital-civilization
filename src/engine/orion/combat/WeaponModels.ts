@@ -1,5 +1,6 @@
 import { Asset, BoundingBox, Entity, Mat4, Quat, StandardMaterial, Vec3, type AppBase, type MeshInstance } from "playcanvas";
 
+import { afterLoadingScreen } from "../rendering/DeferredModels";
 import { WEAPON_MODEL_BASE, type WeaponDefinition, type WeaponModelSpec } from "./WeaponData";
 
 /**
@@ -103,11 +104,15 @@ async function fileExists(url: string): Promise<boolean> {
 	}
 }
 
-/** Loads a GLB once per URL; resolves null if the file is missing or broken. */
+/**
+ * Loads a GLB once per URL; resolves null if the file is missing or broken. Not before the loading
+ * screen has gone: the placeholder shape holds until then, and the rifle (2.3 MB, carried by every
+ * posted officer) would otherwise be part of what the game has to download before it can start.
+ */
 function loadContainer(app: AppBase, url: string): Promise<Asset | null> {
 	let pending = containers.get(url);
 	if (!pending) {
-		pending = fileExists(url).then((found) => {
+		pending = afterLoadingScreen().then(() => fileExists(url)).then((found) => {
 			if (!found) {
 				// Not all weapon art exists yet: the placeholder stays.
 				containers.delete(url);

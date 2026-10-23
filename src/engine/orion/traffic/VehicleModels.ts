@@ -76,6 +76,12 @@ export interface VehicleModelSpec {
 	 * so a new one can't be added without the decision being made deliberately.
 	 */
 	realBrandDerivative?: boolean;
+	/**
+	 * Loaded after the loading screen rather than before it (see DeferredModels): for a model of
+	 * something out of the world when play starts (fire engines, mission cars). Until it arrives
+	 * the procedural body stands in, as it always has while a model loads.
+	 */
+	deferred?: boolean;
 	credit: { author: string; licence: "CC0" | "CC-BY-4.0" | "Purchased" | string; source: string };
 }
 
@@ -117,6 +123,24 @@ export const VEHICLE_MODELS: readonly VehicleModelSpec[] = [
 		length: 4.7,
 		// Left-hand drive, in the front seat.
 		seat: { forward: 0.3, lateral: 0.38, rootAboveRoad: 0.24, scale: 0.6 },
+		// Only mission cars are sedans, and they're out of the world until a mission places them.
+		deferred: true,
+		credit: ORION_ORIGINAL,
+	},
+	{
+		// A five-door hatchback on the saloon's nose and doors, in the fleet's colours.
+		file: "orion-hatchback.glb",
+		styles: ["hatchback"],
+		length: 4.15,
+		seat: { forward: 0.3, lateral: 0.37, rootAboveRoad: 0.24, scale: 0.6 },
+		credit: ORION_ORIGINAL,
+	},
+	{
+		// A family SUV on the wagon's tall body: alloys, roof rails, chrome grille, fleet colours.
+		file: "orion-suv.glb",
+		styles: ["suv"],
+		length: 4.95,
+		seat: { forward: 0.5, lateral: 0.42, rootAboveRoad: 0.47, scale: 0.66 },
 		credit: ORION_ORIGINAL,
 	},
 	{
@@ -210,6 +234,8 @@ export const VEHICLE_MODELS: readonly VehicleModelSpec[] = [
 		length: 9.5,
 		keepPaint: true,
 		seat: { forward: 3.95, lateral: 0.67, rootAboveRoad: 0.75, scale: 0.8 },
+		// Out of the world until something is burning.
+		deferred: true,
 		credit: ORION_ORIGINAL,
 	},
 	{

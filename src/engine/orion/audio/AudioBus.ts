@@ -164,6 +164,11 @@ class AudioBus {
 		this.rampMaster(on ? 0.8 : 0.05);
 	}
 
+	/** Whether the mix is on: off while the loading screen is up. */
+	public isAudible(): boolean {
+		return this.audible;
+	}
+
 	/** The player's volume settings (0..1) and mute; kept for a context not created yet. */
 	public setLevels(master: number, effects: number, muted: boolean): void {
 		this.levels.master = clamp01(master);

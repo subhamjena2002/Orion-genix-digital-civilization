@@ -22,6 +22,7 @@ import { Mountains } from "./Mountains";
 import { StateTerrain } from "./StateTerrain";
 import { Estates } from "./Estates";
 import { StreetDressing } from "./StreetDressing";
+import { DowntownDressing, SpawnDistrict } from "./SpawnDistrict";
 import { WaypointBeacon } from "./WaypointBeacon";
 import { StreetFurniture } from "./StreetFurniture";
 import { FireEngines, GarageVehicles, MissionVehicles, Vehicles } from "./Vehicles";
@@ -168,6 +169,8 @@ export function DistrictScene() {
 			<Vehicles />
 			<Police />
 			<Hospitals />
+			<SpawnDistrict />
+			<DowntownDressing />
 			<FireEngines />
 			<MissionVehicles />
 			<MissionHostiles />

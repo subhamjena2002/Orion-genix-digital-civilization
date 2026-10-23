@@ -341,7 +341,10 @@ function materials(material, paint, extra = {}) {
 		gloss: material("trim_gloss", [0.012, 0.012, 0.014], { roughness: 0.15 }),
 		cladding: material("cladding", [0.045, 0.045, 0.047], { roughness: 0.75 }),
 		chrome: material("chrome", [0.82, 0.82, 0.84], { metallic: 1, roughness: 0.12 }),
-		glass: material("glass", [0.03, 0.04, 0.05], { roughness: 0.03, alpha: 0.62, doubleSided: true }),
+		// Lighter, clearer glass (`extra.glass`) lets the cabin read through it on the cars people look at.
+		glass: material("glass", extra.glass?.colour ?? [0.03, 0.04, 0.05], { roughness: 0.03, alpha: extra.glass?.alpha ?? 0.62, doubleSided: true }),
+		// Frosted panes (an ambulance's patient compartment): pale and nearly opaque.
+		frost: material("glass_frosted", [0.78, 0.8, 0.82], { roughness: 0.6, alpha: 0.9, doubleSided: true }),
 		underbody: material("underbody", [0.035, 0.035, 0.035], { roughness: 0.9 }),
 		headlight: material("headlight", [1, 1, 1], { roughness: 0.1, emissive: [1, 0.98, 0.94] }),
 		lens: material("headlight_lens", [0.9, 0.93, 1], { roughness: 0.05, emissive: [0.5, 0.52, 0.55] }),
@@ -351,7 +354,7 @@ function materials(material, paint, extra = {}) {
 		indicator: material("indicator", [0.95, 0.45, 0.05], { roughness: 0.15, emissive: [0.35, 0.15, 0.01] }),
 		reverse: material("reverse_lamp", [0.85, 0.86, 0.88], { roughness: 0.1 }),
 		plate: material("plate_blank", [0.88, 0.88, 0.85], { roughness: 0.4 }),
-		interior: material("interior", [0.075, 0.07, 0.068], { roughness: 0.7 }),
+		interior: material("interior", extra.interior ?? [0.075, 0.07, 0.068], { roughness: 0.7 }),
 		dash: material("dashboard", [0.04, 0.04, 0.042], { roughness: 0.55 }),
 		jamb: material("jamb", [0.4, 0.4, 0.4], { roughness: 0.5, doubleSided: true }),
 		tyre: material("tyre_rubber", [0.03, 0.03, 0.032], { roughness: 0.92 }),
@@ -390,6 +393,7 @@ function partTable(M, spec) {
 		windscreen: ["windscreen-glass", M.glass],
 		"rear-glass": ["rear-glass", M.glass],
 		"side-glass": ["side-glass", M.glass],
+		"frost-glass": ["side-glass", M.frost],
 		headlight: ["lights-front", M.headlight],
 		// Lenses light up with the headlamps (the game matches both by name): one material, one draw.
 		lens: ["lights-front", M.headlight],
@@ -441,7 +445,7 @@ const MOVING = /^(door|rear-door|side-door|bus-door|back-door|hood|trunk|tailgat
  */
 const FINISHES = {
 	flat_matte: { roughness: 0.84, names: ["underbody", "cladding", "interior", "tyre_rubber"] },
-	flat_satin: { roughness: 0.48, names: ["trim", "dashboard", "plate_blank", "accent", "accent_2", "traffic_cone", "stop_arm", "grab_poles", "jamb", "indicator"] },
+	flat_satin: { roughness: 0.48, names: ["trim", "dashboard", "plate_blank", "accent", "accent_2", "accent_blue", "traffic_cone", "stop_arm", "grab_poles", "jamb", "indicator"] },
 	flat_gloss: { roughness: 0.14, metallic: 0.3, names: ["trim_gloss", "lamp_housing", "reverse_lamp"] },
 	flat_metal: { roughness: 0.24, metallic: 1, names: ["chrome", "rim", "steel", "hub", "rotor", "caliper", "aluminium"] },
 };
@@ -1185,10 +1189,20 @@ function ambulanceBox(spec, parts, box3) {
 	roundedBox(door, [-(half + 0.004), bottom + 1.05, dz - 0.45], [0.012, 1.85, 0.86], 0.02);
 	roundedBox(parts.get("side-door-right-decor"), [-(half + 0.012), bottom + 0.62, dz - 0.45], [0.004, 0.2, 0.82], 0.002);
 	roundedBox(parts.get("gloss"), [-(half + 0.012), bottom + 1.5, dz - 0.45], [0.006, 0.5, 0.62], 0.04);
-	roundedBox(parts.get("side-glass"), [-(half + 0.016), bottom + 1.5, dz - 0.45], [0.004, 0.44, 0.56], 0.035);
+	roundedBox(parts.get("frost-glass"), [-(half + 0.016), bottom + 1.5, dz - 0.45], [0.004, 0.44, 0.56], 0.035);
 	roundedBox(parts.get("side-door-right-handle"), [-(half + 0.02), bottom + 1.05, dz - 0.82], [0.02, 0.2, 0.03], 0.01);
 	roundedBox(parts.get("gloss"), [half + 0.006, bottom + 1.5, mid], [0.006, 0.44, 0.7], 0.04);
-	roundedBox(parts.get("side-glass"), [half + 0.01, bottom + 1.5, mid], [0.004, 0.38, 0.64], 0.035);
+	roundedBox(parts.get("frost-glass"), [half + 0.01, bottom + 1.5, mid], [0.004, 0.38, 0.64], 0.035);
+	// The star of life on both flanks and high on the back: a blue cross with a white border.
+	for (const side of [1, -1]) starOfLife(parts, [side * (half + 0.006), bottom + 1.55, rear + 0.75], [side, 0, 0], 0.5);
+	starOfLife(parts, [0, top - 0.25, rear - 0.008], [0, 0, -1], 0.34);
+	// Flashers that go with the beacons: high on the back corners, and along each flank.
+	for (const side of [1, -1]) {
+		roundedBox(parts.get(side > 0 ? "siren-red" : "siren-blue"), [side * (half - 0.08), top - 0.12, rear - 0.03], [0.14, 0.12, 0.04], 0.02);
+		for (const z of [front - 0.25, mid, rear + 0.25]) {
+			roundedBox(parts.get(side > 0 ? "siren-red" : "siren-blue"), [side * (half + 0.012), top - 0.1, z], [0.03, 0.08, 0.18], 0.012);
+		}
+	}
 	// Back: two doors with windows and chevrons, lamps down the corners, a step.
 	const zr = rear - 0.004;
 	box(parts.get("gloss"), [0, (bottom + top) / 2 - 0.05, zr], [0.012, top - bottom - 0.3, 0.008]);
@@ -1215,6 +1229,23 @@ function ambulanceBox(spec, parts, box3) {
 	for (const side of [1, -1]) roundedBox(parts.get("trim"), [side * 0.82, 0.32, spec.axles[1].z - 0.5], [0.3, 0.3, 0.012], 0.005);
 }
 
+/**
+ * A star of life on a face whose outward normal is `normal` (an axis): a six-armed blue cross
+ * over a white one, `size` across.
+ */
+function starOfLife(parts, at, normal, size) {
+	const flat = Math.abs(normal[0]) > 0.5 ? 0 : 2;
+	for (const [key, scaleBy, lift] of [["accent2", 1, 0.004], ["blue-mark", 0.78, 0.008]]) {
+		const length = size * scaleBy;
+		const arm = size * 0.3 * scaleBy;
+		for (const angle of [0, 60, -60]) {
+			const dims = flat === 0 ? [0.004, length, arm] : [arm, length, 0.004];
+			const centre = add(at, scale(normal, lift));
+			box(parts.get(key), centre, dims, 0, flat === 0 ? angle : 0, flat === 0 ? 0 : angle);
+		}
+	}
+}
+
 function ambulanceDetails(spec, parts) {
 	const at = bodyProjector(spec, parts);
 	vanFront(spec, parts, at);
@@ -1226,7 +1257,15 @@ function ambulanceDetails(spec, parts) {
 		const y = roof.p[1] + 0.03;
 		const z = roof.p[2];
 		roundedBox(parts.get("trim"), [0, y, z], [1.5, 0.03, 0.26], 0.012);
-		for (const side of [1, -1]) roundedBox(parts.get(side > 0 ? "siren-red" : "siren-blue"), [side * 0.4, y + 0.06, z], [0.66, 0.09, 0.24], 0.03);
+		// Segmented: four lamps a side, so the double flash reads as a strobe bar.
+		for (const side of [1, -1]) {
+			for (let k = 0; k < 4; k++) roundedBox(parts.get(side > 0 ? "siren-red" : "siren-blue"), [side * (0.12 + k * 0.165), y + 0.06, z], [0.15, 0.09, 0.24], 0.025);
+		}
+	}
+	// Grille flashers low on the nose.
+	for (const side of [1, -1]) {
+		const hit = at([side * 0.55, 0.62, 6], [0, 0, -1]);
+		if (hit) roundedBox(parts.get(side > 0 ? "siren-red" : "siren-blue"), add(hit.p, scale(hit.n, 0.012)), [0.16, 0.06, 0.03], 0.012);
 	}
 	ambulanceBox(spec, parts, { front: spec.rear - 0.03, rear: -3.25, half: 1.1, bottom: 0.66, top: 2.86 });
 }
@@ -2031,7 +2070,151 @@ function taxiFit(spec, parts) {
 		roundedBox(parts.get("trim"), add(base, [0, 0.02, 0]), [0.12, 0.04, 0.22], 0.015);
 		roundedBox(parts.get("sign"), add(base, [0, 0.11, 0]), [0.72, 0.16, 0.2], 0.03, { segments: 2 });
 		roundedBox(parts.get("trim"), add(base, [0, 0.11, 0]), [0.74, 0.03, 0.21], 0.012);
+		// "TAXI" in block letters on both faces of the sign, readable from the road.
+		for (const face of [1, -1]) blockText(parts.get("trim"), "TAXI", add(base, [0, 0.155, face * 0.102]), 0.07, face);
 	}
+}
+
+/** Block letters, 5 cells tall, for signs: just the few letters the vehicles need. */
+const GLYPHS = {
+	T: ["###", ".#.", ".#.", ".#.", ".#."],
+	A: [".#.", "#.#", "###", "#.#", "#.#"],
+	X: ["#.#", "#.#", ".#.", "#.#", "#.#"],
+	I: ["#", "#", "#", "#", "#"],
+};
+
+/**
+ * `text` in raised block letters `height` tall, centred on `at` on a face looking along ±Z
+ * (`facing` +1 for +Z). Read left to right from in front of that face.
+ */
+function blockText(geo, text, at, height, facing) {
+	const cell = height / 5;
+	const widths = [...text].map((ch) => GLYPHS[ch][0].length);
+	const total = widths.reduce((sum, w) => sum + w + 1, -1) * cell;
+	// Seen from +Z, +X is to the left: letters run towards -X on the front face.
+	let x = total / 2;
+	for (const [i, ch] of [...text].entries()) {
+		const rows = GLYPHS[ch];
+		rows.forEach((row, r) => {
+			[...row].forEach((c, k) => {
+				if (c !== "#") return;
+				const cx = x - (k + 0.5) * cell;
+				box(geo, [at[0] + facing * cx, at[1] + (2 - r) * cell, at[2] + facing * 0.004], [cell * 1.02, cell * 1.02, 0.008]);
+			});
+		});
+		x -= (widths[i] + 1) * cell;
+	}
+}
+
+/**
+ * A five-door hatchback, 4.1 m: the saloon's nose and doors, a shorter wheelbase, and the roof
+ * carried to a steep tailgate instead of a boot.
+ */
+function hatchbackSpec() {
+	const FRONT = 2.3;
+	const REAR = -1.8;
+	const wheel = { radius: 0.31, rim: 0.225, width: 0.205, style: "alloy", spokes: 6 };
+	return sedanSpec({
+		front: FRONT,
+		rear: REAR,
+		axles: [
+			{ z: 1.38, radius: 0.31, arch: 0.37, track: 0.76, wheel },
+			{ z: -1.18, radius: 0.31, arch: 0.37, track: 0.76, wheel },
+		],
+		halfWidth: profile([[REAR, 0.66], [-1.76, 0.8], [-1.66, 0.85], [-1.4, 0.87], [0, 0.865], [1.38, 0.86], [1.9, 0.84], [2.13, 0.79], [2.25, 0.69], [FRONT, 0.57]]),
+		floorY: profile([[REAR, 0.42], [-1.74, 0.3], [-1.58, 0.22], [-1.4, 0.17], [1.8, 0.165], [2.07, 0.21], [2.25, 0.28], [FRONT, 0.36]]),
+		beltY: profile([[REAR, 0.92], [-1.75, 0.98], [-1.55, 1.0], [-1.0, 0.99], [0, 0.965], [0.9, 0.94], [1.5, 0.9], [1.95, 0.85], [2.2, 0.78], [FRONT, 0.68]]),
+		roofY: profile([[REAR, 0.94], [-1.78, 1.05], [-1.74, 1.2], [-1.66, 1.34], [-1.5, 1.43], [-1.2, 1.48], [-0.5, 1.5], [0, 1.5], [0.35, 1.48], [0.6, 1.41], [0.85, 1.26], [1.08, 1.02], [1.28, 0.985], [1.8, 0.94], [2.1, 0.86], [2.25, 0.76], [FRONT, 0.69]]),
+		roofHalf: profile([[-1.6, 0.66], [-1.0, 0.65], [-0.3, 0.65], [0.5, 0.66], [1.1, 0.73]]),
+		cladding: (z) => (z > 2.0 || z < -1.58 ? 3.6 : 0),
+		cuts: [0.98, -0.1, -0.12, -1.06, 1.08, -1.56, 0.92, -0.06, -0.16, -1.0],
+		lids: [
+			{ key: "hood", front: FRONT - 0.04, rear: 1.08, edge: K.glassBase },
+			// The tailgate below its glass: the game opens it as the boot.
+			{ key: "trunk", front: -1.56, rear: REAR + 0.04, edge: K.glassBase },
+		],
+		panes: [
+			{ key: "windscreen", front: 1.08, rear: 0.5, low: K.rail, high: K.top + 0.01, frit: 0.05, fritT: 0.12 },
+			{ key: "rear-glass", front: -1.3, rear: -1.72, low: K.rail, high: K.top + 0.01, frit: 0.05, fritT: 0.12 },
+			{ key: "side-glass", front: -1.03, rear: -1.4, low: K.glassBase, high: K.glassTop, frit: 0.035 },
+		],
+	});
+}
+
+/** The hatchback's fittings: the saloon's, with a roof spoiler over the tailgate glass. */
+function hatchbackDetails(spec, parts, M) {
+	sedanDetails(spec, parts, M);
+	const at = bodyProjector(spec, parts);
+	const top = at([0, 3, -1.62], [0, -1, 0]);
+	if (!top) return;
+	roundedBox(parts.get("body"), add(top.p, [0, 0.015, -0.06]), [1.2, 0.035, 0.2], 0.015, { pitch: 8 });
+	// A third brake light under the spoiler.
+	roundedBox(parts.get("taillight"), add(top.p, [0, -0.012, -0.14]), [0.34, 0.025, 0.02], 0.008);
+}
+
+/**
+ * A civilian SUV on the wagon's body: the same tall, square cabin, a lower roof, alloys and road
+ * tyres, painted in the fleet's colours. Its fittings are a family car's, not the army's.
+ */
+function suvSpec() {
+	const spec = wagonSpec();
+	const wheel = { radius: 0.38, rim: 0.265, width: 0.255, style: "alloy", spokes: 6 };
+	spec.axles = spec.axles.map((axle) => ({ ...axle, radius: 0.38, arch: 0.45, wheel }));
+	const REAR = spec.rear;
+	const FRONT = spec.front;
+	spec.roofY = profile([[REAR, 1.22], [-2.37, 1.52], [-2.31, 1.78], [-2.18, 1.87], [0, 1.9], [0.7, 1.89], [0.95, 1.8], [1.22, 1.32], [1.32, 1.26], [2.25, 1.2], [2.35, 1.16], [FRONT, 1.12]]);
+	spec.floorY = profile([[REAR, 0.6], [-2.3, 0.48], [-2.05, 0.43], [2.05, 0.43], [2.3, 0.5], [FRONT, 0.58]]);
+	spec.bumperPaint = true;
+	return spec;
+}
+
+function suvDetails(spec, parts) {
+	const at = bodyProjector(spec, parts);
+	const F = [0, 0, -1];
+	const B = [0, 0, 1];
+	for (const axle of spec.axles) archFlare(spec, parts, axle, { width: 0.07, lift: 0.02 });
+	// Front: a wide grille with chrome bars between slim swept lamps.
+	decal(parts, "gloss", at, (u, v) => [lerp(-0.5, 0.5, u), lerp(0.78, 1.02, v), 3], F, 0.003, 4, 8);
+	grilleBars(parts, "chrome", at, -0.48, 0.48, [0.82, 0.88, 0.94, 1.0], F, [0, 0.014, 0.012]);
+	for (const side of [1, -1]) {
+		lampUnit(parts, at, (u, v) => [side * lerp(0.56, 0.9, u), lerp(0.94, 1.06, v), 3], F, {
+			bowls: [[0.3, 0.45, 0.04], [0.65, 0.45, 0.04]], strip: { from: 0.05, to: 0.95, v: 0.15 }, rows: 8, cols: 6,
+		});
+		const ind = at([side * 0.8, 0.72, 3], F);
+		if (ind) roundedBox(parts.get("indicator"), add(ind.p, scale(ind.n, 0.01)), [0.16, 0.035, 0.02], 0.01);
+		// Tall tail lamps in the rear corners, a reverse lamp in each.
+		lampUnit(parts, at, (u, v) => [side * lerp(0.7, 0.92, u), lerp(0.95, 1.3, v), -3], B, { strip: { from: 0.1, to: 0.9, v: 0.8, width: 0.016 }, stripPart: "taillight", rows: 6, cols: 4 });
+		decal(parts, "taillight", at, (u, v) => [side * lerp(0.72, 0.9, u), lerp(1.05, 1.28, v), -3], B, 0.006, 4, 2);
+		decal(parts, "reverse", at, (u, v) => [side * lerp(0.72, 0.9, u), lerp(0.97, 1.03, v), -3], B, 0.008, 1, 1);
+		const fog = at([side * 0.7, 0.58, 3], F);
+		if (fog) tube(parts.get("lens"), add(fog.p, scale(fog.n, -0.004)), add(fog.p, scale(fog.n, 0.006)), 0.04, 14);
+	}
+	// Painted bumpers with a dark lower lip and a chrome skid plate.
+	roundedBox(parts.get("bumper-front"), [0, 0.6, spec.front + 0.05], [1.84, 0.24, 0.16], 0.05);
+	roundedBox(parts.get("cladding"), [0, 0.47, spec.front + 0.08], [1.5, 0.06, 0.12], 0.02);
+	roundedBox(parts.get("chrome"), [0, 0.5, spec.front + 0.13], [0.7, 0.03, 0.04], 0.012);
+	roundedBox(parts.get("bumper-rear"), [0, 0.62, spec.rear - 0.05], [1.84, 0.22, 0.14], 0.05);
+	roundedBox(parts.get("cladding"), [0, 0.5, spec.rear - 0.08], [1.4, 0.06, 0.1], 0.02);
+	decal(parts, "plate", at, (u, v) => [lerp(-0.25, 0.25, u), lerp(0.64, 0.75, v), 3], F, 0.004, 2, 6);
+	decal(parts, "plate", at, (u, v) => [lerp(-0.25, 0.25, u), lerp(0.78, 0.89, v), -3], B, 0.004, 2, 6);
+	// Slim roof rails on low feet.
+	const railY = 1.96;
+	for (const x of [-0.72, 0.72]) {
+		tube(parts.get("chrome"), [x, railY, -2.05], [x, railY, 0.55], 0.02, 10);
+		for (const z of [-2.0, -0.75, 0.5]) roundedBox(parts.get("gloss"), [x, railY - 0.04, z], [0.05, 0.07, 0.1], 0.015);
+	}
+	// A spoiler over the tailgate glass, and a twin exhaust.
+	roundedBox(parts.get("body"), [0, 1.88, spec.rear + 0.06], [1.5, 0.04, 0.18], 0.015, { pitch: 8 });
+	for (const x of [0.5, -0.5]) tube(parts.get("chrome"), [x, 0.48, spec.rear + 0.1], [x, 0.48, spec.rear - 0.04], 0.035, 14);
+	for (const door of spec.doors) doorHandle(spec, parts, door, { at: 0.1 });
+	mirrors(spec, parts, { z: 1.0, size: [0.11, 0.1, 0.04], reach: 0.16, up: 0.09 });
+	wipers(parts, at, [-0.7, 0.05], 1.3, 1.25, 0.55);
+	const inside = parts.get("interior");
+	seat(inside, 0.42, 0.6, 0.15);
+	seat(inside, -0.42, 0.6, 0.15);
+	for (const x of [-0.5, 0, 0.5]) seat(inside, x, 0.6, -0.95, { width: 0.46, back: 0.58 });
+	roundedBox(inside, [0, 0.5, -0.4], [1.75, 0.04, 2.6], 0.02);
+	cockpit(parts, { x: 0.42, y: 0.6, z: 0.15, width: 1.7, dashZ: 0.9, dashY: 1.12 });
 }
 
 /** The patrol car: black with white doors, a light bar, a push bar, steel wheels. */
@@ -2066,9 +2249,27 @@ const VEHICLES = {
 	"orion-sedan": () => buildSedanFamily("orion-sedan", { paint: { colour: [0.8, 0.8, 0.8] } }),
 	"orion-taxi": () => buildSedanFamily("orion-taxi", {
 		paint: { colour: [0.98, 0.72, 0.04], metallic: 0.2 },
-		extra: { accent: [0.02, 0.02, 0.02], materials: { sign: ["taxi_sign", [1, 0.92, 0.6], { roughness: 0.3, emissive: [0.55, 0.45, 0.2] }] } },
+		extra: {
+			accent: [0.02, 0.02, 0.02], rim: [0.8, 0.81, 0.83], hub: [0.86, 0.86, 0.88],
+			// Clearer glass over a mid-grey cabin, so seats and headrests read from the street.
+			glass: { colour: [0.07, 0.09, 0.11], alpha: 0.46 }, interior: [0.2, 0.19, 0.18],
+			materials: { sign: ["taxi_sign", [1, 0.92, 0.6], { roughness: 0.3, emissive: [0.55, 0.45, 0.2] }] },
+		},
 		fit: taxiFit,
 		parts: { sign: ["trim", "sign"] },
+	}),
+	"orion-hatchback": () => buildVehicle("orion-hatchback", {
+		spec: hatchbackSpec(),
+		details: hatchbackDetails,
+		paint: { colour: [0.8, 0.8, 0.8] },
+		extra: { glass: { colour: [0.05, 0.065, 0.08], alpha: 0.55 }, interior: [0.12, 0.115, 0.11] },
+	}),
+	"orion-suv": () => buildVehicle("orion-suv", {
+		spec: suvSpec(),
+		details: suvDetails,
+		paint: { colour: [0.8, 0.8, 0.8], metallic: 0.55, roughness: 0.28 },
+		extra: { rim: [0.72, 0.73, 0.75], hub: [0.5, 0.5, 0.52], glass: { colour: [0.04, 0.05, 0.06], alpha: 0.58 }, interior: [0.1, 0.095, 0.09] },
+		aoReach: 0.65,
 	}),
 	"orion-wagon": () => buildVehicle("orion-wagon", {
 		spec: wagonSpec(),
@@ -2108,8 +2309,17 @@ const VEHICLES = {
 		}),
 		details: ambulanceDetails,
 		paint: { colour: [0.95, 0.95, 0.94], metallic: 0.1 },
-		extra: { accent: [0.8, 0.06, 0.05], accent2: [0.97, 0.97, 0.96], rim: [0.6, 0.61, 0.63], hub: [0.8, 0.8, 0.82] },
-		parts: { "side-door-right": ["side-door-right", "paint"], "side-door-right-decor": ["side-door-right", "accent"], "side-door-right-handle": ["side-door-right", "trim"] },
+		extra: {
+			accent: [0.8, 0.06, 0.05], accent2: [0.97, 0.97, 0.96], rim: [0.6, 0.61, 0.63], hub: [0.8, 0.8, 0.82],
+			glass: { colour: [0.06, 0.08, 0.1], alpha: 0.5 }, interior: [0.16, 0.16, 0.17],
+			materials: { blueMark: ["accent_blue", [0.04, 0.22, 0.72], { roughness: 0.4 }] },
+		},
+		parts: {
+			"side-door-right": ["side-door-right", "paint"],
+			"side-door-right-decor": ["side-door-right", "accent"],
+			"side-door-right-handle": ["side-door-right", "trim"],
+			"blue-mark": ["body", "blueMark"],
+		},
 		aoReach: 0.7,
 	}),
 	"orion-truck": () => buildVehicle("orion-truck", {

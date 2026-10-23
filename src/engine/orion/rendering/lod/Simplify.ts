@@ -4,6 +4,14 @@ import { MeshoptSimplifier } from "meshoptimizer";
 export interface SimplifyInput {
 	positions: Float32Array;
 	indices: Uint32Array;
+	/**
+	 * Per-vertex values the surface should keep (tightly packed, `attributeWeights.length` per
+	 * vertex), each weighted against geometric error. Without them a collapse is judged on shape
+	 * alone, and a flat panel whose colour varies (baked occlusion, a trim's colour) loses that
+	 * variation first. Ignored by sloppy levels.
+	 */
+	attributes?: Float32Array;
+	attributeWeights?: readonly number[];
 }
 
 export interface SimplifyLevel {
@@ -39,7 +47,17 @@ export async function simplifyLevels(inputs: readonly SimplifyInput[], levels: r
 	return levels.map((level) => inputs.map((input) => simplifyOne(input, level)));
 }
 
-const EMPTY = new Uint32Array(0);
+/**
+ * The ArrayBuffers behind a worker reply, each once: postMessage refuses a transfer list that
+ * names a buffer twice (a mesh too small to simplify returns its own indices at every level). Run
+ * in the worker, a refused reply sent every LOD job back to the main thread to be simplified
+ * again there — 100–160 ms each (measured, Phase 2.3).
+ */
+export function transferList(arrays: readonly ArrayBufferView[]): ArrayBuffer[] {
+	const buffers = new Set<ArrayBuffer>();
+	for (const array of arrays) if (array.buffer instanceof ArrayBuffer) buffers.add(array.buffer);
+	return [...buffers];
+}
 
 function simplifyOne(input: SimplifyInput, level: SimplifyLevel): Uint32Array {
 	if (input.indices.length < 3) return input.indices;
@@ -53,7 +71,12 @@ function simplifyOne(input: SimplifyInput, level: SimplifyLevel): Uint32Array {
 		if (level.lockBorder) flags.push("LockBorder");
 		if (level.prune) flags.push("Prune");
 		// No triangle target: the error bound alone decides where to stop.
-		[indices] = MeshoptSimplifier.simplify(input.indices, input.positions, 3, 0, level.error, flags);
+		const weights = input.attributeWeights;
+		[indices] = input.attributes && weights && weights.length > 0
+			? MeshoptSimplifier.simplifyWithAttributes(input.indices, input.positions, 3, input.attributes, weights.length, [...weights], null, 0, level.error, flags)
+			: MeshoptSimplifier.simplify(input.indices, input.positions, 3, 0, level.error, flags);
 	}
-	return indices.length / 3 < (level.minTriangles ?? 1) ? EMPTY : indices;
+	// A fresh empty list each time, never one shared: a reply transfers its buffers, and a shared
+	// one would be gone (detached) for every reply after the first.
+	return indices.length / 3 < (level.minTriangles ?? 1) ? new Uint32Array(0) : indices;
 }

@@ -160,7 +160,10 @@ class EngineAudio {
 		const context = bus.ensure();
 		const master = bus.channel("vehicles");
 		if (!context || !master) return;
-		if (!this.preloaded) {
+		// Not while the loading screen is up: nothing is heard until it goes, and the recordings
+		// (a few MB) would only compete with the files the game needs to start. Until each one
+		// arrives its sound plays synthesised, as before.
+		if (!this.preloaded && bus.isAudible()) {
 			this.preloaded = true;
 			preloadSounds(context);
 		}

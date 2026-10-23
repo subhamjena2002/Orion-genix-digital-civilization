@@ -836,6 +836,164 @@ const GHATS: RaceLayout = {
 // ---- The catalog ----------------------------------------------------------------------------------
 
 /** Story missions first, in the order they're played; then side jobs and the races. */
+// ---- Code Three ---------------------------------------------------------------------------------
+
+const NIA = "Nia";
+const DISPATCH = "Dispatch";
+/** City Hospital's ambulance bay (see Hospitals): where the rigs wait, and where patients come in. */
+const AMBULANCE_BAY = { x: -58, z: 16 };
+const HOSPITAL_DOORS = { x: -52, z: 9 };
+/** A T-bone on the west avenue, a block from the hospital: between junctions, clear of the railway. */
+const CRASH = { x: -160, z: -45 };
+const PATIENT_LOOK: PersonLook = { model: "womanSuit", palette: { skin: "#c89a7a", shirt: "#e4e1d8", pants: "#2b2f3a", hair: "#3a2416" } };
+/**
+ * Her hatchback, smashed and smoking, and the SUV that hit it, burning, both in the west lanes;
+ * her on the pavement beside them, inside the SUV's blast if it goes up (BLAST_RADIUS, 9 m).
+ */
+const CRASH_SCENE: readonly MissionSpawn[] = [
+	{ type: "vehicle", id: "c3-crash-a", style: "hatchback", colour: "#8f1d1d", x: CRASH.x - 3.5, z: CRASH.z + 3, yaw: 200, integrity: 30 },
+	{ type: "vehicle", id: "c3-crash-b", style: "suv", colour: "#5c6166", x: CRASH.x - 1, z: CRASH.z - 3, yaw: 30, integrity: 25, burning: true },
+	{ type: "hostile", id: "c3-patient", x: CRASH.x - 8, z: CRASH.z, armed: false, role: "passive", yaw: 90, ...PATIENT_LOOK },
+];
+
+/**
+ * Code Three: an ambulance run. Take a rig from City Hospital, get to a crash with one car on
+ * fire, and decide — pull the driver out now, before the fire takes the car she's lying beside
+ * (it goes up about twenty seconds later), or keep her still and wait for the fire crew, who
+ * come on their own to any car burning near the player. Then get her to the hospital alive, in
+ * a rig still fit to carry her. If you're slow getting there, the fire spreads to her car too.
+ */
+const CODE_THREE: MissionDefinition = {
+	id: "code-three",
+	title: "Code Three",
+	chapter: "side",
+	giver: { name: "Nia Okafor", role: "Paramedic · City Hospital", x: HOSPITAL_DOORS.x, z: HOSPITAL_DOORS.z },
+	briefing: "We're a driver short and there's a T-bone on the west avenue, one car on fire. Take a rig from the bay — lights and siren, Code Three. Get her out, get her back here, and don't shake her to pieces on the way.",
+	requires: ["clean-wheels"],
+	reward: { cash: 1200, rep: { law: 1 } },
+	protect: ["c3-patient"],
+	objectives: [
+		{
+			kind: "enterVehicle",
+			label: "Take an ambulance from the bay",
+			style: "ambulance",
+			x: AMBULANCE_BAY.x,
+			z: AMBULANCE_BAY.z,
+			timeLimit: 60,
+		},
+		{
+			kind: "goto",
+			step: "respond",
+			label: "Get to the crash on the west avenue",
+			x: CRASH.x,
+			z: CRASH.z,
+			radius: 16,
+			timeLimit: 60,
+			spawns: CRASH_SCENE,
+			say: [{ who: DISPATCH, text: "Medic One, T-bone on the west avenue, one vehicle fully involved, one occupant out. Fire's been called." }],
+		},
+		{
+			kind: "inspect",
+			step: "assess",
+			label: "Check on the driver",
+			person: "c3-patient",
+			x: CRASH.x,
+			z: CRASH.z,
+			radius: 3,
+			seconds: 3,
+			say: [{ who: NIA, text: "On foot. Talk to her, check her airway, and don't stand downwind of that thing." }],
+		},
+		{
+			kind: "choice",
+			label: "The SUV's burning beside her",
+			options: [
+				{
+					label: "Pull her out now",
+					detail: "Move her before the fire spreads — if the tank goes, nobody near it walks away",
+					flags: ["pulled-early"],
+					next: "carry",
+				},
+				{
+					label: "Wait for the fire crew",
+					detail: "Keep her still; the engine company's on its way",
+					flags: ["waited-for-crew"],
+					next: "wait",
+				},
+			],
+		},
+		{
+			kind: "enterVehicle",
+			step: "carry",
+			label: "Get her into the ambulance — the tank's going",
+			style: "ambulance",
+			x: CRASH.x,
+			z: CRASH.z,
+			followers: ["c3-patient"],
+			next: "deliver",
+			say: [{ who: NIA, text: "It's leaking fuel. You've got seconds. Move her, now!" }],
+		},
+		{
+			// Until the crew has put it out (the trigger below), or long enough that they must have.
+			kind: "survive",
+			step: "wait",
+			label: "Keep her still until the fire crew puts it out",
+			x: CRASH.x,
+			z: CRASH.z,
+			seconds: 75,
+			say: [{ who: NIA, text: "Good call. Collar on, keep her talking. The engine's on its way." }],
+		},
+		{
+			kind: "enterVehicle",
+			step: "board",
+			label: "Get her into the ambulance",
+			style: "ambulance",
+			x: CRASH.x,
+			z: CRASH.z,
+			followers: ["c3-patient"],
+		},
+		{
+			kind: "deliver",
+			step: "deliver",
+			label: "Get her to City Hospital",
+			style: "ambulance",
+			person: "c3-patient",
+			x: AMBULANCE_BAY.x,
+			z: AMBULANCE_BAY.z,
+			radius: 10,
+			minIntegrity: 70,
+			timeLimit: 90,
+			say: [{ who: NIA, text: "Smooth and quick. Every pothole, she feels it — and so does the rig." }],
+		},
+	],
+	triggers: [
+		// Slow to the scene: the fire takes her car too (held burning, like the first).
+		{
+			when: { step: "respond", after: 40 },
+			ignite: "c3-crash-a",
+			flags: ["fire-spread"],
+			notice: "The fire's spreading",
+			say: [{ who: DISPATCH, text: "Medic One, caller says the second car's caught. Where are you?" }],
+		},
+		// Pulling her out early: the leak goes, and the SUV burns down to the tank.
+		{ when: { step: "carry" }, letBurn: "c3-crash-b" },
+		{
+			when: { step: "wait", putOut: "c3-crash-b" },
+			say: [{ who: DISPATCH, text: "Engine company reports the fire's knocked down. Load and go, Medic One." }],
+			goto: "board",
+		},
+		{ when: { step: "deliver", wanted: 1 }, say: [{ who: DISPATCH, text: "Medic One, units are clearing your route. Nobody's chasing an ambulance today." }] },
+	],
+	outro: [
+		{ who: NIA, text: "Pulled her clear with seconds to spare. Reckless — but she's alive. Come drive for us again.", onlyIf: ["pulled-early"] },
+		{ who: NIA, text: "Textbook. The crew says you kept her still the whole time. Come drive for us again.", onlyIf: ["waited-for-crew"] },
+	],
+	bonuses: [
+		{ id: "quick", label: "Done inside 3:00", kind: "time", seconds: 180 },
+		{ id: "gentle", label: "Keep the rig above 90%", kind: "intact", min: 90 },
+		{ id: "contained", label: "Reach the crash before the fire spreads", kind: "flag", flag: "!fire-spread" },
+	],
+};
+
 export const MISSIONS: readonly MissionDefinition[] = [
 	COLD_OPEN,
 	{
@@ -956,6 +1114,7 @@ export const MISSIONS: readonly MissionDefinition[] = [
 		],
 		outro: [{ who: QUILL, text: "Magnificent. Keep her. Send Crane a photo." }],
 	},
+	CODE_THREE,
 	raceMission(DOWNTOWN, {
 		id: "downtown-dash",
 		title: "Downtown Dash",
