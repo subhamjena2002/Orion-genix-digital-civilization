@@ -67,18 +67,21 @@ function sectionHalf(spec, z) {
 	const c = smoothstep(0.05, 0.3, h);
 	const lip = Math.min(belt - 0.1, Math.max(floor + 0.04, archTop(spec, z)));
 	const bulge = typeof spec.bulge === "function" ? spec.bulge(z) : spec.bulge ?? 0.012;
+	// Where the flank stands furthest out, as a share of sill-to-belt: with `characterLine`, a
+	// crease there catches the light down the side, as pressed steel does.
+	const crest = spec.crest ?? 0.45;
 	const points = [];
 	const push = (x, y, t, crease) => points.push({ x, y, t, crease });
 	push(0, floor, 0, false);
 	push(w - 0.13, floor, 1, true);
 	push(w - 0.035, lip, 2, true);
-	const flank = [[w - 0.004, lip + 0.045], [w + bulge, lip + (belt - lip) * 0.45], [w, belt - 0.07], [w - 0.012, belt]];
+	const flank = [[w - (spec.rockerTuck ?? 0.004), lip + 0.045], [w + bulge, lip + (belt - lip) * crest], [w, belt - 0.07], [w - 0.012, belt]];
 	push(...flank[0], K.sill, true);
 	for (let k = 0; k < 3; k++) {
 		for (let s = 1; s <= FLANK_STEPS; s++) {
 			const [x, y] = catmull(flank[Math.max(0, k - 1)], flank[k], flank[k + 1], flank[Math.min(3, k + 2)], s / FLANK_STEPS);
 			const t = K.sill + k + s / FLANK_STEPS;
-			push(x, y, t, t === K.belt);
+			push(x, y, t, t === K.belt || (spec.characterLine === true && t === K.sill + 1));
 		}
 	}
 	const inset = spec.glassInset;
@@ -304,6 +307,28 @@ function buildWheel(wheel) {
 				const a = (k / 5) * Math.PI * 2;
 				tube(hub, [o(face + 0.006), Math.cos(a) * 0.04, Math.sin(a) * 0.04], [o(face - 0.01), Math.cos(a) * 0.04, Math.sin(a) * 0.04], 0.008, 6);
 			}
+		} else if (style === "multi") {
+			// A modern multi-spoke: thin twin spokes standing proud of a dark, recessed barrel (the
+			// gaps read as depth, not as a flat grey disc), a polished lip, and a centre cap.
+			const dish = (radius) => o(face - 0.055 * (1 - radius / r));
+			lathe(rim, [[r - 0.004, o(face + 0.004)], [r - 0.022, o(face)], [r - 0.03, o(face - 0.02)]], 64, [0, 0, 0], true);
+			// The barrel's inside, seen between the spokes: in the tyre's black, set well back.
+			lathe(tyre, [[r - 0.02, o(face - 0.07)], [0.1, o(face - 0.085)]], 48, [0, 0, 0], true);
+			for (let k = 0; k < spokes; k++) {
+				for (const offset of [-0.055, 0.055]) {
+					const a = ((k + offset) / spokes) * Math.PI * 2;
+					const from = 0.085;
+					const to = r - 0.026;
+					const mid = (from + to) / 2;
+					box(rim, [dish(mid), Math.cos(a) * mid, Math.sin(a) * mid], [0.024, to - from, 0.017], 0, (a * 180) / Math.PI, 0);
+				}
+			}
+			lathe(rim, [[0, o(face + 0.002)], [0.06, o(face)], [0.085, o(face - 0.03)], [0.085, o(face - 0.07)]], 32, [0, 0, 0], true);
+			lathe(hub, [[0, o(face + 0.006)], [0.036, o(face + 0.005)], [0.04, o(face + 0.001)]], 24);
+			for (let k = 0; k < 5; k++) {
+				const a = (k / 5) * Math.PI * 2;
+				tube(hub, [o(face - 0.006), Math.cos(a) * 0.058, Math.sin(a) * 0.058], [o(face - 0.022), Math.cos(a) * 0.058, Math.sin(a) * 0.058], 0.009, 6);
+			}
 		} else if (style === "steel") {
 			// A pressed steel disc: a raised ring, vents, and a plain hub cap.
 			lathe(rim, [[r - 0.012, o(face - 0.01)], [r * 0.8, o(face - 0.002)], [r * 0.7, o(face - 0.012)], [r * 0.45, o(face - 0.012)], [r * 0.38, o(face)], [0.001, o(face)]], 40, [0, 0, 0], true);
@@ -358,7 +383,8 @@ function materials(material, paint, extra = {}) {
 		dash: material("dashboard", [0.04, 0.04, 0.042], { roughness: 0.55 }),
 		jamb: material("jamb", [0.4, 0.4, 0.4], { roughness: 0.5, doubleSided: true }),
 		tyre: material("tyre_rubber", [0.03, 0.03, 0.032], { roughness: 0.92 }),
-		rim: material("rim", extra.rim ?? [0.62, 0.63, 0.65], { metallic: 1, roughness: 0.26 }),
+		// Machined silver: modern alloys read bright against the tyre.
+		rim: material("rim", extra.rim ?? [0.76, 0.77, 0.8], { metallic: 1, roughness: 0.2 }),
 		hub: material("hub", extra.hub ?? [0.5, 0.5, 0.52], { metallic: 1, roughness: 0.3 }),
 		rotor: material("rotor", [0.42, 0.42, 0.43], { metallic: 1, roughness: 0.42 }),
 		caliper: material("caliper", [0.12, 0.12, 0.13], { metallic: 0.3, roughness: 0.4 }),
@@ -573,7 +599,7 @@ function wheelSet(spec, M) {
 		const { tyre, rim, hub } = buildWheel(axle.wheel);
 		const disc = new Geo();
 		const caliper = new Geo();
-		if (axle.wheel.style === "alloy") {
+		if (axle.wheel.style === "alloy" || axle.wheel.style === "multi") {
 			lathe(disc, [[0.08, 0.02], [axle.wheel.rim - 0.05, 0.02], [axle.wheel.rim - 0.05, -0.01], [0.08, -0.01], [0.08, 0.02]], 40, [axle.wheel.width / 2 - 0.1, 0, 0], true);
 		}
 		const name = axle.z > 0 ? (index === 0 ? "front" : `front${index}`) : `rear${spec.axles.filter((a) => a.z <= 0).indexOf(axle) || ""}`;
@@ -587,7 +613,7 @@ function wheelSet(spec, M) {
 				rotation: side > 0 ? [0, 0, 0, 1] : [0, 1, 0, 0],
 			});
 		}
-		if (axle.wheel.style === "alloy") {
+		if (axle.wheel.style === "alloy" || axle.wheel.style === "multi") {
 			box(caliper, [-0.01, axle.wheel.rim * 0.45, -axle.wheel.rim * 0.45], [0.07, 0.13, 0.18], 0, 45);
 			for (const side of [1, -1]) {
 				wheels.push({
@@ -725,38 +751,45 @@ function cockpit(parts, { x, y, z, width, dashZ, dashY, wheelTilt = -22 }) {
  * are the same body with their own fittings.
  */
 function sedanSpec(overrides = {}) {
-	const FRONT = 2.35;
-	const REAR = -2.35;
+	// A modern four-door: wide and low, a long fastback roof, a waist that rises to the tail,
+	// short overhangs, and 19-inch wheels filling tight arches.
+	const FRONT = 2.42;
+	const REAR = -2.4;
+	const wheel = { radius: 0.345, rim: 0.27, width: 0.235, style: "multi", spokes: 5 };
 	const spec = {
 		front: FRONT,
 		rear: REAR,
 		centreY: 0.75,
-		stations: 150,
+		stations: 160,
 		axles: [
-			{ z: 1.42, radius: 0.33, arch: 0.39, track: 0.79, wheel: { radius: 0.33, rim: 0.235, width: 0.225, style: "alloy", spokes: 5 } },
-			{ z: -1.42, radius: 0.33, arch: 0.39, track: 0.79, wheel: { radius: 0.33, rim: 0.235, width: 0.225, style: "alloy", spokes: 5 } },
+			{ z: 1.48, radius: 0.345, arch: 0.372, track: 0.81, wheel },
+			{ z: -1.38, radius: 0.345, arch: 0.372, track: 0.81, wheel },
 		],
-		halfWidth: profile([[REAR, 0.6], [-2.3, 0.78], [-2.18, 0.86], [-1.9, 0.895], [-1.42, 0.905], [0, 0.9], [1.42, 0.9], [1.95, 0.875], [2.18, 0.82], [2.3, 0.7], [FRONT, 0.58]]),
-		floorY: profile([[REAR, 0.42], [-2.28, 0.3], [-2.1, 0.22], [-1.85, 0.17], [1.85, 0.165], [2.12, 0.21], [2.3, 0.28], [FRONT, 0.36]]),
-		beltY: profile([[REAR, 0.86], [-2.3, 0.95], [-2.15, 0.995], [-1.8, 1.0], [-1.0, 0.985], [0, 0.955], [0.9, 0.935], [1.5, 0.9], [2.0, 0.85], [2.25, 0.78], [FRONT, 0.68]]),
-		roofY: profile([[REAR, 0.87], [-2.3, 0.97], [-2.1, 1.02], [-1.62, 1.035], [-1.42, 1.08], [-1.15, 1.24], [-0.8, 1.38], [-0.45, 1.44], [0, 1.45], [0.35, 1.43], [0.6, 1.36], [0.85, 1.22], [1.1, 1.0], [1.3, 0.985], [1.85, 0.94], [2.15, 0.86], [2.3, 0.76], [FRONT, 0.69]]),
-		roofHalf: profile([[-1.7, 0.7], [-1.0, 0.64], [-0.3, 0.645], [0.5, 0.66], [1.15, 0.74]]),
+		halfWidth: profile([[REAR, 0.64], [-2.36, 0.82], [-2.25, 0.9], [-1.95, 0.93], [-1.38, 0.935], [0, 0.925], [1.48, 0.93], [1.95, 0.91], [2.22, 0.85], [2.36, 0.74], [FRONT, 0.6]]),
+		floorY: profile([[REAR, 0.4], [-2.3, 0.3], [-2.1, 0.21], [-1.85, 0.155], [1.85, 0.15], [2.15, 0.2], [2.35, 0.27], [FRONT, 0.33]]),
+		beltY: profile([[REAR, 0.86], [-2.34, 0.96], [-2.2, 1.0], [-1.8, 1.02], [-1.0, 1.0], [0, 0.975], [0.9, 0.95], [1.5, 0.9], [2.0, 0.83], [2.3, 0.74], [FRONT, 0.64]]),
+		roofY: profile([[REAR, 0.87], [-2.34, 0.98], [-2.15, 1.02], [-1.8, 1.04], [-1.65, 1.09], [-1.35, 1.22], [-0.95, 1.35], [-0.5, 1.41], [-0.1, 1.425], [0.3, 1.405], [0.6, 1.32], [0.85, 1.16], [1.1, 0.99], [1.35, 0.965], [1.9, 0.9], [2.2, 0.8], [2.35, 0.7], [FRONT, 0.63]]),
+		roofHalf: profile([[-1.6, 0.66], [-1.0, 0.66], [-0.3, 0.67], [0.5, 0.68], [1.1, 0.76]]),
 		glassInset: 0.075,
 		glassShare: 0.84,
-		crown: 0.035,
+		crown: 0.03,
 		roofSharpness: 4.5,
+		bulge: 0.02,
+		crest: 0.58,
+		characterLine: true,
+		rockerTuck: 0.03,
 		bumperPaint: true,
-		cladding: (z) => (Math.abs(z) > 2.05 ? 3.6 : 0),
-		cuts: [0.98, -0.1, -0.12, -1.06, 1.12, -1.6, 0.92, -0.06, -0.16, -1.0],
+		cladding: (z) => (Math.abs(z) > 2.1 ? 3.6 : 0),
+		cuts: [0.98, -0.1, -0.12, -1.06, 1.12, -1.62, 0.92, -0.06, -0.16, -1.0],
 		doors: [],
 		lids: [
 			{ key: "hood", front: FRONT - 0.04, rear: 1.12, edge: K.glassBase },
-			{ key: "trunk", front: -1.6, rear: REAR + 0.04, edge: K.glassBase },
+			{ key: "trunk", front: -1.62, rear: REAR + 0.04, edge: K.glassBase },
 		],
 		panes: [
-			{ key: "windscreen", front: 1.12, rear: 0.5, low: K.rail, high: K.top + 0.01, frit: 0.05, fritT: 0.12 },
-			{ key: "rear-glass", front: -0.72, rear: -1.48, low: K.rail, high: K.top + 0.01, frit: 0.05, fritT: 0.12 },
-			{ key: "side-glass", front: -1.03, rear: -1.3, low: K.glassBase, high: K.glassTop, frit: 0.035 },
+			{ key: "windscreen", front: 1.12, rear: 0.48, low: K.rail, high: K.top + 0.01, frit: 0.05, fritT: 0.12 },
+			{ key: "rear-glass", front: -0.62, rear: -1.6, low: K.rail, high: K.top + 0.01, frit: 0.05, fritT: 0.12 },
+			{ key: "side-glass", front: -1.03, rear: -1.4, low: K.glassBase, high: K.glassTop, frit: 0.035 },
 		],
 		...overrides,
 	};
@@ -790,53 +823,85 @@ function flankMark(spec, parts, side, z, t, size, which = "decor") {
 	skinBox(geo, add(p, scale(n, size[2] / 2 + 0.001)), [0, 0, 1], n, size, 0, side < 0);
 }
 
-/** The sedan's fittings: lamps, grille, plates, mirrors, handles, wipers, cabin. */
+/** A line of light along the skin from x0 to x1 at height y, on the face that `direction` looks at. */
+function lightBar(parts, at, key, x0, x1, y, direction, width) {
+	const path = range(x0, x1, 28).map((x) => at([x, y, -3 * direction[2]], direction)).filter(Boolean);
+	if (path.length > 1) ribbon(parts.get(key), path.map(({ p, n }) => ({ p: add(p, scale(n, 0.004)), n })), width, 0.006);
+}
+
+/**
+ * The sedan's fittings, in a 2026 design language: slim LED headlamps joined by a light strip
+ * across the nose, a wide lower grille in gloss black with a mesh, a full-width light bar at the
+ * tail, a lip spoiler and a diffuser; flush handles, slim mirrors, and the cabin.
+ */
 function sedanDetails(spec, parts) {
-	const at = bodyProjector(spec, parts);
+	const onSkin = bodyProjector(spec, parts);
+	// A taller body built on the saloon (the hatchback) lifts its face and tail to suit.
+	const at = (p, d) => onSkin(d[2] < 0 ? [p[0], p[1] + (spec.faceLift ?? 0), p[2]] : d[2] > 0 ? [p[0], p[1] + (spec.tailLift ?? 0), p[2]] : p, d);
 	const F = [0, 0, -1];
 	const B = [0, 0, 1];
 	for (const side of [1, -1]) {
-		// Headlamps: swept back round the corners, a light strip along the top edge.
-		lampUnit(parts, at, (u, v) => [side * lerp(0.4, 0.8, u), lerp(0.66, 0.775, v) - 0.03 * u * (1 - v), 3], F, {
-			bowls: [[0.3, 0.45, 0.045], [0.62, 0.45, 0.04]], strip: { from: 0.05, to: 0.95, v: 0.85 }, rows: 10, cols: 6,
+		// Slim headlamps: a dark housing with two projector bowls and an LED brow along the top.
+		lampUnit(parts, at, (u, v) => [side * lerp(0.42, 0.86, u), lerp(0.585, 0.65, v) - 0.025 * u, 3], F, {
+			bowls: [[0.35, 0.4, 0.026], [0.6, 0.4, 0.026]], strip: { from: 0.02, to: 0.98, v: 0.88, width: 0.01 }, rows: 8, cols: 4,
 		});
-		// Tail lamps, wrapping onto the boot lid.
-		lampUnit(parts, at, (u, v) => [side * lerp(0.42, 0.86, u), lerp(0.84, 0.95, v), -3], B, { cover: false, strip: { from: 0.04, to: 0.96, v: 0.5, width: 0.014 }, stripPart: "taillight", rows: 10, cols: 4 });
-		decal(parts, "taillight", at, (u, v) => [side * lerp(0.45, 0.84, u), lerp(0.855, 0.935, v), -3], B, 0.006, 6, 2);
-		decal(parts, "reverse", at, (u, v) => [side * lerp(0.42, 0.5, u), lerp(0.86, 0.93, v), -3], B, 0.008, 1, 1);
-		// Amber side repeaters behind the front arches.
+		// Corner intakes low in the bumper, a thin fog strip in each.
+		decal(parts, "gloss", at, (u, v) => [side * lerp(0.6, 0.84, u), lerp(0.26, 0.38, v), 3], F, 0.003, 3, 4);
+		lightBar(parts, at, "lens", side * 0.64, side * 0.8, 0.355, F, 0.012);
+		// Tail lamps wrapping round the corners, then the bar across the boot.
+		lampUnit(parts, at, (u, v) => [side * lerp(0.6, 0.9, u), lerp(0.87, 0.93, v), -3], B, { cover: false, strip: { from: 0.04, to: 0.96, v: 0.5, width: 0.016 }, stripPart: "taillight", rows: 6, cols: 3 });
+		decal(parts, "reverse", at, (u, v) => [side * lerp(0.62, 0.7, u), lerp(0.875, 0.92, v), -3], B, 0.008, 1, 1);
 		const rep = onBody(spec, 0.98 + 0.06, K.sill + 2.3);
-		skinBox(parts.get("indicator"), add(rep.p, scale(rep.n, 0.003)), [0, 0, 1], rep.n, [0.05, 0.014, 0.006], 0, side < 0);
-		// Fog lamps low in the bumper.
-		const fog = at([side * 0.68, 0.36, 3], F);
-		if (fog) tube(parts.get("lens"), add(fog.p, scale(fog.n, -0.004)), add(fog.p, scale(fog.n, 0.006)), 0.035, 14);
+		skinBox(parts.get("indicator"), add(rep.p, scale(rep.n, 0.003)), [0, 0, 1], rep.n, [0.05, 0.012, 0.006], 0, side < 0);
+		// Rear reflectors and the diffuser's outer fins.
+		decal(parts, "taillight", at, (u, v) => [side * lerp(0.62, 0.78, u), lerp(0.36, 0.385, v), -3], B, 0.006, 1, 2);
 	}
-	// Grille: a gloss-black opening with bars, the plate below it, and a wide lower intake.
-	decal(parts, "gloss", at, (u, v) => [lerp(-0.36, 0.36, u), lerp(0.56, 0.68, v), 3], F, 0.003, 4, 8);
-	grilleBars(parts, "chrome", at, -0.35, 0.35, [0.585, 0.62, 0.655], F, [0, 0.008, 0.008]);
-	decal(parts, "gloss", at, (u, v) => [lerp(-0.55, 0.55, u), lerp(0.27, 0.38, v), 3], F, 0.003, 3, 10);
-	grilleBars(parts, "trim", at, -0.53, 0.53, [0.3, 0.325, 0.35], F, [0, 0.006, 0.01]);
-	decal(parts, "plate", at, (u, v) => [lerp(-0.26, 0.26, u), lerp(0.42, 0.53, v), 3], F, 0.004, 2, 6);
-	decal(parts, "plate", at, (u, v) => [lerp(-0.26, 0.26, u), lerp(0.64, 0.75, v), -3], B, 0.004, 2, 6);
-	// A chrome strip across the boot lid, and the exhaust.
-	grilleBars(parts, "chrome", at, -0.4, 0.4, [0.8], B, [0, 0.012, 0.006]);
-	tube(parts.get("chrome"), [0.5, 0.27, spec.rear + 0.1], [0.5, 0.27, spec.rear - 0.03], 0.035, 14);
-	tube(parts.get("gloss"), [0.5, 0.27, spec.rear + 0.05], [0.5, 0.27, spec.rear - 0.035], 0.027, 14);
-	for (const door of spec.doors) doorHandle(spec, parts, door);
-	mirrors(spec, parts, { z: 0.86 });
+	// The light strip across the nose, joining the headlamps' brows.
+	lightBar(parts, at, "headlight", -0.44, 0.44, 0.645, F, 0.012);
+	// The light bar across the boot lid, joining the tail lamps.
+	lightBar(parts, at, "taillight", -0.62, 0.62, 0.9, B, 0.022);
+	// The grille: wide and low, gloss black, with a mesh of small studs.
+	decal(parts, "cladding", at, (u, v) => [lerp(-0.56, 0.56, u) * (0.82 + 0.18 * v), lerp(0.27, 0.53, v), 3], F, 0.003, 4, 10);
+	for (let row = 0; row < 5; row++) {
+		for (let col = 0; col < 18; col++) {
+			const x = -0.48 + (col + (row % 2) * 0.5) * 0.056;
+			const y = 0.3 + row * 0.045;
+			const hit = at([x * (0.85 + 0.15 * ((y - 0.27) / 0.26)), y, 3], F);
+			if (hit) skinBox(parts.get("gloss"), add(hit.p, scale(hit.n, 0.008)), [1, 0, 0], hit.n, [0.03, 0.022, 0.01]);
+		}
+	}
+	decal(parts, "plate", at, (u, v) => [lerp(-0.25, 0.25, u), lerp(0.42, 0.52, v), 3], F, 0.012, 2, 6);
+	decal(parts, "plate", at, (u, v) => [lerp(-0.25, 0.25, u), lerp(0.62, 0.73, v), -3], B, 0.004, 2, 6);
+	// The diffuser: gloss black across the bottom of the rear bumper, with fins.
+	decal(parts, "gloss", at, (u, v) => [lerp(-0.62, 0.62, u), lerp(0.24, 0.36, v), -3], B, 0.003, 3, 10);
+	for (const x of [-0.3, -0.1, 0.1, 0.3]) {
+		const fin = at([x, 0.3, -3], B);
+		if (fin) roundedBox(parts.get("gloss"), add(fin.p, scale(fin.n, 0.03)), [0.015, 0.1, 0.06], 0.004);
+	}
+	// A lip spoiler along the boot lid's trailing edge.
+	const lip = at([0, 3, spec.rear + 0.12], [0, -1, 0]);
+	if (lip) roundedBox(parts.get("body"), add(lip.p, [0, 0.012, -0.02]), [1.3, 0.025, 0.08], 0.01, { pitch: 10 });
+	for (const door of spec.doors) doorHandle(spec, parts, door, { length: 0.13 });
+	mirrors(spec, parts, { z: 0.86, size: [0.11, 0.055, 0.045], reach: 0.13, up: 0.07 });
 	wipers(parts, at, [-0.62, 0.02], 1.0, 1.06, 0.55);
-	// A short aerial on the roof, at the back.
-	const fin = at([0, 3, -0.62], [0, -1, 0]);
+	// A shark-fin aerial on the roof, at the back.
+	const fin = at([0, 3, -0.7], [0, -1, 0]);
 	if (fin) roundedBox(parts.get("gloss"), add(fin.p, [0, 0.03, -0.05]), [0.06, 0.06, 0.16], 0.028);
-	// The cabin: two front seats and a bench, dashboard and wheel.
-	const inside = parts.get("interior");
+	sedanCabin(parts, spec.cabinLift ?? 0);
+}
+
+/** Two sculpted front seats, a rear bench, a console, the dashboard with its screen and wheel. */
+function sedanCabin(parts, lift = 0) {
+	const inside = new Geo();
 	seat(inside, 0.38, 0.32, -0.05);
 	seat(inside, -0.38, 0.32, -0.05);
 	roundedBox(inside, [0, 0.38, -0.95], [1.4, 0.14, 0.5], 0.05);
 	roundedBox(inside, [0, 0.72, -1.2], [1.4, 0.6, 0.14], 0.06, { pitch: -16 });
+	for (const x of [-0.45, 0.45]) roundedBox(inside, [x, 1.08, -1.24], [0.26, 0.15, 0.09], 0.035, { pitch: -16 });
 	roundedBox(inside, [0, 0.36, 0.2], [0.24, 0.16, 0.9], 0.05);
 	roundedBox(inside, [0, 0.22, -0.3], [1.6, 0.04, 2.4], 0.02);
-	cockpit(parts, { x: 0.38, y: 0.32, z: -0.05, width: 1.56, dashZ: 0.72, dashY: 0.86 });
+	placeGeo(parts.get("interior"), inside, { at: [0, lift, 0] });
+	cockpit(parts, { x: 0.38, y: 0.32 + lift, z: -0.05, width: 1.56, dashZ: 0.72, dashY: 0.86 + lift });
 }
 
 /**
@@ -2107,114 +2172,125 @@ function blockText(geo, text, at, height, facing) {
 }
 
 /**
- * A five-door hatchback, 4.1 m: the saloon's nose and doors, a shorter wheelbase, and the roof
- * carried to a steep tailgate instead of a boot.
+ * A compact crossover-hatch, 4.2 m, as the city's everyday cars are now: a short bonnet, a
+ * raked screen, a roof that slopes down to a spoiler over a small tailgate window, a waist that
+ * rises to the tail, black cladding round the arches, a gloss-black floating roof, and 19-inch
+ * wheels. Doors, lids and fittings are the saloon's (sedanSpec, sedanDetails), lifted to suit.
  */
 function hatchbackSpec() {
-	const FRONT = 2.3;
-	const REAR = -1.8;
-	const wheel = { radius: 0.31, rim: 0.225, width: 0.205, style: "alloy", spokes: 6 };
+	const FRONT = 2.15;
+	const REAR = -2.05;
+	const wheel = { radius: 0.35, rim: 0.265, width: 0.23, style: "multi", spokes: 5 };
 	return sedanSpec({
 		front: FRONT,
 		rear: REAR,
 		axles: [
-			{ z: 1.38, radius: 0.31, arch: 0.37, track: 0.76, wheel },
-			{ z: -1.18, radius: 0.31, arch: 0.37, track: 0.76, wheel },
+			{ z: 1.35, radius: 0.35, arch: 0.38, track: 0.79, wheel },
+			{ z: -1.32, radius: 0.35, arch: 0.38, track: 0.79, wheel },
 		],
-		halfWidth: profile([[REAR, 0.66], [-1.76, 0.8], [-1.66, 0.85], [-1.4, 0.87], [0, 0.865], [1.38, 0.86], [1.9, 0.84], [2.13, 0.79], [2.25, 0.69], [FRONT, 0.57]]),
-		floorY: profile([[REAR, 0.42], [-1.74, 0.3], [-1.58, 0.22], [-1.4, 0.17], [1.8, 0.165], [2.07, 0.21], [2.25, 0.28], [FRONT, 0.36]]),
-		beltY: profile([[REAR, 0.92], [-1.75, 0.98], [-1.55, 1.0], [-1.0, 0.99], [0, 0.965], [0.9, 0.94], [1.5, 0.9], [1.95, 0.85], [2.2, 0.78], [FRONT, 0.68]]),
-		roofY: profile([[REAR, 0.94], [-1.78, 1.05], [-1.74, 1.2], [-1.66, 1.34], [-1.5, 1.43], [-1.2, 1.48], [-0.5, 1.5], [0, 1.5], [0.35, 1.48], [0.6, 1.41], [0.85, 1.26], [1.08, 1.02], [1.28, 0.985], [1.8, 0.94], [2.1, 0.86], [2.25, 0.76], [FRONT, 0.69]]),
-		roofHalf: profile([[-1.6, 0.66], [-1.0, 0.65], [-0.3, 0.65], [0.5, 0.66], [1.1, 0.73]]),
-		cladding: (z) => (z > 2.0 || z < -1.58 ? 3.6 : 0),
-		cuts: [0.98, -0.1, -0.12, -1.06, 1.08, -1.56, 0.92, -0.06, -0.16, -1.0],
+		halfWidth: profile([[REAR, 0.66], [-2.0, 0.82], [-1.9, 0.89], [-1.6, 0.915], [0, 0.905], [1.35, 0.91], [1.8, 0.89], [2.0, 0.83], [2.1, 0.72], [FRONT, 0.6]]),
+		floorY: profile([[REAR, 0.47], [-1.98, 0.35], [-1.8, 0.26], [-1.55, 0.2], [1.55, 0.2], [1.85, 0.26], [2.05, 0.34], [FRONT, 0.42]]),
+		beltY: profile([[REAR, 1.0], [-1.98, 1.07], [-1.7, 1.09], [-1.0, 1.065], [0, 1.04], [0.9, 1.0], [1.4, 0.95], [1.85, 0.88], [2.05, 0.8], [FRONT, 0.72]]),
+		roofY: profile([[REAR, 1.02], [-2.02, 1.14], [-1.97, 1.26], [-1.85, 1.35], [-1.6, 1.44], [-1.2, 1.5], [-0.6, 1.545], [0, 1.555], [0.35, 1.525], [0.6, 1.44], [0.88, 1.27], [1.1, 1.09], [1.3, 1.055], [1.8, 0.985], [2.0, 0.9], [2.1, 0.8], [FRONT, 0.73]]),
+		roofHalf: profile([[-1.85, 0.68], [-1.0, 0.68], [-0.3, 0.68], [0.5, 0.69], [1.1, 0.76]]),
+		cladding: (z) => (z > 1.9 || z < -1.85 ? 3.6 : 0),
+		// The roof above the rails in gloss black: the "floating" roof of current crossovers.
+		paint2: (z, lo) => lo >= K.rail - 0.01 && z > -1.9 && z < 1.05,
+		faceLift: 0.075,
+		tailLift: 0.13,
+		cuts: [0.98, -0.1, -0.12, -1.06, 1.1, -1.75, 0.92, -0.06, -0.16, -1.0],
 		lids: [
-			{ key: "hood", front: FRONT - 0.04, rear: 1.08, edge: K.glassBase },
+			{ key: "hood", front: FRONT - 0.04, rear: 1.1, edge: K.glassBase },
 			// The tailgate below its glass: the game opens it as the boot.
-			{ key: "trunk", front: -1.56, rear: REAR + 0.04, edge: K.glassBase },
+			{ key: "trunk", front: -1.75, rear: REAR + 0.04, edge: K.glassBase },
 		],
 		panes: [
-			{ key: "windscreen", front: 1.08, rear: 0.5, low: K.rail, high: K.top + 0.01, frit: 0.05, fritT: 0.12 },
-			{ key: "rear-glass", front: -1.3, rear: -1.72, low: K.rail, high: K.top + 0.01, frit: 0.05, fritT: 0.12 },
-			{ key: "side-glass", front: -1.03, rear: -1.4, low: K.glassBase, high: K.glassTop, frit: 0.035 },
+			{ key: "windscreen", front: 1.1, rear: 0.5, low: K.rail, high: K.top + 0.01, frit: 0.05, fritT: 0.12 },
+			{ key: "rear-glass", front: -1.35, rear: -1.95, low: K.rail, high: K.top + 0.01, frit: 0.05, fritT: 0.12 },
+			{ key: "side-glass", front: -1.03, rear: -1.45, low: K.glassBase, high: K.glassTop, frit: 0.035 },
+		],
+		cabinLift: 0.07,
+	});
+}
+
+/** The hatchback's fittings: the saloon's face and tail, arch cladding, a spoiler, slim roof rails. */
+function hatchbackDetails(spec, parts, M) {
+	sedanDetails(spec, parts, M);
+	for (const axle of spec.axles) archFlare(spec, parts, axle, { width: 0.075, lift: 0.018 });
+	const at = bodyProjector(spec, parts);
+	const top = at([0, 3, -1.86], [0, -1, 0]);
+	if (top) {
+		roundedBox(parts.get("gloss"), add(top.p, [0, 0.02, -0.07]), [1.25, 0.04, 0.24], 0.015, { pitch: 8 });
+		// A third brake light under the spoiler.
+		roundedBox(parts.get("taillight"), add(top.p, [0, -0.008, -0.17]), [0.4, 0.022, 0.02], 0.008);
+	}
+	for (const x of [-0.62, 0.62]) {
+		const a = at([x, 3, -1.55], [0, -1, 0]);
+		const b = at([x, 3, 0.55], [0, -1, 0]);
+		if (a && b) tube(parts.get("gloss"), add(a.p, [0, 0.04, 0]), add(b.p, [0, 0.04, 0]), 0.016, 8);
+	}
+}
+
+/**
+ * A modern mid-size SUV, 4.9 m: tall and square-shouldered, a long flat roof floating on black
+ * pillars, a near-upright tailgate, black cladding round 20-inch wheels, and the saloon's light
+ * bars front and back, lifted to the SUV's height. Doors and fittings are the saloon's.
+ */
+function suvSpec() {
+	const FRONT = 2.45;
+	const REAR = -2.4;
+	const wheel = { radius: 0.385, rim: 0.295, width: 0.255, style: "multi", spokes: 6 };
+	return sedanSpec({
+		front: FRONT,
+		rear: REAR,
+		axles: [
+			{ z: 1.5, radius: 0.385, arch: 0.415, track: 0.84, wheel },
+			{ z: -1.45, radius: 0.385, arch: 0.415, track: 0.84, wheel },
+		],
+		halfWidth: profile([[REAR, 0.72], [-2.36, 0.88], [-2.27, 0.95], [-2.0, 0.97], [0, 0.97], [1.5, 0.97], [2.05, 0.95], [2.3, 0.89], [2.4, 0.78], [FRONT, 0.66]]),
+		floorY: profile([[REAR, 0.53], [-2.34, 0.41], [-2.17, 0.31], [-1.95, 0.245], [1.95, 0.245], [2.2, 0.31], [2.38, 0.41], [FRONT, 0.51]]),
+		// A high, nearly level bonnet and a tall face: an SUV's, not a people carrier's.
+		beltY: profile([[REAR, 1.12], [-2.33, 1.18], [-2.1, 1.2], [-1.0, 1.18], [0, 1.16], [0.9, 1.14], [1.3, 1.1], [1.8, 1.07], [2.2, 1.03], [2.38, 0.97], [FRONT, 0.9]]),
+		roofY: profile([[REAR, 1.13], [-2.38, 1.4], [-2.33, 1.6], [-2.2, 1.68], [-1.8, 1.72], [-0.5, 1.74], [0, 1.74], [0.4, 1.72], [0.7, 1.64], [0.95, 1.46], [1.15, 1.28], [1.35, 1.16], [2.0, 1.12], [2.3, 1.07], [2.4, 0.99], [FRONT, 0.92]]),
+		roofHalf: profile([[-2.2, 0.76], [-1.0, 0.76], [0, 0.76], [0.7, 0.77], [1.2, 0.82]]),
+		cladding: (z) => (z > 2.15 || z < -2.15 ? 3.6 : 0),
+		paint2: (z, lo) => lo >= K.rail - 0.01 && z > -2.3 && z < 1.1,
+		faceLift: 0.29,
+		tailLift: 0.24,
+		cabinLift: 0.16,
+		roofSharpness: 6,
+		cuts: [0.98, -0.1, -0.12, -1.06, 1.2, -2.0, 0.92, -0.06, -0.16, -1.0],
+		lids: [
+			{ key: "hood", front: FRONT - 0.04, rear: 1.2, edge: K.glassBase },
+			{ key: "trunk", front: -2.0, rear: REAR + 0.04, edge: K.glassBase },
+		],
+		panes: [
+			{ key: "windscreen", front: 1.15, rear: 0.62, low: K.rail, high: K.top + 0.01, frit: 0.05, fritT: 0.12 },
+			{ key: "rear-glass", front: -2.1, rear: -2.37, low: K.rail, high: K.top + 0.01, frit: 0.04, fritT: 0.12 },
+			{ key: "side-glass", front: -1.03, rear: -1.9, low: K.glassBase, high: K.glassTop, frit: 0.035 },
 		],
 	});
 }
 
-/** The hatchback's fittings: the saloon's, with a roof spoiler over the tailgate glass. */
-function hatchbackDetails(spec, parts, M) {
+/** The SUV's fittings: the saloon's face and tail lifted, arch cladding, skid plates, roof rails. */
+function suvDetails(spec, parts, M) {
 	sedanDetails(spec, parts, M);
+	for (const axle of spec.axles) archFlare(spec, parts, axle, { width: 0.09, lift: 0.022 });
 	const at = bodyProjector(spec, parts);
-	const top = at([0, 3, -1.62], [0, -1, 0]);
-	if (!top) return;
-	roundedBox(parts.get("body"), add(top.p, [0, 0.015, -0.06]), [1.2, 0.035, 0.2], 0.015, { pitch: 8 });
-	// A third brake light under the spoiler.
-	roundedBox(parts.get("taillight"), add(top.p, [0, -0.012, -0.14]), [0.34, 0.025, 0.02], 0.008);
-}
-
-/**
- * A civilian SUV on the wagon's body: the same tall, square cabin, a lower roof, alloys and road
- * tyres, painted in the fleet's colours. Its fittings are a family car's, not the army's.
- */
-function suvSpec() {
-	const spec = wagonSpec();
-	const wheel = { radius: 0.38, rim: 0.265, width: 0.255, style: "alloy", spokes: 6 };
-	spec.axles = spec.axles.map((axle) => ({ ...axle, radius: 0.38, arch: 0.45, wheel }));
-	const REAR = spec.rear;
-	const FRONT = spec.front;
-	spec.roofY = profile([[REAR, 1.22], [-2.37, 1.52], [-2.31, 1.78], [-2.18, 1.87], [0, 1.9], [0.7, 1.89], [0.95, 1.8], [1.22, 1.32], [1.32, 1.26], [2.25, 1.2], [2.35, 1.16], [FRONT, 1.12]]);
-	spec.floorY = profile([[REAR, 0.6], [-2.3, 0.48], [-2.05, 0.43], [2.05, 0.43], [2.3, 0.5], [FRONT, 0.58]]);
-	spec.bumperPaint = true;
-	return spec;
-}
-
-function suvDetails(spec, parts) {
-	const at = bodyProjector(spec, parts);
-	const F = [0, 0, -1];
-	const B = [0, 0, 1];
-	for (const axle of spec.axles) archFlare(spec, parts, axle, { width: 0.07, lift: 0.02 });
-	// Front: a wide grille with chrome bars between slim swept lamps.
-	decal(parts, "gloss", at, (u, v) => [lerp(-0.5, 0.5, u), lerp(0.78, 1.02, v), 3], F, 0.003, 4, 8);
-	grilleBars(parts, "chrome", at, -0.48, 0.48, [0.82, 0.88, 0.94, 1.0], F, [0, 0.014, 0.012]);
-	for (const side of [1, -1]) {
-		lampUnit(parts, at, (u, v) => [side * lerp(0.56, 0.9, u), lerp(0.94, 1.06, v), 3], F, {
-			bowls: [[0.3, 0.45, 0.04], [0.65, 0.45, 0.04]], strip: { from: 0.05, to: 0.95, v: 0.15 }, rows: 8, cols: 6,
-		});
-		const ind = at([side * 0.8, 0.72, 3], F);
-		if (ind) roundedBox(parts.get("indicator"), add(ind.p, scale(ind.n, 0.01)), [0.16, 0.035, 0.02], 0.01);
-		// Tall tail lamps in the rear corners, a reverse lamp in each.
-		lampUnit(parts, at, (u, v) => [side * lerp(0.7, 0.92, u), lerp(0.95, 1.3, v), -3], B, { strip: { from: 0.1, to: 0.9, v: 0.8, width: 0.016 }, stripPart: "taillight", rows: 6, cols: 4 });
-		decal(parts, "taillight", at, (u, v) => [side * lerp(0.72, 0.9, u), lerp(1.05, 1.28, v), -3], B, 0.006, 4, 2);
-		decal(parts, "reverse", at, (u, v) => [side * lerp(0.72, 0.9, u), lerp(0.97, 1.03, v), -3], B, 0.008, 1, 1);
-		const fog = at([side * 0.7, 0.58, 3], F);
-		if (fog) tube(parts.get("lens"), add(fog.p, scale(fog.n, -0.004)), add(fog.p, scale(fog.n, 0.006)), 0.04, 14);
+	// Satin skid plates under the bumpers.
+	for (const [z, d] of [[spec.front + 0.02, [0, 0, -1]], [spec.rear - 0.02, [0, 0, 1]]]) {
+		const plate = at([0, 0.42, -3 * d[2]], d);
+		if (plate) roundedBox(parts.get("steel"), add(plate.p, scale(plate.n, 0.02)), [0.9, 0.08, 0.04], 0.015);
+		void z;
 	}
-	// Painted bumpers with a dark lower lip and a chrome skid plate.
-	roundedBox(parts.get("bumper-front"), [0, 0.6, spec.front + 0.05], [1.84, 0.24, 0.16], 0.05);
-	roundedBox(parts.get("cladding"), [0, 0.47, spec.front + 0.08], [1.5, 0.06, 0.12], 0.02);
-	roundedBox(parts.get("chrome"), [0, 0.5, spec.front + 0.13], [0.7, 0.03, 0.04], 0.012);
-	roundedBox(parts.get("bumper-rear"), [0, 0.62, spec.rear - 0.05], [1.84, 0.22, 0.14], 0.05);
-	roundedBox(parts.get("cladding"), [0, 0.5, spec.rear - 0.08], [1.4, 0.06, 0.1], 0.02);
-	decal(parts, "plate", at, (u, v) => [lerp(-0.25, 0.25, u), lerp(0.64, 0.75, v), 3], F, 0.004, 2, 6);
-	decal(parts, "plate", at, (u, v) => [lerp(-0.25, 0.25, u), lerp(0.78, 0.89, v), -3], B, 0.004, 2, 6);
-	// Slim roof rails on low feet.
-	const railY = 1.96;
-	for (const x of [-0.72, 0.72]) {
-		tube(parts.get("chrome"), [x, railY, -2.05], [x, railY, 0.55], 0.02, 10);
-		for (const z of [-2.0, -0.75, 0.5]) roundedBox(parts.get("gloss"), [x, railY - 0.04, z], [0.05, 0.07, 0.1], 0.015);
+	// Roof rails, flush on feet, from the screen to the tailgate.
+	for (const x of [-0.66, 0.66]) {
+		const a = at([x, 3, -2.15], [0, -1, 0]);
+		const b = at([x, 3, 0.6], [0, -1, 0]);
+		if (a && b) tube(parts.get("gloss"), add(a.p, [0, 0.05, 0]), add(b.p, [0, 0.05, 0]), 0.02, 8);
 	}
-	// A spoiler over the tailgate glass, and a twin exhaust.
-	roundedBox(parts.get("body"), [0, 1.88, spec.rear + 0.06], [1.5, 0.04, 0.18], 0.015, { pitch: 8 });
-	for (const x of [0.5, -0.5]) tube(parts.get("chrome"), [x, 0.48, spec.rear + 0.1], [x, 0.48, spec.rear - 0.04], 0.035, 14);
-	for (const door of spec.doors) doorHandle(spec, parts, door, { at: 0.1 });
-	mirrors(spec, parts, { z: 1.0, size: [0.11, 0.1, 0.04], reach: 0.16, up: 0.09 });
-	wipers(parts, at, [-0.7, 0.05], 1.3, 1.25, 0.55);
-	const inside = parts.get("interior");
-	seat(inside, 0.42, 0.6, 0.15);
-	seat(inside, -0.42, 0.6, 0.15);
-	for (const x of [-0.5, 0, 0.5]) seat(inside, x, 0.6, -0.95, { width: 0.46, back: 0.58 });
-	roundedBox(inside, [0, 0.5, -0.4], [1.75, 0.04, 2.6], 0.02);
-	cockpit(parts, { x: 0.42, y: 0.6, z: 0.15, width: 1.7, dashZ: 0.9, dashY: 1.12 });
+	const top = at([0, 3, -2.31], [0, -1, 0]);
+	if (top) roundedBox(parts.get("gloss"), add(top.p, [0, 0.025, -0.06]), [1.4, 0.04, 0.22], 0.015, { pitch: 6 });
 }
 
 /** The patrol car: black with white doors, a light bar, a push bar, steel wheels. */
@@ -2261,14 +2337,17 @@ const VEHICLES = {
 	"orion-hatchback": () => buildVehicle("orion-hatchback", {
 		spec: hatchbackSpec(),
 		details: hatchbackDetails,
-		paint: { colour: [0.8, 0.8, 0.8] },
-		extra: { glass: { colour: [0.05, 0.065, 0.08], alpha: 0.55 }, interior: [0.12, 0.115, 0.11] },
+		paint: { colour: [0.8, 0.8, 0.8], metallic: 0.55, roughness: 0.26 },
+		extra: { glass: { colour: [0.04, 0.05, 0.06], alpha: 0.6 }, interior: [0.12, 0.115, 0.11] },
+		// The floating roof shares the gloss-black trim's finish: black, and no extra draw.
+		parts: { body2: ["body", "gloss"] },
 	}),
 	"orion-suv": () => buildVehicle("orion-suv", {
 		spec: suvSpec(),
 		details: suvDetails,
-		paint: { colour: [0.8, 0.8, 0.8], metallic: 0.55, roughness: 0.28 },
-		extra: { rim: [0.72, 0.73, 0.75], hub: [0.5, 0.5, 0.52], glass: { colour: [0.04, 0.05, 0.06], alpha: 0.58 }, interior: [0.1, 0.095, 0.09] },
+		paint: { colour: [0.8, 0.8, 0.8], metallic: 0.55, roughness: 0.26 },
+		extra: { hub: [0.5, 0.5, 0.52], glass: { colour: [0.04, 0.05, 0.06], alpha: 0.6 }, interior: [0.1, 0.095, 0.09] },
+		parts: { body2: ["body", "gloss"] },
 		aoReach: 0.65,
 	}),
 	"orion-wagon": () => buildVehicle("orion-wagon", {

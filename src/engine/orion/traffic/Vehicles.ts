@@ -24,16 +24,16 @@ export interface VehicleShape {
 
 export const VEHICLE_SHAPES: Readonly<Record<VehicleStyle, VehicleShape>> = {
 	// The hatchback (see VEHICLE_MODELS), at its built size.
-	hatchback: { length: 4.15, width: 1.74, bodyHeight: 0.7, clearance: 0.17, cabinLength: 2.3, cabinHeight: 0.58, cabinOffset: -0.1, wheelRadius: 0.31, maxSpeed: 10 },
+	hatchback: { length: 4.24, width: 1.83, bodyHeight: 0.74, clearance: 0.2, cabinLength: 2.3, cabinHeight: 0.56, cabinOffset: -0.1, wheelRadius: 0.35, maxSpeed: 10 },
 	// The taxi's sedan in plain paint (see VEHICLE_MODELS), at its measured size.
-	sedan: { length: 4.7, width: 1.8, bodyHeight: 0.66, clearance: 0.17, cabinLength: 2.3, cabinHeight: 0.56, cabinOffset: -0.15, wheelRadius: 0.32, maxSpeed: 11.5 },
+	sedan: { length: 4.86, width: 1.87, bodyHeight: 0.66, clearance: 0.15, cabinLength: 2.3, cabinHeight: 0.52, cabinOffset: -0.15, wheelRadius: 0.345, maxSpeed: 11.5 },
 	// The SUV (see VEHICLE_MODELS), at its built size.
-	suv: { length: 4.95, width: 1.92, bodyHeight: 0.85, clearance: 0.3, cabinLength: 2.7, cabinHeight: 0.68, cabinOffset: -0.25, wheelRadius: 0.38, maxSpeed: 11 },
+	suv: { length: 4.96, width: 1.95, bodyHeight: 0.92, clearance: 0.25, cabinLength: 2.7, cabinHeight: 0.6, cabinOffset: -0.25, wheelRadius: 0.385, maxSpeed: 11 },
 	// The Vesper GT (see VEHICLE_MODELS), at its built size: the supercar the races and the
 	// garage use.
 	luxury: { length: 4.6, width: 2.0, bodyHeight: 0.6, clearance: 0.11, cabinLength: 1.9, cabinHeight: 0.43, cabinOffset: -0.2, wheelRadius: 0.35, maxSpeed: 13 },
 	auto: { length: 2.7, width: 1.35, bodyHeight: 0.62, clearance: 0.16, cabinLength: 2.0, cabinHeight: 0.95, cabinOffset: -0.2, wheelRadius: 0.22, maxSpeed: 7.5 },
-	police: { length: 4.6, width: 1.86, bodyHeight: 0.92, clearance: 0.26, cabinLength: 2.8, cabinHeight: 0.7, cabinOffset: -0.35, wheelRadius: 0.38, maxSpeed: 11.5 },
+	police: { length: 4.96, width: 1.87, bodyHeight: 0.66, clearance: 0.15, cabinLength: 2.3, cabinHeight: 0.52, cabinOffset: -0.15, wheelRadius: 0.345, maxSpeed: 11.5 },
 	// A flat-bed lorry: cab at the front over the front axle, a long bed behind it, and the ground
 	// clearance and wheels of something built to leave the road.
 	truck: { length: 9.6, width: 2.1, bodyHeight: 1, clearance: 0.5, cabinLength: 2.2, cabinHeight: 1.2, cabinOffset: 3.4, wheelRadius: 0.44, maxSpeed: 8 },
@@ -41,7 +41,7 @@ export const VEHICLE_SHAPES: Readonly<Record<VehicleStyle, VehicleShape>> = {
 	militaryWagon: { length: 4.8, width: 2, bodyHeight: 0.85, clearance: 0.32, cabinLength: 2.6, cabinHeight: 0.75, cabinOffset: -0.25, wheelRadius: 0.4, maxSpeed: 10.5 },
 	// The civic fleet, at real-world sizes. The heights set the collision box; the cabin numbers
 	// only matter for the fallback seat, as each model's own seat is measured (VehicleModels).
-	taxi: { length: 4.7, width: 1.8, bodyHeight: 0.68, clearance: 0.17, cabinLength: 2.3, cabinHeight: 0.6, cabinOffset: -0.15, wheelRadius: 0.32, maxSpeed: 11 },
+	taxi: { length: 4.86, width: 1.87, bodyHeight: 0.68, clearance: 0.15, cabinLength: 2.3, cabinHeight: 0.56, cabinOffset: -0.15, wheelRadius: 0.345, maxSpeed: 11 },
 	van: { length: 5, width: 2, bodyHeight: 1.1, clearance: 0.2, cabinLength: 1.6, cabinHeight: 0.7, cabinOffset: 1.4, wheelRadius: 0.34, maxSpeed: 9.5 },
 	serviceTruck: { length: 5.5, width: 2, bodyHeight: 0.9, clearance: 0.3, cabinLength: 1.9, cabinHeight: 0.8, cabinOffset: 1.2, wheelRadius: 0.38, maxSpeed: 10 },
 	towTruck: { length: 6.5, width: 2.2, bodyHeight: 1, clearance: 0.35, cabinLength: 2, cabinHeight: 1.05, cabinOffset: 1.8, wheelRadius: 0.42, maxSpeed: 9 },

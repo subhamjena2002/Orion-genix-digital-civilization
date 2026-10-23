@@ -120,7 +120,7 @@ export const VEHICLE_MODELS: readonly VehicleModelSpec[] = [
 		// A four-door saloon in the fleet's colours.
 		file: "orion-sedan.glb",
 		styles: ["sedan"],
-		length: 4.7,
+		length: 4.86,
 		// Left-hand drive, in the front seat.
 		seat: { forward: 0.3, lateral: 0.38, rootAboveRoad: 0.24, scale: 0.6 },
 		// Only mission cars are sedans, and they're out of the world until a mission places them.
@@ -128,26 +128,26 @@ export const VEHICLE_MODELS: readonly VehicleModelSpec[] = [
 		credit: ORION_ORIGINAL,
 	},
 	{
-		// A five-door hatchback on the saloon's nose and doors, in the fleet's colours.
+		// A compact crossover-hatch on the saloon's doors: floating black roof, arch cladding, fleet colours.
 		file: "orion-hatchback.glb",
 		styles: ["hatchback"],
-		length: 4.15,
-		seat: { forward: 0.3, lateral: 0.37, rootAboveRoad: 0.24, scale: 0.6 },
+		length: 4.24,
+		seat: { forward: 0.3, lateral: 0.38, rootAboveRoad: 0.31, scale: 0.6 },
 		credit: ORION_ORIGINAL,
 	},
 	{
-		// A family SUV on the wagon's tall body: alloys, roof rails, chrome grille, fleet colours.
+		// A modern mid-size SUV: high bonnet, light-bar face, floating black roof, 20-inch wheels, fleet colours.
 		file: "orion-suv.glb",
 		styles: ["suv"],
-		length: 4.95,
-		seat: { forward: 0.5, lateral: 0.42, rootAboveRoad: 0.47, scale: 0.66 },
+		length: 4.96,
+		seat: { forward: 0.3, lateral: 0.38, rootAboveRoad: 0.4, scale: 0.62 },
 		credit: ORION_ORIGINAL,
 	},
 	{
 		// The saloon as a cab: yellow, a chequer band, a lit roof sign.
 		file: "orion-taxi.glb",
 		styles: ["taxi"],
-		length: 4.7,
+		length: 4.86,
 		keepPaint: true,
 		seat: { forward: 0.3, lateral: 0.38, rootAboveRoad: 0.24, scale: 0.6 },
 		credit: ORION_ORIGINAL,
@@ -157,7 +157,7 @@ export const VEHICLE_MODELS: readonly VehicleModelSpec[] = [
 		// ("siren-red"/"siren-blue", which flash), a push bar and steel wheels.
 		file: "orion-police.glb",
 		styles: ["police"],
-		length: 4.7,
+		length: 4.96,
 		keepPaint: true,
 		seat: { forward: 0.3, lateral: 0.38, rootAboveRoad: 0.24, scale: 0.6 },
 		credit: ORION_ORIGINAL,
