@@ -3,11 +3,12 @@
  * terms it's written for. The landing page, the metadata, the sitemap and the share card all
  * read from here.
  *
- * Set NEXT_PUBLIC_SITE_URL to the live address (e.g. https://oriongenix.com) when building for
- * release: canonical links, the sitemap and social share cards need the real domain.
+ * Canonical links, the sitemap and social share cards need the real address, so the default is
+ * where the game is live today (the Worker's workers.dev address). With a custom domain, set
+ * NEXT_PUBLIC_SITE_URL to it at build time (it's read when the pages are built, not at runtime).
  */
 
-export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://oriongenix.com").replace(/\/+$/, "");
+export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://orion-genix-digital-civilization.subhamj811.workers.dev").replace(/\/+$/, "");
 
 export const SITE_NAME = "OrionGenix";
 
