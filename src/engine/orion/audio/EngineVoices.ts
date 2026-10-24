@@ -161,6 +161,7 @@ export const ENGINE_VOICES: Readonly<Record<VehicleStyle, EngineVoice>> = {
 	suv: UTILITY_FOUR,
 	police: ROAD_FOUR,
 	sedan: ROAD_FOUR,
+	executive: ROAD_FOUR,
 	hatchback: ROAD_FOUR,
 	auto: AUTO_SINGLE,
 	taxi: ROAD_FOUR,

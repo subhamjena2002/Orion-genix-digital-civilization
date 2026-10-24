@@ -28,6 +28,8 @@ import type { OrionVehicle } from "../traffic/OrionVehicle";
  */
 const RECORDED_ENGINE: Readonly<Record<VehicleStyle, { family: string; shift: number; level: number }>> = {
 	sedan: { family: "car", shift: 1, level: 1 },
+	// The executive saloon: a big, quiet engine, shifting a little lower.
+	executive: { family: "car", shift: 0.92, level: 0.9 },
 	taxi: { family: "car", shift: 1, level: 1 },
 	police: { family: "car", shift: 0.94, level: 1.1 },
 	hatchback: { family: "car", shift: 1.08, level: 0.95 },

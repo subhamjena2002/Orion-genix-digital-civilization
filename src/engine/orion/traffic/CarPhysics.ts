@@ -101,6 +101,8 @@ interface StyleTuning {
 const TUNING: Readonly<Record<VehicleStyle, StyleTuning>> = {
 	luxury: { mass: 1600, power: 480_000, topSpeed: 88, grip: 1.25, drag: 0.34, cgHeight: 0.42, frontWeight: 0.43, frontDrive: 0.4 },
 	sedan: { mass: 1450, power: 130_000, topSpeed: 58, grip: 1.0, drag: 0.4, cgHeight: 0.55, frontWeight: 0.56, frontDrive: 1 },
+	// Long and heavy but strong: all-wheel drive, a slippery body, a high top speed.
+	executive: { mass: 2250, power: 290_000, topSpeed: 64, grip: 1.0, drag: 0.34, cgHeight: 0.55, frontWeight: 0.52, frontDrive: 0.45 },
 	suv: { mass: 2050, power: 190_000, topSpeed: 55, grip: 0.92, drag: 0.55, cgHeight: 0.72, frontWeight: 0.55, frontDrive: 0.5 },
 	hatchback: { mass: 1100, power: 80_000, topSpeed: 50, grip: 0.95, drag: 0.42, cgHeight: 0.52, frontWeight: 0.6, frontDrive: 1 },
 	auto: { mass: 420, power: 9_000, topSpeed: 17, grip: 0.8, drag: 0.6, cgHeight: 0.6, frontWeight: 0.35, frontDrive: 0 },

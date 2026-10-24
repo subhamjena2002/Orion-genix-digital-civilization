@@ -1,16 +1,40 @@
-// Cloudflare deployment. The game is a static export (next.config.ts: output "export"), so this
-// is an assets-only Worker: `npm run build` writes out/, and `npx wrangler deploy` uploads it.
+// Cloudflare deployment. The game is a static export (next.config.ts: output "export"): `npm run
+// build` writes out/, and `npx wrangler deploy` uploads it as the Worker's static assets.
+//
+// The Worker script (worker/index.ts) only runs for /api/* — the save API, backed by D1. Every
+// other path is served straight from the assets, as before, without invoking the script.
 //
 // Without this file Cloudflare's build auto-converts the project to an OpenNext server Worker on
 // every run. That works, but a server for a site with no server code is just slower and fragile.
 //
 // The name must match the Worker created in the Cloudflare dashboard, or a second one is deployed.
 // Workers limits each file to 25 MiB — scripts/optimize-textures.mjs gets models under it.
+//
+// Local development (`npm run cf:dev`) uses a local copy of the database under .wrangler/, never
+// the real one. See docs/cloud-saves.md.
 {
+  "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "orion-genix-digital-civilization",
+  "main": "./worker/index.ts",
   "compatibility_date": "2026-09-23",
   "assets": {
     "directory": "./out",
-    "not_found_handling": "404-page"
-  }
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "orion-genix-saves",
+      "database_id": "94f086d4-a68e-4a71-bf1a-ff586da22118",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "ratelimits": [
+    // Per guest: the game saves at most every couple of seconds, at checkpoints.
+    { "name": "SAVE_LIMITER", "namespace_id": "4101", "simple": { "limit": 20, "period": 60 } },
+    // Per address: new guests handed out.
+    { "name": "GUEST_LIMITER", "namespace_id": "4102", "simple": { "limit": 30, "period": 60 } }
+  ]
 }

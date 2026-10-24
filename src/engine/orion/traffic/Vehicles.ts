@@ -4,7 +4,7 @@
  * SUVs and three-wheeler autos are still those.
  */
 export type VehicleStyle =
-	| "hatchback" | "sedan" | "suv" | "luxury" | "auto" | "police" | "truck" | "militaryWagon"
+	| "hatchback" | "sedan" | "executive" | "suv" | "luxury" | "auto" | "police" | "truck" | "militaryWagon"
 	// The civic fleet (see VEHICLE_MODELS): public and service vehicles.
 	| "taxi" | "van" | "serviceTruck" | "towTruck" | "bus" | "schoolBus" | "garbageTruck" | "ambulance" | "fireTruck";
 
@@ -27,6 +27,7 @@ export const VEHICLE_SHAPES: Readonly<Record<VehicleStyle, VehicleShape>> = {
 	hatchback: { length: 4.24, width: 1.83, bodyHeight: 0.74, clearance: 0.2, cabinLength: 2.3, cabinHeight: 0.56, cabinOffset: -0.1, wheelRadius: 0.35, maxSpeed: 10 },
 	// The taxi's sedan in plain paint (see VEHICLE_MODELS), at its measured size.
 	sedan: { length: 4.86, width: 1.87, bodyHeight: 0.66, clearance: 0.15, cabinLength: 2.3, cabinHeight: 0.52, cabinOffset: -0.15, wheelRadius: 0.345, maxSpeed: 11.5 },
+	executive: { length: 5.28, width: 1.93, bodyHeight: 0.68, clearance: 0.15, cabinLength: 2.7, cabinHeight: 0.5, cabinOffset: -0.2, wheelRadius: 0.36, maxSpeed: 11.5 },
 	// The SUV (see VEHICLE_MODELS), at its built size.
 	suv: { length: 4.96, width: 1.95, bodyHeight: 0.92, clearance: 0.25, cabinLength: 2.7, cabinHeight: 0.6, cabinOffset: -0.25, wheelRadius: 0.385, maxSpeed: 11 },
 	// The Vesper GT (see VEHICLE_MODELS), at its built size: the supercar the races and the
@@ -73,6 +74,7 @@ const AUTO_COLOURS = ["#2e8b3d", "#1c1c1c", "#2e8b3d"];
  * there is art for them.
  *
  * Mostly everyday cars — hatchbacks and SUVs in the everyday paints, and cabs — with the civic
+ * fleet among them, and a few long executive saloons in their own deep green.
  * fleet among them. (The plain saloon stays a mission car: its model loads after the loading
  * screen, and nothing in traffic may wait on a deferred model, see DeferredModels.test.) `luxury` is the Vesper GT: a few, in the luxury paints, so a supercar turns
  * up now and then rather than on every corner. The army wagon is the base's (see MilitaryBase):
@@ -82,6 +84,7 @@ const AUTO_COLOURS = ["#2e8b3d", "#1c1c1c", "#2e8b3d"];
 const FLEET: readonly [VehicleStyle, number][] = [
 	["hatchback", 7],
 	["suv", 5],
+	["executive", 3],
 	["taxi", 5],
 	["truck", 4],
 	["militaryWagon", 1],

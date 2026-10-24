@@ -1,6 +1,9 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useEffect } from "react";
+
+import { startCloudSave } from "@/engine/orion/missions/CloudSave";
 
 import { LoadingScreen } from "./LoadingScreen";
 
@@ -11,5 +14,7 @@ const OrionCanvas = dynamic(() => import("./OrionCanvas"), {
 });
 
 export default function OrionEntry() {
+  // The cloud copy of the save: started once the page is idle, and never waited on.
+  useEffect(() => startCloudSave(), []);
   return <OrionCanvas />;
 }

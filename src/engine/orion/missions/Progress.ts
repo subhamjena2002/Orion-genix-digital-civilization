@@ -1,5 +1,6 @@
 import type { WeaponId } from "../combat/WeaponData";
 import { holds, type Faction, type MissionDefinition, type MissionReward, type RewardVehicle } from "./MissionDirector";
+import { SAVE_WEAPONS } from "./SaveSchema";
 
 /**
  * How far the player has got: the cash in their pocket, the missions passed (and best times on
@@ -10,6 +11,10 @@ import { holds, type Faction, type MissionDefinition, type MissionReward, type R
  * Kept in localStorage so a reload carries on where the player left off. Storage may be missing
  * or refuse (private mode, blocked site data), so every read and write is guarded and the game
  * plays on from memory without it.
+ *
+ * Local storage is the copy the game plays from; CloudSave keeps a copy on the server too, in
+ * the background, and hands back anything newer through replaceProgress. Nothing here waits on
+ * the network.
  */
 
 export interface ProgressState {
@@ -39,20 +44,23 @@ export const STARTING_WEAPONS: readonly WeaponId[] = ["fists", "sword", "pistol"
 const STORAGE_KEY = "orion.progress.v1";
 /** Standing runs from this to its negative. */
 export const REP_LIMIT = 10;
-const WEAPON_IDS: readonly WeaponId[] = ["fists", "sword", "pistol", "ar", "shotgun", "rocketLauncher"];
+const WEAPON_IDS: readonly WeaponId[] = SAVE_WEAPONS;
 
-type ProgressStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+export type ProgressStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+/** Why progress changed: played, a new game, or a copy from the server put in place. */
+export type ProgressChange = "update" | "reset" | "replace";
 
 let storageOverride: ProgressStorage | null | undefined;
 let state: ProgressState | null = null;
 let version = 0;
-const listeners = new Set<() => void>();
+const listeners = new Set<(change: ProgressChange) => void>();
 
 function fresh(): ProgressState {
 	return { cash: 0, passed: [], bestTimes: {}, weapons: [...STARTING_WEAPONS], garage: [], flags: [], rep: { street: 0, sunset: 0, law: 0, meridian: 0 }, ratings: {}, collected: [], jobs: 0 };
 }
 
-function storage(): ProgressStorage | null {
+/** Where progress is kept (local storage, or a test's stand-in); null when there's none. */
+export function progressStorage(): ProgressStorage | null {
 	if (storageOverride !== undefined) return storageOverride;
 	try {
 		return globalThis.localStorage ?? null;
@@ -115,7 +123,7 @@ function current(): ProgressState {
 	if (!state) {
 		let raw: string | null = null;
 		try {
-			raw = storage()?.getItem(STORAGE_KEY) ?? null;
+			raw = progressStorage()?.getItem(STORAGE_KEY) ?? null;
 		} catch {
 			// A new game it is.
 		}
@@ -124,14 +132,18 @@ function current(): ProgressState {
 	return state;
 }
 
-function changed(): void {
+function changed(change: ProgressChange = "update"): void {
 	try {
-		storage()?.setItem(STORAGE_KEY, JSON.stringify(state));
+		progressStorage()?.setItem(STORAGE_KEY, JSON.stringify(state));
 	} catch {
 		// Not saved; still holds for this session.
 	}
+	notify(change);
+}
+
+function notify(change: ProgressChange): void {
 	version++;
-	for (const listener of [...listeners]) listener();
+	for (const listener of [...listeners]) listener(change);
 }
 
 export function readProgress(): Readonly<ProgressState> {
@@ -143,7 +155,7 @@ export function progressVersion(): number {
 	return version;
 }
 
-export function onProgressChange(listener: () => void): () => void {
+export function onProgressChange(listener: (change: ProgressChange) => void): () => void {
 	listeners.add(listener);
 	return () => {
 		listeners.delete(listener);
@@ -282,12 +294,20 @@ export function addToGarage(car: RewardVehicle): boolean {
 export function resetProgress(): void {
 	state = fresh();
 	try {
-		storage()?.removeItem(STORAGE_KEY);
+		progressStorage()?.removeItem(STORAGE_KEY);
 	} catch {
 		// Nothing saved to forget.
 	}
-	version++;
-	for (const listener of [...listeners]) listener();
+	notify("reset");
+}
+
+/**
+ * Progress from elsewhere (the server's copy, see CloudSave) put in place of what's here, as if
+ * it had been played: saved locally and announced, so the HUD, garage and weapons pick it up.
+ */
+export function replaceProgress(next: ProgressState): void {
+	state = parseProgress(JSON.stringify(next));
+	changed("replace");
 }
 
 /** For tests: read and write here instead of localStorage (null for none), starting afresh. */

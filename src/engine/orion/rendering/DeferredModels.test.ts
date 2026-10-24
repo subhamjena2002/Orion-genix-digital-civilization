@@ -16,7 +16,7 @@ describe("deferred models", () => {
 
 	it("take the vehicles marked deferred first, and only those", () => {
 		const deferredVehicles = VEHICLE_MODELS.filter((spec) => spec.deferred).map((spec) => `${VEHICLE_MODEL_BASE}/${spec.file}`);
-		expect(deferredVehicles).toEqual(expect.arrayContaining(["/models/vehicles/orion-fire-truck.glb", "/models/vehicles/orion-sedan-2026.glb"]));
+		expect(deferredVehicles).toEqual(expect.arrayContaining(["/models/vehicles/orion-fire-truck-2026.glb", "/models/vehicles/orion-sedan-2026.glb"]));
 		expect(DEFERRED_MODELS.slice(0, deferredVehicles.length)).toEqual(deferredVehicles);
 		// Nothing in ordinary traffic waits: the city's streets look right from the first frame.
 		for (const [style] of ORION_VEHICLES.map((vehicle) => [vehicle.style] as const)) {
@@ -42,9 +42,9 @@ describe("deferred models", () => {
 		stop();
 		expect(isModelReleased(url)).toBe(true);
 		expect(heard).toEqual([url]);
-		expect(isDeferredModel("/models/vehicles/orion-taxi.glb")).toBe(false);
+		expect(isDeferredModel("/models/vehicles/orion-taxi-2026.glb")).toBe(false);
 		// Anything not deferred may always load.
-		expect(isModelReleased("/models/vehicles/orion-taxi.glb")).toBe(true);
+		expect(isModelReleased("/models/vehicles/orion-taxi-2026.glb")).toBe(true);
 	});
 
 	it("covers the helipad, and leaves the spawn outside the reach", () => {
@@ -140,6 +140,6 @@ describe("showing a deferred model", () => {
 	});
 
 	it("doesn't hold back models that aren't deferred", async () => {
-		await expect(whenModelShowable("/models/vehicles/orion-taxi.glb")).resolves.toBeUndefined();
+		await expect(whenModelShowable("/models/vehicles/orion-taxi-2026.glb")).resolves.toBeUndefined();
 	});
 });

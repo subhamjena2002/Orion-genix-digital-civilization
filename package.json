@@ -8,7 +8,10 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "cf:dev": "next build && wrangler d1 migrations apply orion-genix-saves --local && wrangler dev",
+    "db:migrate:local": "wrangler d1 migrations apply orion-genix-saves --local",
+    "db:migrate:remote": "wrangler d1 migrations apply orion-genix-saves --remote"
   },
   "dependencies": {
     "@playcanvas/react": "^0.11.5",
@@ -32,6 +35,7 @@
     "sharp": "^0.35.4",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "wrangler": "4.152.0"
   }
 }

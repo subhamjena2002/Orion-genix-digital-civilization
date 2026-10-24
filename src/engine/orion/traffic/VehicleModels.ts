@@ -129,24 +129,40 @@ export const VEHICLE_MODELS: readonly VehicleModelSpec[] = [
 		credit: ORION_ORIGINAL,
 	},
 	{
-		// A compact crossover-hatch on the saloon's doors: floating black roof, arch cladding, fleet colours.
-		file: "orion-hatchback.glb",
+		// A long-wheelbase executive saloon (3.2 m between the axles): formal three-box shape,
+		// chrome window line, black roof, always in its deep green. Built in Blender
+		// (blender/build_car_2026.py, preset "saloon") on the sedan's part names.
+		file: "orion-saloon-2026.glb",
+		styles: ["executive"],
+		length: 5.28,
+		seat: { forward: 0.3, lateral: 0.38, rootAboveRoad: 0.24, scale: 0.6 },
+		keepPaint: true,
+		credit: { ...ORION_ORIGINAL, source: "blender/build_car_2026.py" },
+	},
+	{
+		// A compact crossover-hatch on the saloon's doors: floating black roof, arch cladding, a light-bar
+		// face, fleet colours. Built in Blender (blender/build_car_2026.py, preset "hatch") on
+		// orion-hatchback.glb's parts and pivots.
+		file: "orion-hatchback-2026.glb",
 		styles: ["hatchback"],
 		length: 4.24,
 		seat: { forward: 0.3, lateral: 0.38, rootAboveRoad: 0.31, scale: 0.6 },
 		credit: ORION_ORIGINAL,
 	},
 	{
-		// A modern mid-size SUV: high bonnet, light-bar face, floating black roof, 20-inch wheels, fleet colours.
-		file: "orion-suv.glb",
+		// A full-size luxury SUV: tall flat bonnet, bar grille with light blades, flat roof with
+		// rails, vertical tailgate, 22-inch wheels, fleet colours. Built in Blender
+		// (blender/build_car_2026.py, preset "suv") on orion-suv.glb's part names and pivots.
+		file: "orion-suv-2026.glb",
 		styles: ["suv"],
 		length: 4.96,
 		seat: { forward: 0.3, lateral: 0.38, rootAboveRoad: 0.4, scale: 0.62 },
 		credit: ORION_ORIGINAL,
 	},
 	{
-		// The saloon as a cab: yellow, a chequer band, a lit roof sign.
-		file: "orion-taxi.glb",
+		// The fastback saloon as a cab: yellow, a chequer band, a lit roof sign ("taxi_sign").
+		// Built in Blender (blender/build_car_2026.py, preset "taxi") on orion-taxi.glb's parts.
+		file: "orion-taxi-2026.glb",
 		styles: ["taxi"],
 		length: 4.86,
 		keepPaint: true,
@@ -154,9 +170,10 @@ export const VEHICLE_MODELS: readonly VehicleModelSpec[] = [
 		credit: ORION_ORIGINAL,
 	},
 	{
-		// The saloon as a patrol car: black with white doors, a red and blue light bar
-		// ("siren-red"/"siren-blue", which flash), a push bar and steel wheels.
-		file: "orion-police.glb",
+		// The fastback saloon as a patrol car: black with white doors, a red and blue light bar
+		// ("siren-red"/"siren-blue", which flash) and a push bar. Built in Blender
+		// (blender/build_car_2026.py, preset "police") on orion-police.glb's parts.
+		file: "orion-police-2026.glb",
 		styles: ["police"],
 		length: 4.96,
 		keepPaint: true,
@@ -174,26 +191,31 @@ export const VEHICLE_MODELS: readonly VehicleModelSpec[] = [
 		credit: ORION_ORIGINAL,
 	},
 	{
-		// A panel van with a sliding side door, white with a blue band.
-		file: "orion-van.glb",
+		// A panel van with a sliding side door, white with a blue band: short nose, raked screen,
+		// light-bar face. Built in Blender (blender/build_car_2026.py, preset "van") on
+		// orion-van.glb's parts and pivots.
+		file: "orion-van-2026.glb",
 		styles: ["van"],
 		length: 5.0,
 		keepPaint: true,
-		seat: { forward: 1.55, lateral: 0.45, rootAboveRoad: 0.5, scale: 0.75 },
+		seat: { forward: 1.45, lateral: 0.45, rootAboveRoad: 0.62, scale: 0.75 },
 		credit: ORION_ORIGINAL,
 	},
 	{
-		// The van's cab with a patient compartment behind: beacons, a light bar, a chequered band.
-		file: "orion-ambulance.glb",
+		// The van's cab with a taller, wider patient box behind: frosted windows, a red band, a
+		// red and blue light bar ("siren-red"/"siren-blue") and corner beacons. Built in Blender
+		// (blender/build_car_2026.py, preset "ambulance") on orion-ambulance.glb's parts.
+		file: "orion-ambulance-2026.glb",
 		styles: ["ambulance"],
 		length: 6.5,
 		keepPaint: true,
-		seat: { forward: 2.3, lateral: 0.45, rootAboveRoad: 0.5, scale: 0.75 },
+		seat: { forward: 2.2, lateral: 0.45, rootAboveRoad: 0.62, scale: 0.75 },
 		credit: ORION_ORIGINAL,
 	},
 	{
-		// A crew-cab utility truck with tool lockers, a ladder rack and amber beacons.
-		file: "orion-service-truck.glb",
+		// A crew-cab utility truck with tool lockers, a ladder rack and amber beacons ("beacon-amber").
+		// Built in Blender (blender/build_car_2026.py, preset "service") on orion-service-truck.glb's parts.
+		file: "orion-service-truck-2026.glb",
 		styles: ["serviceTruck"],
 		length: 5.5,
 		keepPaint: true,
@@ -201,8 +223,9 @@ export const VEHICLE_MODELS: readonly VehicleModelSpec[] = [
 		credit: ORION_ORIGINAL,
 	},
 	{
-		// A bonneted wrecker: boom, hook and wheel-lift on the back.
-		file: "orion-tow-truck.glb",
+		// A bonneted wrecker: boom, hook and wheel-lift on the back, amber beacons. Built in Blender
+		// (blender/build_car_2026.py, preset "tow") on orion-tow-truck.glb's parts.
+		file: "orion-tow-truck-2026.glb",
 		styles: ["towTruck"],
 		length: 6.5,
 		keepPaint: true,
@@ -210,18 +233,21 @@ export const VEHICLE_MODELS: readonly VehicleModelSpec[] = [
 		credit: ORION_ORIGINAL,
 	},
 	{
-		// A cab-over box lorry: the cab in blue, a white box.
-		file: "orion-truck.glb",
+		// A cab-over box lorry: the cab in blue with a roof deflector, a white box ("paint_box"), dual
+		// rear wheels. Built in Blender (blender/build_car_2026.py, preset "truck") on orion-truck.glb's parts.
+		file: "orion-truck-2026.glb",
 		styles: ["truck"],
 		length: 9.6,
 		keepPaint: true,
 		// High in the cab over the front axle.
-		seat: { forward: 4.0, lateral: 0.53, rootAboveRoad: 0.95, scale: 0.8 },
+		seat: { forward: 4.0, lateral: 0.53, rootAboveRoad: 1.15, scale: 0.8 },
 		credit: ORION_ORIGINAL,
 	},
 	{
-		// A refuse truck: a low cab, the compactor body, the hopper at the back.
-		file: "orion-garbage-truck.glb",
+		// A refuse truck: a low-entry cab-over cab, the green compactor body ("paint_body"), the hopper
+		// at the back ("tailgate"), amber beacons. Built in Blender (blender/build_car_2026.py, preset
+		// "garbage") on orion-garbage-truck.glb's parts.
+		file: "orion-garbage-truck-2026.glb",
 		styles: ["garbageTruck"],
 		length: 8.5,
 		keepPaint: true,
@@ -229,8 +255,9 @@ export const VEHICLE_MODELS: readonly VehicleModelSpec[] = [
 		credit: ORION_ORIGINAL,
 	},
 	{
-		// A fire engine: crew cab, roller-shutter lockers, an aerial ladder, light bars.
-		file: "orion-fire-truck.glb",
+		// A fire engine: crew cab, roller-shutter lockers, an aerial ladder, light bars. Built in Blender
+		// (blender/build_car_2026.py, preset "fire") on orion-fire-truck.glb's parts.
+		file: "orion-fire-truck-2026.glb",
 		styles: ["fireTruck"],
 		length: 9.5,
 		keepPaint: true,
