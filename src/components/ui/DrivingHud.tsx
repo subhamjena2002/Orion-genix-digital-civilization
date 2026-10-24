@@ -1,7 +1,10 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
+
 import { usePlayerPose } from "@/components/world/usePlayerPose";
 import { JET_NAME } from "@/engine/orion/aircraft/JetModel";
+import { counterInReach, onShopChange } from "@/engine/orion/shops/Shops";
 import { useFlightHud } from "./FlightHud";
 
 const KMH_PER_MS = 3.6;
@@ -15,6 +18,7 @@ const DIAL_MAX_KMH = 320;
 export function DrivingHud({ touch }: Readonly<{ touch: boolean }>) {
 	const { inVehicle, vehicleSpeed, nearCar, vehicleIntegrity, vehicleBurning } = usePlayerPose(80);
 	const { flying, nearGunship, nearJet } = useFlightHud(120);
+	const counter = useSyncExternalStore(onShopChange, counterInReach, () => null);
 	if (flying) return null;
 	const kmh = Math.round(vehicleSpeed * KMH_PER_MS);
 	const condition = Math.max(0, Math.round(vehicleIntegrity));
@@ -56,7 +60,12 @@ export function DrivingHud({ touch }: Readonly<{ touch: boolean }>) {
 					<HintKey keys={["F"]} label={`Fly the ${JET_NAME}`} />
 				</div>
 			) : null}
-			{!touch && !inVehicle && nearCar ? (
+			{!touch && !inVehicle && counter ? (
+				<div className="orion-control-hint orion-control-hint-prompt" role="status">
+					<HintKey keys={["E"]} label={counter.kind === "guns" ? "Shop" : "Browse cars"} />
+				</div>
+			) : null}
+			{!touch && !inVehicle && nearCar && !counter ? (
 				<div className="orion-control-hint orion-control-hint-prompt" role="status">
 					<HintKey keys={["F"]} label="Take car" />
 				</div>

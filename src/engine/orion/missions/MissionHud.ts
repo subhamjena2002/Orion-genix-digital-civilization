@@ -56,6 +56,9 @@ export interface MissionHudState {
 	rating: number | null;
 	/** Failed past a checkpoint: a retry can start there. */
 	canResume: boolean;
+	/** A cutscene is playing (letterboxed, the rest of the HUD hidden), and whether Space skips it. */
+	cutscene: boolean;
+	skippable: boolean;
 	/** Bumped on every publish, so a sampler can tell nothing has changed. */
 	version: number;
 }
@@ -84,6 +87,8 @@ const state: MissionHudState = {
 	bonuses: [],
 	rating: null,
 	canResume: false,
+	cutscene: false,
+	skippable: false,
 	version: 0,
 };
 

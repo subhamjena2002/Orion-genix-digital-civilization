@@ -155,10 +155,19 @@ export class WeaponInventory {
 		return true;
 	}
 
-	/** Adds spare rounds (a pickup). */
-	public addAmmo(id: string, rounds: number): void {
+	/** Adds spare rounds (a pickup, a purchase), up to the weapon's limit; returns how many went in. */
+	public addAmmo(id: string, rounds: number): number {
 		const weapon = this.carried.find((candidate) => candidate.definition.id === id);
-		if (weapon && rounds > 0) weapon.reserve += rounds;
+		if (!weapon || !(rounds > 0)) return 0;
+		const room = Math.max(0, weapon.definition.maxAmmo - weapon.reserve);
+		const added = Math.min(Math.floor(rounds), room);
+		weapon.reserve += added;
+		return added;
+	}
+
+	/** Spare rounds carried for a weapon (not counting the magazine). */
+	public spareFor(id: string): number {
+		return this.carried.find((candidate) => candidate.definition.id === id)?.reserve ?? 0;
 	}
 
 	private equip(index: number) {

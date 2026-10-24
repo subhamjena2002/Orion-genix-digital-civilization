@@ -6,6 +6,7 @@ import { BLEND_ADDITIVE, Color, CULLFACE_NONE, Entity as PlayCanvasEntity, Stand
 import { memo, useEffect, useState } from "react";
 
 import { activeTarget, checkArrival, onNavigationChange } from "@/engine/orion/navigation/Navigation";
+import { readCinematicView } from "@/engine/orion/player/CinematicCamera";
 import { readPlayerPose } from "@/engine/orion/player/PlayerPose";
 import { pavedHeightAt } from "@/engine/orion/roads/RoadNetwork";
 import { terrainHeightAt } from "@/engine/orion/world/Mountains";
@@ -89,6 +90,12 @@ export const WaypointBeacon = memo(function WaypointBeacon() {
 		const update = (dt: number) => {
 			const pose = readPlayerPose();
 			checkArrival(pose.x, pose.z);
+			// Out of a cutscene's shots: for a moment it's a film, not a map.
+			const filming = readCinematicView() !== null;
+			if (beam.enabled === filming) {
+				beam.enabled = !filming;
+				pivot.enabled = !filming;
+			}
 			if (!beacon.enabled) return;
 			// A slow pulse, and the ring turning — or, up in the air, standing to face the player.
 			time += dt;

@@ -5,19 +5,23 @@ import { useApp } from "@playcanvas/react/hooks";
 import { BLEND_ADDITIVE, Color, CULLFACE_NONE, Entity as PlayCanvasEntity, StandardMaterial } from "playcanvas";
 import { memo, useEffect, useState } from "react";
 
+import { createMissionVoice } from "@/engine/orion/audio/MissionVoice";
+import { faceMissionPerson, missionPersonState, placeMissionHostile, releaseMissionHostiles } from "@/engine/orion/characters/OrionPedestrian";
 import { readCombatHud } from "@/engine/orion/combat/CombatHud";
 import { ALL_MANIFESTS_CASH, MANIFEST_CASH, MANIFESTS, manifestInReach } from "@/engine/orion/missions/Collectibles";
 import { streetLeads } from "@/engine/orion/missions/Leads";
-import { missionActorMarkers, missionStage, updateMissionActors } from "@/engine/orion/missions/MissionActors";
+import { shotView, type ShotContext, type ShotPlace, type ShotSubject } from "@/engine/orion/missions/Cutscenes";
+import { missionActorKind, missionActorMarkers, missionStage, updateMissionActors } from "@/engine/orion/missions/MissionActors";
 import { isPassive, quarryOf } from "@/engine/orion/missions/MissionBlips";
 import { ALL_MISSIONS, MISSIONS } from "@/engine/orion/missions/MissionCatalog";
-import { holds, missions, type MissionDefinition, type PlayerView } from "@/engine/orion/missions/MissionDirector";
+import { giverPersonId, holds, missions, type MissionDefinition, type PlayerView } from "@/engine/orion/missions/MissionDirector";
 import { abandonMission, playMissionFromGiver, retryMission } from "@/engine/orion/missions/MissionFlow";
 import { availableMissions, collect, hasCollected, hasFlag, hasPassed, onProgressChange, readProgress, recordJob, recordPass, resetProgress, setFlags } from "@/engine/orion/missions/Progress";
 import { clearWaypoint } from "@/engine/orion/navigation/Navigation";
 import { clearWanted, readWanted } from "@/engine/orion/police/Wanted";
+import { setCinematicView, type CinematicView } from "@/engine/orion/player/CinematicCamera";
 import { setControlsHeld } from "@/engine/orion/player/ControlHold";
-import { readPlayerPose } from "@/engine/orion/player/PlayerPose";
+import { readCameraView, readPlayerPose } from "@/engine/orion/player/PlayerPose";
 import { pavedHeightAt } from "@/engine/orion/roads/RoadNetwork";
 import { highwayGroundAt } from "@/engine/orion/world/Highways";
 import { terrainHeightAt } from "@/engine/orion/world/Mountains";
@@ -43,6 +47,12 @@ const OVER_VEHICLE = 3.1;
 const OVER_PERSON = 2.6;
 /** Manifest pages glint from this close. */
 const PAGE_RANGE = 70;
+/** A giver stands at their marker, in person, once the player's this close. */
+const GIVER_RANGE = 70;
+/** How high a cutscene looks at someone, a car, and a spot. */
+const PERSON_HEIGHT = 1.62;
+const VEHICLE_HEIGHT = 1.15;
+const SPOT_HEIGHT = 1.5;
 
 /** The ground a marker stands on: the streets, an expressway's deck, or the land. */
 function groundAt(x: number, z: number): number {
@@ -53,8 +63,12 @@ function groundAt(x: number, z: number): number {
  * Missions in the world: ticks the director once a frame with where the player is, puts each
  * mission's cars and people in (see MissionActors), lights a gold marker at every giver with a
  * mission on offer and a teal one at a street lead, and opens the briefing when the player steps
- * into one on foot. A mission passed is paid out and saved (see Progress); so is a street job,
- * and a manifest page picked up.
+ * into one on foot. A giver who has a look stands at their marker in person, and tells the
+ * briefing to the player's face. A mission passed is paid out and saved (see Progress); so is a
+ * street job, and a manifest page picked up.
+ *
+ * Cutscenes: the director says which shot is up; this works out where the camera stands for it
+ * (see Cutscenes) and hands that to the player's camera, and holds the player still meanwhile.
  */
 export const MissionRuntime = memo(function MissionRuntime() {
 	const app = useApp();
@@ -63,6 +77,9 @@ export const MissionRuntime = memo(function MissionRuntime() {
 	useEffect(() => {
 		missions.setStage(missionStage);
 		missions.setFlagSource(hasFlag);
+		// Dialogue said out loud as well as shown (browser speech; silent where there's none).
+		const voice = createMissionVoice();
+		missions.setVoice(voice);
 		const stopListening = missions.on((event) => {
 			if (event.type === "started") {
 				clearWanted();
@@ -99,6 +116,8 @@ export const MissionRuntime = memo(function MissionRuntime() {
 			missions.stop();
 			missions.setStage(null);
 			missions.setFlagSource(null);
+			missions.setVoice(null);
+			voice?.dispose();
 			if (development) delete (window as unknown as Record<string, unknown>).__orionMissions;
 		};
 	}, []);
@@ -142,8 +161,11 @@ export const MissionRuntime = memo(function MissionRuntime() {
 
 		// One marker per mission, made once and switched on and off: a glowing column and a ring.
 		const markers = new Map<string, PlayCanvasEntity>();
+		const columns = new Map<string, PlayCanvasEntity>();
 		for (const mission of MISSIONS) {
 			const marker = makeMarker(`mission-marker-${mission.id}`, material, 1);
+			const column = marker.findByName("column");
+			if (column instanceof PlayCanvasEntity) columns.set(mission.id, column);
 			const { x, z } = mission.giver;
 			marker.setPosition(x, groundAt(x, z), z);
 			markers.set(mission.id, marker);
@@ -206,6 +228,87 @@ export const MissionRuntime = memo(function MissionRuntime() {
 		let announced = streetLeads.announced;
 		let time = 0;
 
+		// The giver out in person: who, for which mission, and whether they're stood there yet.
+		let giverOut: { id: string; mission: MissionDefinition; placed: boolean } | null = null;
+		const showGiver = (mission: MissionDefinition | null, pose: { x: number; z: number }) => {
+			const id = mission?.giver.look ? giverPersonId(mission.giver) : null;
+			if (giverOut && giverOut.id !== id) {
+				releaseMissionHostiles([giverOut.id]);
+				giverOut = null;
+			}
+			if (!mission || !id) return;
+			if (!giverOut) giverOut = { id, mission, placed: false };
+			giverOut.mission = mission;
+			if (!giverOut.placed) {
+				const { x, z } = mission.giver;
+				// Facing whoever's coming; they turn to the player as they get close.
+				giverOut.placed = placeMissionHostile(id, x, z, false, 1, "passive", Math.atan2(pose.x - x, pose.z - z) * 180 / Math.PI);
+			}
+		};
+
+		// Cutscenes: where things are for the camera, and where the game's camera was as the scene began.
+		const sceneCamera = { x: 0, z: 0 };
+		let filming = false;
+		const placeOf = (subject: ShotSubject): ShotPlace | null => {
+			if (typeof subject !== "string") return { x: subject.x, z: subject.z, height: SPOT_HEIGHT };
+			if (subject === "player") {
+				const pose = readPlayerPose();
+				return { x: pose.x, z: pose.z, height: pose.inVehicle ? VEHICLE_HEIGHT : PERSON_HEIGHT };
+			}
+			if (subject === "giver") {
+				const giver = missions.mission?.giver;
+				if (!giver) return null;
+				const person = giverOut?.placed ? missionPersonState(giverOut.id) : null;
+				return { x: person?.x ?? giver.x, z: person?.z ?? giver.z, height: PERSON_HEIGHT };
+			}
+			const actor = missionStage.actor?.(subject);
+			if (!actor) return null;
+			return { x: actor.x, z: actor.z, height: missionActorKind(subject) === "vehicle" ? VEHICLE_HEIGHT : PERSON_HEIGHT };
+		};
+		const shotContext: ShotContext = { locate: placeOf, player: { x: 0, z: 0 }, camera: sceneCamera };
+		const cinematic: CinematicView = { fromX: 0, fromY: 0, fromZ: 0, atX: 0, atY: 0, atZ: 0, faceX: Number.NaN, faceZ: Number.NaN };
+		const film = () => {
+			const scene = missions.sceneShot;
+			if (!scene) {
+				if (filming) setCinematicView(null);
+				filming = false;
+				return;
+			}
+			if (!filming) {
+				const camera = readCameraView();
+				sceneCamera.x = camera.x;
+				sceneCamera.z = camera.z;
+				filming = true;
+			}
+			const pose = readPlayerPose();
+			shotContext.player.x = pose.x;
+			shotContext.player.z = pose.z;
+			const view = shotView(scene.shot, scene.progress, shotContext);
+			if (!view) {
+				setCinematicView(null);
+				return;
+			}
+			const ground = groundAt(view.atX, view.atZ);
+			cinematic.fromX = view.fromX;
+			cinematic.fromY = ground + view.fromHeight;
+			cinematic.fromZ = view.fromZ;
+			cinematic.atX = view.atX;
+			cinematic.atY = ground + view.atHeight;
+			cinematic.atZ = view.atZ;
+			// The player turns to whoever else is in the shot: the giver in a briefing.
+			const { on, over } = scene.shot;
+			// And someone the shot's on looks at the player: they're talking to them. Not a guard: a
+			// sentry turned to the player would see them.
+			const mission = missions.mission;
+			const talker = on === "giver" ? giverOut?.id : typeof on === "string" && mission && missionActorKind(on) === "person" && isPassive(mission, on) ? on : undefined;
+			if (talker) faceMissionPerson(talker, (Math.atan2(pose.x - view.atX, pose.z - view.atZ) * 180) / Math.PI);
+			const other = missions.phase === "briefing" ? "giver" : on === "player" ? over : over === "player" ? on : undefined;
+			const face = other !== undefined ? placeOf(other) : null;
+			cinematic.faceX = face?.x ?? Number.NaN;
+			cinematic.faceZ = face?.z ?? Number.NaN;
+			setCinematicView(cinematic);
+		};
+
 		const update = (dt: number) => {
 			const pose = readPlayerPose();
 			const wanted = readWanted();
@@ -216,8 +319,9 @@ export const MissionRuntime = memo(function MissionRuntime() {
 			view.wantedStars = wanted.stars;
 			updateMissionActors();
 			missions.update(dt, view);
-			// On the grid through a race's countdown.
-			setControlsHeld(missions.raceCountdown > 0);
+			film();
+			// On the grid through a race's countdown, and still through a cutscene.
+			setControlsHeld(missions.raceCountdown > 0 || missions.inScene);
 
 			const phase = missions.phase;
 			// Givers only deal with someone who's on foot, alive, and not wanted by the police.
@@ -229,11 +333,31 @@ export const MissionRuntime = memo(function MissionRuntime() {
 			const pulse = 0.32 + 0.1 * Math.sin(time * 2.5);
 			material.opacity = pulse;
 			material.update();
+			// In person: the giver being listened to (or still in their opening scene), else the nearest with work on offer.
+			const current = missions.mission;
+			let giverFor: MissionDefinition | null = null;
+			if (phase === "briefing" || (phase === "active" && missions.inScene && current && Math.hypot(current.giver.x - pose.x, current.giver.z - pose.z) < GIVER_RANGE)) {
+				giverFor = current;
+			} else if (free) {
+				let nearest = GIVER_RANGE;
+				for (const mission of offered) {
+					const distance = Math.hypot(mission.giver.x - pose.x, mission.giver.z - pose.z);
+					if (mission.giver.look && distance < nearest) {
+						nearest = distance;
+						giverFor = mission;
+					}
+				}
+			}
+			showGiver(giverFor, pose);
 			for (const [id, marker] of markers) {
 				const mission = offered.find((candidate) => candidate.id === id);
 				const distance = mission ? Math.hypot(mission.giver.x - pose.x, mission.giver.z - pose.z) : Infinity;
 				const lit = free && distance < MARKER_RANGE;
 				if (marker.enabled !== lit) marker.enabled = lit;
+				// Someone stood there in person needs no glowing column, just the ring at their feet.
+				const column = columns.get(id);
+				const standing = giverOut?.placed === true && !!mission && giverPersonId(mission.giver) === giverOut.id;
+				if (column && column.enabled === standing) column.enabled = !standing;
 				if (!mission) continue;
 				if (heldBack === id && distance > GIVER_LEAVE) heldBack = null;
 				if (canStart && heldBack !== id && distance < GIVER_TRIGGER) {
@@ -290,7 +414,8 @@ export const MissionRuntime = memo(function MissionRuntime() {
 
 			// Chevrons over the mission's people, and its cars (bar the one the player's driving).
 			let used = 0;
-			if (phase === "active") {
+			// Not in a cutscene: it's a film for a moment, not a game.
+			if (phase === "active" && !missions.inScene) {
 				const mission = missions.mission;
 				const quarry = quarryOf(missions.objective);
 				const actors = missionActorMarkers();
@@ -322,6 +447,8 @@ export const MissionRuntime = memo(function MissionRuntime() {
 		return () => {
 			app.off("update", update);
 			setControlsHeld(false);
+			setCinematicView(null);
+			if (giverOut) releaseMissionHostiles([giverOut.id]);
 			stopWatchingProgress();
 			for (const marker of markers.values()) marker.destroy();
 			leadMarker.destroy();

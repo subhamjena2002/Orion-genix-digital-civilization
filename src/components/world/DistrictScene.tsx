@@ -27,11 +27,15 @@ import { WaypointBeacon } from "./WaypointBeacon";
 import { StreetFurniture } from "./StreetFurniture";
 import { FireEngines, GarageVehicles, MissionVehicles, Vehicles } from "./Vehicles";
 import { MissionRuntime } from "./MissionRuntime";
+import { Pickups } from "./Pickups";
+import { ShopBuildings } from "./ShopBuildings";
+import { Shops } from "./Shops";
 import { DistanceCulling } from "./useDistanceCull";
 import { Police } from "./Police";
 import { Railway } from "./Railway";
 import { POLICE_STATION } from "@/engine/orion/police/Police";
 import { HOSPITAL_REPLACED_BUILDINGS } from "@/engine/orion/world/Hospitals";
+import { SHOPS } from "@/engine/orion/shops/ShopCatalog";
 
 /** World-space size (units) that one tile of a ground PBR texture represents. */
 const ASPHALT_TEXTURE_UNIT = 3;
@@ -67,8 +71,11 @@ const BUILDING_UNMOUNT_RADIUS = 215;
 const CULL_SAMPLE_MS = 150;
 const BUILDINGS_PER_SAMPLE = 3;
 
+/** Grid buildings whose plots the shops have taken (see ShopLayouts). */
+const SHOP_REPLACED_BUILDINGS: readonly string[] = SHOPS.flatMap((shop) => shop.site.replaces);
 const CULLABLE_BUILDINGS = ORION_BUILDING_MAP.filter((placement) => (
 	!POLICE_STATION.replacesBuildings.includes(placement.id) && !HOSPITAL_REPLACED_BUILDINGS.includes(placement.id)
+	&& !SHOP_REPLACED_BUILDINGS.includes(placement.id)
 ));
 const buildingPosition = (placement: BuildingPlacement): readonly [number, number] => [placement.position[0], placement.position[2]];
 
@@ -162,6 +169,9 @@ export function DistrictScene() {
 			<StreetDressing />
 			<WaypointBeacon />
 			<MissionRuntime />
+			<Shops />
+			<ShopBuildings />
+			<Pickups />
 			<DistanceCulling />
 			<Estates asphalt={asphaltDiffuse} asphaltNormal={asphaltNormal} paving={pavementDiffuse} pavingNormal={pavementNormal} />
 			<Railway />

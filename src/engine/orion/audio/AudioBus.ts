@@ -179,6 +179,12 @@ class AudioBus {
 		this.rampMaster(0.08);
 	}
 
+	/** How loud speech should be (0..1): the player's master volume, the same curve, 0 muted or hidden. */
+	public dialogueLevel(): number {
+		if (!this.audible || this.levels.muted) return 0;
+		return this.levels.master * this.levels.master;
+	}
+
 	private masterTarget(): number {
 		if (!this.audible || this.levels.muted) return 0;
 		// Squared, so the slider feels even: half way is a quarter of the power, about -12 dB.

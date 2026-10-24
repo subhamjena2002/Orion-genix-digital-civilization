@@ -88,6 +88,12 @@ export const missionStage: MissionStage = {
 	},
 };
 
+/** Whether an id is one of the mission's cars or one of its people (a cutscene looks higher at a person). */
+export function missionActorKind(id: string): "vehicle" | "person" | null {
+	if (vehicles.has(id)) return "vehicle";
+	return people.has(id) ? "person" : null;
+}
+
 /** Once a frame: anything still waiting on its model goes in once it's there. */
 export function updateMissionActors(): void {
 	if (pending.length === 0) return;

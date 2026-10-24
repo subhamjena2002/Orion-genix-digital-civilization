@@ -379,7 +379,12 @@ function materials(material, paint, extra = {}) {
 		indicator: material("indicator", [0.95, 0.45, 0.05], { roughness: 0.15, emissive: [0.35, 0.15, 0.01] }),
 		reverse: material("reverse_lamp", [0.85, 0.86, 0.88], { roughness: 0.1 }),
 		plate: material("plate_blank", [0.88, 0.88, 0.85], { roughness: 0.4 }),
-		interior: material("interior", extra.interior ?? [0.075, 0.07, 0.068], { roughness: 0.7 }),
+		// Charcoal rather than near-black: a cabin seen through glass or an open door reads as a
+		// cabin, not a hole. Light inserts, carpet and screens are their own colours (flattened).
+		interior: material("interior", extra.interior ?? [0.14, 0.135, 0.13], { roughness: 0.7 }),
+		upholstery: material("upholstery_light", extra.upholstery ?? [0.56, 0.54, 0.5], { roughness: 0.8 }),
+		carpet: material("carpet", [0.17, 0.165, 0.16], { roughness: 0.95 }),
+		screen: material("screen_glass", [0.03, 0.045, 0.07], { roughness: 0.1 }),
 		dash: material("dashboard", [0.04, 0.04, 0.042], { roughness: 0.55 }),
 		jamb: material("jamb", [0.4, 0.4, 0.4], { roughness: 0.5, doubleSided: true }),
 		tyre: material("tyre_rubber", [0.03, 0.03, 0.032], { roughness: 0.92 }),
@@ -389,6 +394,12 @@ function materials(material, paint, extra = {}) {
 		rotor: material("rotor", [0.42, 0.42, 0.43], { metallic: 1, roughness: 0.42 }),
 		caliper: material("caliper", [0.12, 0.12, 0.13], { metallic: 0.3, roughness: 0.4 }),
 		steel: material("steel", [0.4, 0.41, 0.43], { metallic: 0.8, roughness: 0.45 }),
+		// Under the bonnet: the engine's alloy, its oil cap, a battery terminal, the coolant bottle (all flattened).
+		// Bare cast alloy reads as light grey satin: polished metal in a shaded bay only mirrors the dark.
+		engineAlloy: material("engine_alloy", [0.6, 0.61, 0.63], { roughness: 0.5 }),
+		engineCap: material("engine_cap", [0.92, 0.72, 0.08], { roughness: 0.4 }),
+		engineRed: material("engine_red", [0.65, 0.06, 0.05], { roughness: 0.4 }),
+		coolant: material("coolant_bottle", [0.84, 0.84, 0.78], { roughness: 0.35 }),
 		sirenRed: material("siren-red", [0.55, 0.03, 0.03], { roughness: 0.1, emissive: [0.08, 0, 0], alpha: 0.85 }),
 		sirenBlue: material("siren-blue", [0.03, 0.1, 0.6], { roughness: 0.1, emissive: [0, 0.01, 0.1], alpha: 0.85 }),
 		beaconAmber: material("beacon-amber", [0.95, 0.5, 0.05], { roughness: 0.1, emissive: [0.25, 0.1, 0], alpha: 0.85 }),
@@ -416,6 +427,10 @@ function partTable(M, spec) {
 		gloss: ["trim", M.gloss],
 		chrome: ["chrome-parts", M.chrome],
 		steel: ["chrome-parts", M.steel],
+		"engine-alloy": ["body", M.engineAlloy],
+		"engine-cap": ["body", M.engineCap],
+		"engine-red": ["body", M.engineRed],
+		coolant: ["body", M.coolant],
 		windscreen: ["windscreen-glass", M.glass],
 		"rear-glass": ["rear-glass", M.glass],
 		"side-glass": ["side-glass", M.glass],
@@ -430,6 +445,9 @@ function partTable(M, spec) {
 		reverse: ["lights-rear", M.reverse],
 		plate: ["trim", M.plate],
 		interior: ["cabin", M.interior],
+		upholstery: ["cabin", M.upholstery],
+		carpet: ["cabin", M.carpet],
+		screen: ["cabin", M.screen],
 		dash: ["cabin", M.dash],
 		accent: ["body", M.accent],
 		accent2: ["body", M.accent2],
@@ -470,9 +488,9 @@ const MOVING = /^(door|rear-door|side-door|bus-door|back-door|hood|trunk|tailgat
  * the game finds and changes those by name.
  */
 const FINISHES = {
-	flat_matte: { roughness: 0.84, names: ["underbody", "cladding", "interior", "tyre_rubber"] },
-	flat_satin: { roughness: 0.48, names: ["trim", "dashboard", "plate_blank", "accent", "accent_2", "accent_blue", "traffic_cone", "stop_arm", "grab_poles", "jamb", "indicator"] },
-	flat_gloss: { roughness: 0.14, metallic: 0.3, names: ["trim_gloss", "lamp_housing", "reverse_lamp"] },
+	flat_matte: { roughness: 0.84, names: ["underbody", "cladding", "interior", "tyre_rubber", "upholstery_light", "carpet"] },
+	flat_satin: { roughness: 0.48, names: ["trim", "dashboard", "plate_blank", "accent", "accent_2", "accent_blue", "traffic_cone", "stop_arm", "grab_poles", "jamb", "indicator", "engine_cap", "engine_red", "coolant_bottle", "engine_alloy"] },
+	flat_gloss: { roughness: 0.14, metallic: 0.3, names: ["trim_gloss", "lamp_housing", "reverse_lamp", "screen_glass"] },
 	flat_metal: { roughness: 0.24, metallic: 1, names: ["chrome", "rim", "steel", "hub", "rotor", "caliper", "aluminium"] },
 };
 
@@ -887,20 +905,52 @@ function sedanDetails(spec, parts) {
 	// A shark-fin aerial on the roof, at the back.
 	const fin = at([0, 3, -0.7], [0, -1, 0]);
 	if (fin) roundedBox(parts.get("gloss"), add(fin.p, [0, 0.03, -0.05]), [0.06, 0.06, 0.16], 0.028);
-	sedanCabin(parts, spec.cabinLift ?? 0);
+	sedanCabin(parts, spec.cabinLift ?? 0, spec);
 }
 
-/** Two sculpted front seats, a rear bench, a console, the dashboard with its screen and wheel. */
-function sedanCabin(parts, lift = 0) {
+/**
+ * The cabin of the saloon and the cars built on it: two-tone front seats with light inserts and
+ * headrests, a rear bench with three headrests, carpet, a light headliner following the roof, a
+ * centre console with a selector and armrest, and a dashboard with a trim strip, vents, a
+ * digital instrument panel behind the wheel and a touchscreen in the middle. `lift` raises it
+ * for taller bodies.
+ */
+function sedanCabin(parts, lift = 0, spec = null) {
 	const inside = new Geo();
-	seat(inside, 0.38, 0.32, -0.05);
-	seat(inside, -0.38, 0.32, -0.05);
+	const light = new Geo();
+	const carpet = new Geo();
+	const screen = new Geo();
+	for (const x of [0.38, -0.38]) {
+		seat(inside, x, 0.32, -0.05);
+		// Light inserts down the cushion and the back.
+		roundedBox(light, [x, 0.445, -0.03], [0.3, 0.02, 0.36], 0.008);
+		roundedBox(light, [x, 0.73, -0.24], [0.3, 0.42, 0.02], 0.01, { pitch: -14 });
+	}
 	roundedBox(inside, [0, 0.38, -0.95], [1.4, 0.14, 0.5], 0.05);
 	roundedBox(inside, [0, 0.72, -1.2], [1.4, 0.6, 0.14], 0.06, { pitch: -16 });
-	for (const x of [-0.45, 0.45]) roundedBox(inside, [x, 1.08, -1.24], [0.26, 0.15, 0.09], 0.035, { pitch: -16 });
+	for (const x of [-0.45, 0, 0.45]) roundedBox(inside, [x, 1.06, -1.25], [0.24, 0.14, 0.09], 0.035, { pitch: -16 });
+	for (const x of [-0.45, 0.45]) roundedBox(light, [x, 0.455, -0.93], [0.36, 0.02, 0.36], 0.008);
+	roundedBox(carpet, [0, 0.235, -0.3], [1.6, 0.03, 2.4], 0.01);
+	// The console: a raised spine with a selector and a padded armrest.
 	roundedBox(inside, [0, 0.36, 0.2], [0.24, 0.16, 0.9], 0.05);
-	roundedBox(inside, [0, 0.22, -0.3], [1.6, 0.04, 2.4], 0.02);
-	placeGeo(parts.get("interior"), inside, { at: [0, lift, 0] });
+	roundedBox(light, [0, 0.47, -0.15], [0.22, 0.05, 0.32], 0.02);
+	roundedBox(parts.get("chrome"), [0, 0.47, 0.32], [0.05, 0.06, 0.08], 0.02);
+	// The dashboard's face: a trim strip across it, slim vents, the instrument panel and the screen.
+	roundedBox(light, [0, 0.83, 0.55], [1.5, 0.04, 0.02], 0.01);
+	for (const x of [-0.62, -0.12, 0.12, 0.62]) roundedBox(inside, [x, 0.77, 0.54], [0.2, 0.025, 0.02], 0.008);
+	roundedBox(screen, [0.38, 0.91, 0.52], [0.34, 0.12, 0.02], 0.01, { pitch: 12 });
+	roundedBox(screen, [0, 0.9, 0.5], [0.34, 0.2, 0.025], 0.012, { pitch: 14 });
+	for (const [geo, key] of [[inside, "interior"], [light, "upholstery"], [carpet, "carpet"], [screen, "screen"]]) {
+		placeGeo(parts.get(key), geo, { at: [0, lift, 0] });
+	}
+	// A light headliner just under the roof, front to back over the cabin.
+	if (spec) {
+		for (let z = -1.15; z <= 0.55; z += 0.17) {
+			const y = Math.min(spec.roofY(z), spec.roofY(z + 0.17)) - 0.06;
+			const half = Math.max(0.3, Math.min(spec.roofHalf(z), spec.roofHalf(z + 0.17)) - 0.08);
+			if (y > spec.beltY(z) + 0.15) roundedBox(parts.get("upholstery"), [0, y, z + 0.085], [half * 2, 0.02, 0.18], 0.006);
+		}
+	}
 	cockpit(parts, { x: 0.38, y: 0.32 + lift, z: -0.05, width: 1.56, dashZ: 0.72, dashY: 0.86 + lift });
 }
 
@@ -919,9 +969,135 @@ function buildVehicle(name, { spec, details, paint, extra, fit, parts: extraPart
 		buildBody(spec, parts);
 		finishPanels(spec, parts);
 		details?.(spec, parts, M);
+		engineBay(spec, parts);
 		fit?.(spec, parts, M, table);
 		return { parts, table, wheels: wheelSet(spec, M), aoReach };
 	});
+}
+
+// ---- Under the bonnet -------------------------------------------------------------------------------
+
+/**
+ * What's under the bonnet, for when a crash knocks it open or tears it off: a closed bay — the
+ * inner wings and their top ledges in the body colour, the bulkhead to the cabin, a tray over the
+ * road — holding the engine (an alloy block and gearbox under a black cover with a yellow oil cap),
+ * the radiator and its fan across the front, the strut tops, an air box and its intake, the
+ * battery, and the coolant bottle. Every vehicle with a bonnet ("hood" lid) gets one, sized to the
+ * space under it: inside the front wheels, below the shoulder line the bonnet rests on.
+ */
+function engineBay(spec, parts) {
+	const hood = (spec.lids ?? []).find((lid) => lid.key === "hood");
+	if (!hood) return;
+	const axle = spec.axles.reduce((best, candidate) => (candidate.z > best.z ? candidate : best));
+	const front = hood.front - 0.14;
+	const rear = hood.rear + 0.03;
+	const length = front - rear;
+	if (length < 0.35) return;
+	const mid = (front + rear) / 2;
+	const tyre = axle.wheel?.width ?? 0.24;
+	const inner = Math.min(spec.halfWidth(mid) - 0.2, (axle.track ?? 0.8) - tyre / 2 - 0.07);
+	const shoulder = (z) => spec.beltY(z) - 0.03;
+	const floor = Math.max(spec.floorY(mid) + 0.1, axle.radius * 0.75);
+	const depth = Math.min(shoulder(rear), shoulder(front), shoulder(mid)) - floor;
+	if (depth < 0.22 || inner < 0.3) return;
+	const body = parts.get("body");
+	const dark = parts.get("underbody");
+	const black = parts.get("cladding");
+	const gloss = parts.get("gloss");
+	const metal = parts.get("engine-alloy");
+	const steel = parts.get("steel");
+
+	// The bay: a tray over the road, the inner wings up to the shoulder, a ledge out to the wing's
+	// top edge (so there's no gap down past the wheel), and the bulkhead to the cabin.
+	roundedBox(dark, [0, floor, mid], [inner * 2, 0.03, length], 0.01);
+	const SEGMENTS = 10;
+	for (let s = 0; s < SEGMENTS; s++) {
+		const z0 = rear + (length * s) / SEGMENTS;
+		const z1 = rear + (length * (s + 1)) / SEGMENTS;
+		const zc = (z0 + z1) / 2;
+		const [y0, y1] = [shoulder(z0), shoulder(z1)];
+		const outer = spec.halfWidth(zc) - (spec.glassInset ?? 0.05) - 0.02;
+		// The ledge tilts with the shoulder line, so it runs smooth rather than in steps.
+		const pitch = (-Math.atan2(y1 - y0, z1 - z0) * 180) / Math.PI;
+		const run = Math.hypot(y1 - y0, z1 - z0) + 0.006;
+		for (const side of [1, -1]) {
+			const top = Math.min(y0, y1);
+			roundedBox(body, [side * inner, (floor + top) / 2, zc], [0.03, top - floor, z1 - z0 + 0.004], 0.008);
+			if (outer > inner + 0.03) roundedBox(body, [(side * (inner + outer)) / 2, (y0 + y1) / 2, zc], [outer - inner, 0.025, run + 0.01], 0.002, { pitch });
+		}
+	}
+	const bulkhead = shoulder(rear);
+	roundedBox(body, [0, (floor + bulkhead) / 2, rear], [inner * 2, bulkhead - floor, 0.03], 0.01);
+	// The scuttle under the windscreen, in black plastic.
+	roundedBox(black, [0, bulkhead - 0.012, rear + 0.08], [inner * 2 + 0.06, 0.03, 0.16], 0.01);
+
+	// The radiator across the front: a black core with fins, the body-coloured cross member over
+	// it, and the fan's shroud behind.
+	const radiatorTop = Math.min(shoulder(front) - 0.06, floor + 0.6);
+	const radiatorBottom = floor + 0.05;
+	const radiatorMid = (radiatorTop + radiatorBottom) / 2;
+	roundedBox(black, [0, radiatorMid, front - 0.03], [inner * 1.7, radiatorTop - radiatorBottom, 0.05], 0.01);
+	for (let y = radiatorBottom + 0.05; y < radiatorTop - 0.03; y += 0.045) roundedBox(gloss, [0, y, front - 0.062], [inner * 1.6, 0.01, 0.012], 0.003);
+	roundedBox(body, [0, radiatorTop + 0.025, front - 0.02], [inner * 2, 0.05, 0.08], 0.015);
+	const fan = Math.min(0.2, (radiatorTop - radiatorBottom) * 0.42);
+	tube(black, [0, radiatorMid, front - 0.075], [0, radiatorMid, front - 0.13], fan, 16);
+	roundedBox(black, [0, radiatorMid, front - 0.13], [fan * 1.9, fan * 1.9, 0.015], 0.02);
+
+	// The strut tops over the front wheels.
+	if (axle.z > rear + 0.12 && axle.z < front - 0.08) {
+		for (const side of [1, -1]) {
+			const x = side * (inner - 0.1);
+			const top = shoulder(axle.z) - 0.03;
+			tube(body, [x, top - 0.28, axle.z], [x, top, axle.z], 0.1, 14, 0.085);
+			roundedBox(steel, [x, top + 0.008, axle.z], [0.13, 0.016, 0.13], 0.008);
+			tube(steel, [x, top + 0.016, axle.z], [x, top + 0.045, axle.z], 0.02, 8);
+		}
+	}
+
+	// The engine: an alloy block under a black cover, with silver ribs and the yellow oil cap, a
+	// steel heat shield over the exhaust side, and the gearbox tapering back to the bulkhead.
+	const engineTop = Math.min(shoulder(mid) - 0.07, floor + 0.62);
+	const blockHeight = Math.max(0.16, engineTop - floor - 0.13);
+	const blockWidth = Math.min(inner * 1.15, 0.72);
+	const blockDepth = Math.min(length * 0.42, 0.6);
+	const ex = 0.04;
+	const ez = mid + length * 0.04;
+	const blockY = floor + 0.06 + blockHeight / 2;
+	roundedBox(metal, [ex, blockY, ez], [blockWidth, blockHeight, blockDepth], 0.04);
+	const coverY = floor + 0.06 + blockHeight + 0.035;
+	// The cover sits on the block, leaving its alloy showing round the edges; the intake plenum beside it.
+	roundedBox(gloss, [ex - blockWidth * 0.1, coverY, ez], [blockWidth * 0.62, 0.07, blockDepth * 0.74], 0.03);
+	for (const x of [-blockWidth * 0.24, blockWidth * 0.04]) roundedBox(steel, [ex + x, coverY + 0.038, ez], [0.03, 0.012, blockDepth * 0.56], 0.005);
+	roundedBox(metal, [ex + blockWidth * 0.33, coverY - 0.005, ez], [blockWidth * 0.2, 0.06, blockDepth * 0.82], 0.025);
+	for (let k = 0; k < 4; k++) {
+		const z = ez - blockDepth * 0.3 + (k * blockDepth * 0.6) / 3;
+		tube(metal, [ex + blockWidth * 0.33, coverY - 0.01, z], [ex + blockWidth * 0.08, coverY - 0.03, z], 0.022, 8);
+	}
+	const cap = [ex - blockWidth * 0.2, coverY + 0.035, ez - blockDepth * 0.22];
+	tube(parts.get("engine-cap"), cap, add(cap, [0, 0.035, 0]), 0.035, 12);
+	roundedBox(parts.get("engine-cap"), add(cap, [0, 0.036, 0]), [0.068, 0.006, 0.068], 0.003);
+	roundedBox(steel, [ex - blockWidth / 2 - 0.03, floor + 0.06 + blockHeight * 0.55, ez], [0.04, blockHeight * 0.5, blockDepth * 0.8], 0.015);
+	const gearboxEnd = Math.max(rear + 0.07, ez - blockDepth / 2 - 0.26);
+	tube(metal, [ex, floor + 0.06 + blockHeight * 0.42, ez - blockDepth / 2], [ex, floor + 0.06 + blockHeight * 0.36, gearboxEnd], blockHeight * 0.36, 12, blockHeight * 0.26);
+
+	// The air box at the front corner, its intake running back to the engine, and the radiator hoses.
+	const airX = -(inner - 0.17);
+	const airY = Math.min(engineTop - 0.1, floor + 0.4);
+	roundedBox(black, [airX, airY, front - 0.3], [0.26, 0.16, 0.3], 0.03);
+	tube(black, [airX, airY + 0.02, front - 0.46], [ex - blockWidth * 0.3, coverY - 0.01, ez + blockDepth * 0.3], 0.045, 10);
+	tube(black, [inner * 0.45, radiatorTop - 0.07, front - 0.08], [ex + blockWidth * 0.3, blockY + blockHeight * 0.3, ez + blockDepth / 2], 0.028, 8);
+	tube(black, [-inner * 0.4, radiatorBottom + 0.08, front - 0.08], [ex - blockWidth * 0.25, floor + 0.12, ez + blockDepth / 2], 0.028, 8);
+
+	// The battery by the bulkhead (red and black terminals), and the coolant bottle opposite.
+	const batteryX = inner - 0.17;
+	const batteryY = floor + 0.04 + Math.min(0.2, depth - 0.08) / 2;
+	const batteryHeight = Math.min(0.2, depth - 0.08);
+	roundedBox(black, [batteryX, batteryY, rear + 0.2], [0.24, batteryHeight, 0.17], 0.015);
+	roundedBox(parts.get("engine-red"), [batteryX + 0.06, batteryY + batteryHeight / 2 + 0.012, rear + 0.2], [0.04, 0.025, 0.04], 0.008);
+	roundedBox(gloss, [batteryX - 0.06, batteryY + batteryHeight / 2 + 0.012, rear + 0.2], [0.04, 0.025, 0.04], 0.008);
+	const bottleHeight = Math.min(0.16, depth - 0.1);
+	roundedBox(parts.get("coolant"), [-(inner - 0.15), floor + 0.1 + bottleHeight / 2, rear + 0.24], [0.14, bottleHeight, 0.18], 0.03);
+	roundedBox(black, [-(inner - 0.15), floor + 0.1 + bottleHeight + 0.015, rear + 0.24], [0.06, 0.03, 0.06], 0.012);
 }
 
 function buildSedanFamily(name, options) {
@@ -2338,7 +2514,7 @@ const VEHICLES = {
 		spec: hatchbackSpec(),
 		details: hatchbackDetails,
 		paint: { colour: [0.8, 0.8, 0.8], metallic: 0.55, roughness: 0.26 },
-		extra: { glass: { colour: [0.04, 0.05, 0.06], alpha: 0.6 }, interior: [0.12, 0.115, 0.11] },
+		extra: { glass: { colour: [0.04, 0.05, 0.06], alpha: 0.6 } },
 		// The floating roof shares the gloss-black trim's finish: black, and no extra draw.
 		parts: { body2: ["body", "gloss"] },
 	}),
@@ -2346,7 +2522,7 @@ const VEHICLES = {
 		spec: suvSpec(),
 		details: suvDetails,
 		paint: { colour: [0.8, 0.8, 0.8], metallic: 0.55, roughness: 0.26 },
-		extra: { hub: [0.5, 0.5, 0.52], glass: { colour: [0.04, 0.05, 0.06], alpha: 0.6 }, interior: [0.1, 0.095, 0.09] },
+		extra: { hub: [0.5, 0.5, 0.52], glass: { colour: [0.04, 0.05, 0.06], alpha: 0.6 } },
 		parts: { body2: ["body", "gloss"] },
 		aoReach: 0.65,
 	}),

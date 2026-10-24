@@ -117,8 +117,9 @@ export const VEHICLE_MODELS: readonly VehicleModelSpec[] = [
 	// each part the game moves its own node, no textures. Every one but the plain sedan wears its
 	// own livery, so keeps its paint.
 	{
-		// A four-door saloon in the fleet's colours.
-		file: "orion-sedan.glb",
+		// A four-door fastback saloon in the fleet's colours; visual meshes rebuilt in Blender
+		// (blender/build_sedan_2026.py) on the same part names and pivots as orion-sedan.glb.
+		file: "orion-sedan-2026.glb",
 		styles: ["sedan"],
 		length: 4.86,
 		// Left-hand drive, in the front seat.

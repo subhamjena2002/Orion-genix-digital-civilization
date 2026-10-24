@@ -6,6 +6,8 @@ import { applyDamage, damageableMoved, damageablesNear, registerDamageable, unre
 import { Health, makeDamageEvent, nextCombatId, type DamageEvent, type DamageSourceRef } from "../combat/Damage";
 import { bodyZone, dropsOnLegHit, zoneDamage, type BodyZone } from "../combat/HitZones";
 import { MeleeAttack } from "../combat/MeleeAttack";
+import { dropWeapon } from "../combat/Pickups";
+import { readCinematicView } from "../player/CinematicCamera";
 import { inCameraView, needsPosing, readPlayerPose } from "../player/PlayerPose";
 import { mergeCharacterMaterials } from "../rendering/CharacterMerge";
 import { fixSkinnedBounds } from "../rendering/SkinnedBounds";
@@ -72,6 +74,8 @@ const HEALTH = 100;
 
 /** A mission's hostile notices the player this close. */
 const HOSTILE_AGGRO = 26;
+/** Rounds left in an armed guard's dropped pistol. */
+const DROPPED_GUN_ROUNDS = 18;
 /**
  * A sentry sees this far, inside this half-angle either side of where they're looking (which
  * sweeps a little either side of their post's facing). Behind them, someone running closer than
@@ -593,6 +597,7 @@ export class OrionPedestrian extends Script {
 			this.brain.onDamaged(threat, true);
 			if (byPlayer) reportCrime("murder", event.x, event.z);
 			emitGameEvent({ type: "personKilled", id: this.entity.name, byPlayer });
+			this.dropGun();
 			this.dieWhereLying(event);
 			return;
 		}
@@ -605,6 +610,7 @@ export class OrionPedestrian extends Script {
 		this.brain.onDamaged(threat, killed);
 		if (killed) {
 			emitGameEvent({ type: "personKilled", id: this.entity.name, byPlayer });
+			this.dropGun();
 			this.die(event, zone);
 			return;
 		}
@@ -769,6 +775,7 @@ export class OrionPedestrian extends Script {
 			const player = readPlayerPose();
 			const byPlayer = player.inVehicle && Math.hypot(player.x - this.posX, player.z - this.posZ) < STRUCK_BY_PLAYER_RANGE;
 			emitGameEvent({ type: "personKilled", id: this.entity.name, byPlayer });
+			this.dropGun();
 		}
 		this.brain.onDamaged(null, true);
 		if (this.agent) {
@@ -818,6 +825,17 @@ export class OrionPedestrian extends Script {
 			return { x: player.x, z: player.z, aboard: true };
 		}
 		return { x: this.posX, z: this.posZ, aboard: false };
+	}
+
+	/** An armed mission guard's pistol, dropped beside them as they go down: the player's to take. */
+	private dropGun() {
+		if (!this.hostile?.armed) return;
+		dropWeapon("pistol", DROPPED_GUN_ROUNDS, this.posX + 0.6, this.posY, this.posZ + 0.3);
+	}
+
+	/** Turned to face this way where they stand (a sentry's post turns with it). */
+	public face(yaw: number) {
+		if (this.hostile) this.hostile.facing = yaw;
 	}
 
 	/** Someone passive starts (or stops) keeping up with the player. */
@@ -934,6 +952,15 @@ export class OrionPedestrian extends Script {
 		const distance = Math.hypot(player.x - this.posX, player.z - this.posZ);
 		if (hostile.role === "passive") {
 			this.updatePassive(dt, hostile, distance);
+			return;
+		}
+		if (readCinematicView()) {
+			// A cutscene: everyone holds where they stand, and nobody notices anyone or fires.
+			this.punch.cancel();
+			this.setClip("Idle");
+			this.posY = groundAt(this.freeX, this.freeZ);
+			this.moveTo(this.freeX, this.posY, this.freeZ, this.heading ?? hostile.facing, dt);
+			this.publishBody();
 			return;
 		}
 		if (!hostile.engaged) {
@@ -1309,6 +1336,11 @@ export function placeMissionHostile(id: string, x: number, z: number, armed: boo
 /** Where a mission's person is, if they're out and alive. */
 export function missionPersonState(id: string): { x: number; z: number; aboard: boolean } | null {
 	return missionPeople.get(id)?.missionState ?? null;
+}
+
+/** A mission's person, standing at their post, turns to face this way (degrees about Y): someone in a cutscene, looking at who they're talking to. */
+export function faceMissionPerson(id: string, yaw: number): void {
+	missionPeople.get(id)?.face(yaw);
 }
 
 /** A mission's passive person starts or stops following the player. */

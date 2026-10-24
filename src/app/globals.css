@@ -850,6 +850,190 @@ body {
   background: #e0735f;
 }
 
+/* Body armour: the same bar in steel blue, under health while there's any left. */
+.orion-armour .orion-health-bar span {
+  background: #6fa8dc;
+}
+
+/*
+ * A shop's counter: the stock, prices and the player's cash down the right-hand side, while the
+ * camera shows the thing chosen (the gun on the wall, the car on the lot) to the left of it.
+ */
+.orion-shop {
+  position: absolute;
+  right: 2rem;
+  top: 50%;
+  width: min(25rem, calc(100% - 2rem));
+  max-height: calc(100% - 4rem);
+  overflow-y: auto;
+  transform: translateY(-50%);
+  border: 1px solid var(--oi-border-strong);
+  border-top: 3px solid #ff5c38;
+  border-radius: 14px;
+  background: var(--oi-surface-2);
+  box-shadow: var(--oi-shadow-elevated);
+  padding: 1rem 1.15rem 0.9rem;
+  backdrop-filter: blur(10px);
+  animation: orion-shop-in 220ms ease-out both;
+}
+
+.orion-shop.is-cars {
+  border-top-color: #3ddc84;
+}
+
+@keyframes orion-shop-in {
+  from {
+    opacity: 0;
+    transform: translate(14px, -50%);
+  }
+}
+
+/* Browsing: the map, the controls strip and the weapon panel out of the way of the view. */
+#world:has(.orion-shop) .orion-hud-map,
+#world:has(.orion-shop) .orion-hud-drive,
+#world:has(.orion-shop) .orion-hud-combat {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 200ms ease-out, visibility 0s 200ms;
+}
+
+@media (max-width: 640px) {
+  .orion-shop {
+    right: 1rem;
+    top: auto;
+    bottom: 1rem;
+    max-height: 55%;
+    transform: none;
+    animation: none;
+  }
+}
+
+.orion-shop-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.orion-shop-title {
+  margin-top: 0.15rem;
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: #ffffff;
+}
+
+.orion-shop-tagline {
+  margin-top: 0.15rem;
+  font-size: 0.82rem;
+  color: var(--oi-text-tertiary);
+}
+
+.orion-shop-cash {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--oi-positive);
+  white-space: nowrap;
+}
+
+.orion-shop-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.orion-shop-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "name price" "detail price";
+  align-items: center;
+  column-gap: 1rem;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 0.38rem 0.7rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.orion-shop-item.is-selected {
+  border-color: var(--oi-accent-strong);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.orion-shop-item.is-unavailable {
+  opacity: 0.55;
+}
+
+.orion-shop-item-name {
+  grid-area: name;
+  font-size: 0.95rem;
+  font-weight: 650;
+  color: #ffffff;
+}
+
+.orion-shop-item-detail {
+  grid-area: detail;
+  font-size: 0.76rem;
+  color: var(--oi-text-tertiary);
+}
+
+.orion-shop-item-price {
+  grid-area: price;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #f2c14e;
+  white-space: nowrap;
+}
+
+.orion-shop-message {
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #e0735f;
+  animation: orion-subtitle-in 200ms ease-out both;
+}
+
+.orion-shop-message.is-ok {
+  color: var(--oi-positive);
+}
+
+.orion-shop-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+
+.orion-shop-keys {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  color: var(--oi-text-tertiary);
+}
+
+#world[data-input="touch"] .orion-shop-keys {
+  visibility: hidden;
+}
+
+/* What was just picked up off the street, for a moment. */
+.orion-pickup-toast {
+  border-radius: 999px;
+  background: rgba(10, 11, 12, 0.62);
+  padding: 0.3rem 0.75rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #f2c14e;
+  animation: orion-subtitle-in 220ms ease-out both;
+}
+
 .orion-crosshair {
   position: absolute;
   left: 50%;
@@ -1448,18 +1632,34 @@ body {
   color: var(--oi-accent-strong);
 }
 
+/*
+ * The objective: a panel at the top left, under the header, as open-world games keep it — out of
+ * the way of the driving HUD and the subtitles at the bottom, and always in the same place.
+ */
 .orion-mission-objective {
   position: absolute;
-  left: 50%;
-  /* Clear of the subtitle line below it, which sits just above the control hints. */
-  bottom: 8.4rem;
+  left: 1.25rem;
+  top: 1rem;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 0.35rem;
-  max-width: calc(100% - 2rem);
-  transform: translateX(-50%);
-  text-align: center;
+  align-items: flex-start;
+  gap: 0.3rem;
+  max-width: min(24rem, calc(100% - 2.5rem));
+  border-left: 3px solid var(--oi-accent-strong);
+  border-radius: 0 10px 10px 0;
+  background: rgba(10, 11, 12, 0.6);
+  padding: 0.5rem 0.85rem 0.6rem;
+  text-align: left;
+  backdrop-filter: blur(6px);
+}
+
+.orion-mission-objective-title {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--oi-accent-strong);
 }
 
 .orion-mission-objective-line {
@@ -1467,12 +1667,12 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  font-size: 1.05rem;
+  gap: 0.45rem;
+  font-size: 0.98rem;
   font-weight: 600;
+  line-height: 1.3;
   color: #ffffff;
-  text-shadow: 0 1px 0 rgb(0 0 0 / 85%), 0 0 12px rgb(0 0 0 / 70%);
+  text-shadow: 0 1px 0 rgb(0 0 0 / 85%);
 }
 
 .orion-mission-chip {
@@ -1658,22 +1858,130 @@ body {
 
 /* ---------- Dialogue, notices, choices, optional objectives, ratings ---------- */
 
+/* Dialogue: bottom centre, above the control hints — and above the speedometer when driving. */
 .orion-subtitle {
   position: absolute;
   left: 50%;
-  bottom: 4.6rem;
+  bottom: 5.5rem;
   width: max-content;
-  max-width: min(40rem, calc(100% - 2rem));
+  max-width: min(42rem, calc(100% - 2rem));
   transform: translateX(-50%);
   border-radius: 8px;
-  background: rgba(10, 11, 12, 0.55);
-  padding: 0.3rem 0.75rem;
+  background: rgba(10, 11, 12, 0.62);
+  padding: 0.4rem 0.9rem;
   text-align: center;
-  font-size: 0.9rem;
-  line-height: 1.4;
+  font-size: 1rem;
+  line-height: 1.45;
   color: #ffffff;
   text-shadow: 0 1px 0 rgb(0 0 0 / 80%);
   animation: orion-subtitle-in 220ms ease-out both;
+}
+
+#world:has(.orion-speedometer) .orion-subtitle {
+  bottom: 12.5rem;
+}
+
+#world:has(.orion-speedometer) .orion-mission-choices {
+  bottom: 16rem;
+}
+
+/*
+ * Cutscenes: black bars top and bottom, the rest of the HUD out of the way, subtitles over the
+ * lower bar like a film's, and a briefing's card off to the side so the giver's face is clear.
+ */
+.orion-cutscene {
+  --letterbox: 11vh;
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.orion-cutscene::before,
+.orion-cutscene::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--letterbox);
+  background: #000;
+  animation: orion-letterbox 420ms ease-out both;
+}
+
+.orion-cutscene::before {
+  top: 0;
+  transform-origin: top;
+}
+
+.orion-cutscene::after {
+  bottom: 0;
+  transform-origin: bottom;
+}
+
+@keyframes orion-letterbox {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+.orion-cutscene-skip {
+  position: absolute;
+  right: 1.5rem;
+  bottom: calc(var(--letterbox) / 2 - 0.9rem);
+  z-index: 1;
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 6%);
+  padding: 0.35rem 0.85rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgb(255 255 255 / 70%);
+  pointer-events: auto;
+  animation: orion-subtitle-in 600ms 900ms ease-out both;
+}
+
+#world:has(.orion-cutscene) > :not(.orion-hud-layer),
+#world:has(.orion-cutscene) .orion-hud-layer > :not(.orion-cutscene, .orion-subtitle, .orion-mission-brief) {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 200ms ease-out, visibility 0s 200ms;
+}
+
+#world:has(.orion-cutscene) .orion-subtitle,
+#world[data-input="touch"]:has(.orion-cutscene) .orion-subtitle {
+  top: auto;
+  bottom: calc(11vh + 1rem);
+  background: none;
+  font-size: 1.15rem;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 95%), 0 0 14px rgb(0 0 0 / 70%);
+}
+
+#world:has(.orion-cutscene) .orion-mission-brief,
+#world[data-input="touch"]:has(.orion-cutscene) .orion-mission-brief {
+  left: auto;
+  right: 2rem;
+  top: auto;
+  bottom: calc(11vh + 1.25rem);
+  width: min(26rem, calc(100% - 2rem));
+  transform: none;
+  animation: orion-brief-card 320ms ease-out both;
+}
+
+@keyframes orion-brief-card {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+
+@media (max-width: 640px) {
+  #world:has(.orion-cutscene) .orion-mission-brief,
+  #world[data-input="touch"]:has(.orion-cutscene) .orion-mission-brief {
+    right: 1rem;
+    max-height: calc(100% - 22vh - 2rem);
+    overflow-y: auto;
+  }
 }
 
 .orion-subtitle-who {

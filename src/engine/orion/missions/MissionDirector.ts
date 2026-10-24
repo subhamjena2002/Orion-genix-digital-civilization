@@ -1,6 +1,7 @@
 import type { WeaponId } from "../combat/WeaponData";
 import { setObjective } from "../navigation/Navigation";
 import type { VehicleStyle } from "../traffic/Vehicles";
+import { briefingScene, type Cutscene, type Shot } from "./Cutscenes";
 import { onGameEvent, type GameEvent, type GameVehicleKind } from "./GameEvents";
 import { publishMissionHud, type HudBonus, type HudChoice } from "./MissionHud";
 
@@ -70,6 +71,8 @@ interface ObjectiveBase {
 	checkpoint?: { x: number; z: number; yaw?: number };
 	/** Mission people who start following the player as this begins (a hostage freed). */
 	followers?: readonly string[];
+	/** A cutscene as it begins (the target looked over, the crew talking); its clock waits for it. */
+	scene?: Cutscene;
 }
 
 /** Which vehicle will do: a named one, or any that fits (any police car, any jet, any ambulance). */
@@ -265,6 +268,8 @@ export interface MissionTrigger {
 	ignite?: string;
 	/** A mission car's steady fire burns down: it goes up in about twenty seconds unless it's put out. */
 	letBurn?: string;
+	/** A cutscene: the moment shown (the play stops while it runs). */
+	scene?: Cutscene;
 }
 
 export type MissionChapter = "story" | "side" | "race" | "job";
@@ -272,8 +277,12 @@ export type MissionChapter = "story" | "side" | "race" | "job";
 export interface MissionDefinition {
 	id: string;
 	title: string;
-	/** Who gives it and where: a mission blip on the map, and a marker to step into. */
-	giver: { name: string; x: number; z: number; role?: string };
+	/**
+	 * Who gives it and where: a mission blip on the map, and a marker to step into. A giver with a
+	 * `look` stands there in person and says the briefing to the player's face (a cutscene), as
+	 * `speaker`: the name their lines go by, so they keep one voice.
+	 */
+	giver: { name: string; x: number; z: number; role?: string; speaker?: string; look?: PersonLook };
 	/** What the giver says when you step into the marker. */
 	briefing: string;
 	/** Story, side job or race: how the mission list groups it. Story by default. */
@@ -292,6 +301,8 @@ export interface MissionDefinition {
 	area?: { x: number; z: number; radius: number };
 	/** A race against the clock: the time it took is kept as a best. */
 	timed?: boolean;
+	/** A cutscene as it starts, after the briefing (not again on a retry). */
+	opening?: Cutscene;
 	/** Said as it starts (after the briefing), and once it's passed. */
 	intro?: readonly Line[];
 	outro?: readonly Line[];
@@ -402,6 +413,23 @@ export function courseOf(objective: Objective): readonly Checkpoint[] {
 	return Array.from({ length: laps }, () => objective.points).flat();
 }
 
+/**
+ * Something that says lines out loud (see audio/MissionVoice). The director hands it each line as
+ * it comes up and holds the subtitle while it's still speaking, so the two stay together.
+ */
+export interface LineVoice {
+	speak(line: Line): void;
+	/** Still saying the last line given. */
+	speaking(): boolean;
+	/** Stop at once: the mission's over, or what was waiting to be said is overtaken. */
+	stop(): void;
+}
+
+const NO_VOICE: LineVoice = { speak: () => undefined, speaking: () => false, stop: () => undefined };
+
+/** However long a voice takes, a line moves on after this much longer than its reading time. */
+const VOICE_OVERRUN_SECONDS = 6;
+
 /** Seconds a line stays up: about a reading pace, within reason. */
 export function lineSeconds(line: Line): number {
 	if (line.seconds !== undefined) return line.seconds;
@@ -436,6 +464,31 @@ export function missionSpawns(mission: MissionDefinition): MissionSpawn[] {
 		...mission.objectives.flatMap((objective) => objective.spawns ?? []),
 		...(mission.triggers ?? []).flatMap((trigger) => trigger.spawns ?? []),
 	];
+}
+
+/** The person who stands at a giver's marker: one per giver, whichever missions they give. */
+export function giverPersonId(giver: MissionDefinition["giver"]): string {
+	return `giver-${giver.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+}
+
+/** Everyone who gives missions in person, once each, dressed as they're first listed. */
+export function missionGivers(list: readonly MissionDefinition[]): { id: string; look: PersonLook }[] {
+	const givers = new Map<string, PersonLook>();
+	for (const mission of list) {
+		const id = giverPersonId(mission.giver);
+		if (mission.giver.look && !givers.has(id)) givers.set(id, mission.giver.look);
+	}
+	return [...givers].map(([id, look]) => ({ id, look }));
+}
+
+/** A shot with nothing said and no time given stays up this long. */
+const SHOT_SECONDS = 3;
+
+/** How long a shot is expected to last: its own time, or its lines' (the voice may take longer). */
+function shotSeconds(shot: Shot, lines: Iterable<Line>): number {
+	let total = 0;
+	for (const line of lines) total += lineSeconds(line);
+	return Math.max(shot.seconds ?? 0, total) || SHOT_SECONDS;
 }
 
 const NO_STAGE: MissionStage = { spawn: () => undefined, clear: () => undefined };
@@ -492,8 +545,22 @@ export class MissionDirector {
 	private lines: Line[] = [];
 	private line: Line | null = null;
 	private lineTime = 0;
+	private voice: LineVoice = NO_VOICE;
 	private noticeText = "";
 	private noticeTime = 0;
+	/**
+	 * The cutscene playing and those waiting their turn; the shot it's on, for how long, a count
+	 * bumped with every new shot (a cut), and the lines that shot is waiting to have said.
+	 */
+	private scene: Cutscene | null = null;
+	private readonly scenes: Cutscene[] = [];
+	private shotIndex = 0;
+	private shotTime = 0;
+	private shotSerial = 0;
+	private shotLength = SHOT_SECONDS;
+	private readonly shotLines = new Set<Line>();
+	/** The mission last failed: starting it again skips its opening. */
+	private failedId = "";
 	private lastResult: { bonuses: readonly BonusResult[]; rating: number | null } = { bonuses: [], rating: null };
 	/** What the choices made this run pay on top. */
 	private extras: MissionReward[] = [];
@@ -536,15 +603,47 @@ export class MissionDirector {
 		return this.lastCheckpoint;
 	}
 
+	/** A cutscene is playing: the player's held still, the HUD stands back and the camera follows the shot. */
+	public get inScene(): boolean {
+		return this.scene !== null;
+	}
+
+	/** The shot on screen, how far through it (0..1), and a number that changes with every new shot. */
+	public get sceneShot(): { shot: Shot; progress: number; serial: number } | null {
+		const shot = this.scene?.shots[this.shotIndex];
+		if (!shot) return null;
+		return { shot, progress: Math.min(1, this.shotTime / this.shotLength), serial: this.shotSerial };
+	}
+
+	/** Space: the rest of the cutscene skipped, and what was to be said in it. A briefing isn't skipped but answered. */
+	public skipScene(): void {
+		if (!this.scene || this.scene.hold) return;
+		const saying = this.line !== null && this.shotLines.has(this.line);
+		this.lines = this.lines.filter((line) => !this.shotLines.has(line));
+		if (saying) {
+			this.voice.stop();
+			this.nextLine();
+		}
+		this.scenes.length = 0;
+		this.endScene();
+		this.publish();
+	}
+
 	/** The choices on offer now, with their place in the objective's list. */
 	public get choices(): { index: number; option: ChoiceOption }[] {
 		const objective = this.objective;
-		if (objective?.kind !== "choice") return [];
+		if (objective?.kind !== "choice" || this.scene) return [];
 		return objective.options.map((option, index) => ({ index, option })).filter(({ option }) => holds(option.onlyIf, this.has));
 	}
 
 	public setStage(stage: MissionStage | null): void {
 		this.stage = stage ?? NO_STAGE;
+	}
+
+	/** What says the lines out loud; none by default (tests, and before the game has sound). */
+	public setVoice(voice: LineVoice | null): void {
+		this.voice.stop();
+		this.voice = voice ?? NO_VOICE;
 	}
 
 	/** Where saved story flags are read from (the player's progress). */
@@ -565,6 +664,10 @@ export class MissionDirector {
 		if (this.phaseName === "active") return;
 		this.current = mission;
 		this.phaseName = "briefing";
+		this.clearScenes();
+		this.dropLines();
+		// Someone stood there tells it to the player's face.
+		if (mission.giver.look && mission.briefing) this.playScene(briefingScene(mission.giver.speaker ?? mission.giver.name, mission.briefing));
 		this.emit({ type: "briefing", mission });
 		this.publish();
 	}
@@ -577,6 +680,8 @@ export class MissionDirector {
 		if (this.phaseName !== "briefing") return;
 		this.phaseName = "idle";
 		this.current = null;
+		this.clearScenes();
+		this.dropLines();
 		this.publish();
 	}
 
@@ -587,6 +692,8 @@ export class MissionDirector {
 		this.lastCheckpoint = null;
 		if (mission.spawns?.length) this.stage.spawn(mission.spawns);
 		this.emit({ type: "started", mission });
+		// The opening plays the first time; trying again after failing, straight in.
+		if (mission.opening && mission.id !== this.failedId) this.playScene(mission.opening);
 		if (mission.intro?.length) this.say(mission.intro);
 		this.index = 0;
 		this.enter();
@@ -633,8 +740,8 @@ export class MissionDirector {
 		this.worstWanted = 0;
 		this.lowestIntegrity.clear();
 		this.anyVehicleLowest = 100;
-		this.lines = [];
-		this.line = null;
+		this.dropLines();
+		this.clearScenes();
 		this.noticeTime = 0;
 		this.lastResult = { bonuses: [], rating: null };
 		this.extras = [];
@@ -657,6 +764,69 @@ export class MissionDirector {
 	private nextLine(): void {
 		this.line = this.lines.shift() ?? null;
 		this.lineTime = this.line ? lineSeconds(this.line) : 0;
+		if (this.line) this.voice.speak(this.line);
+	}
+
+	/** A cutscene: straight away, or after the one playing. */
+	private playScene(scene: Cutscene): void {
+		if (scene.shots.length === 0) return;
+		if (this.scene) {
+			this.scenes.push(scene);
+			return;
+		}
+		this.scene = scene;
+		this.shotIndex = 0;
+		this.startShot();
+	}
+
+	private startShot(): void {
+		const shot = this.scene?.shots[this.shotIndex];
+		if (!shot) return;
+		this.shotTime = 0;
+		this.shotSerial++;
+		this.shotLines.clear();
+		const lines = (shot.say ?? []).filter((line) => holds(line.onlyIf, this.has));
+		for (const line of lines) this.shotLines.add(line);
+		this.shotLength = shotSeconds(shot, lines);
+		if (lines.length) this.say(lines);
+	}
+
+	/** On to the next shot once this one's had its time and its lines are said; the scene ends after the last. */
+	private updateScene(dt: number): void {
+		const scene = this.scene;
+		const shot = scene?.shots[this.shotIndex];
+		if (!scene || !shot) return;
+		this.shotTime += dt;
+		const minimum = shot.seconds ?? (shot.say?.length ? 0 : SHOT_SECONDS);
+		const saying = (this.line !== null && this.shotLines.has(this.line)) || this.lines.some((line) => this.shotLines.has(line));
+		if (this.shotTime < minimum || saying) return;
+		if (this.shotIndex < scene.shots.length - 1) {
+			this.shotIndex++;
+			this.startShot();
+		} else if (!scene.hold) {
+			this.endScene();
+		}
+	}
+
+	/** This cutscene's over: the next waiting, or back to play. */
+	private endScene(): void {
+		this.scene = null;
+		this.shotLines.clear();
+		const next = this.scenes.shift();
+		if (next) this.playScene(next);
+	}
+
+	private clearScenes(): void {
+		this.scene = null;
+		this.scenes.length = 0;
+		this.shotLines.clear();
+	}
+
+	/** Nothing more to say: whatever was waiting is dropped and the voice stops mid-line. */
+	private dropLines(): void {
+		this.lines = [];
+		this.line = null;
+		this.voice.stop();
 	}
 
 	/** Moves time and the player on; judges what can be seen from where the player is. */
@@ -664,9 +834,14 @@ export class MissionDirector {
 		const talking = this.line !== null || this.noticeTime > 0;
 		if (this.line) {
 			this.lineTime -= dt;
-			if (this.lineTime <= 0) this.nextLine();
+			// Held while the voice is still saying it, within reason.
+			const held = this.voice.speaking() && this.lineTime > -VOICE_OVERRUN_SECONDS;
+			if (this.lineTime <= 0 && !held) this.nextLine();
 		}
 		if (this.noticeTime > 0) this.noticeTime -= dt;
+		// A frame that was still in a cutscene as it began is the cutscene's, even if it ends now.
+		const filming = this.scene !== null;
+		this.updateScene(dt);
 		if (this.phaseName === "passed" || this.phaseName === "failed") {
 			this.resultTime += dt;
 			if (this.resultTime >= (this.phaseName === "failed" ? FAILED_RESULT_SECONDS : RESULT_SECONDS)) {
@@ -681,10 +856,15 @@ export class MissionDirector {
 		const mission = this.current;
 		const objective = this.objective;
 		if (!mission || !objective) {
-			if (talking) this.publish();
+			if (talking || filming) this.publish();
 			return;
 		}
 		Object.assign(this.view, player);
+		// The play waits while a cutscene runs: no clocks, nothing judged.
+		if (filming) {
+			this.publish();
+			return;
+		}
 		this.objectiveTime += dt;
 		this.missionTime += dt;
 		this.worstWanted = Math.max(this.worstWanted, player.wantedStars);
@@ -869,7 +1049,7 @@ export class MissionDirector {
 		const objective = this.objective;
 		if (objective?.kind !== "choice") return;
 		const option = objective.options[index];
-		if (!option || !holds(option.onlyIf, this.has)) return;
+		if (!option || !holds(option.onlyIf, this.has) || this.scene) return;
 		for (const flag of option.flags ?? []) this.flags.add(flag);
 		if (option.reward) this.extras.push(option.reward);
 		if (option.say?.length) this.say(option.say);
@@ -881,10 +1061,10 @@ export class MissionDirector {
 		if (this.phaseName !== "active" || !mission) return;
 		this.end();
 		this.phaseName = "failed";
+		this.failedId = mission.id;
 		this.failReason = reason;
 		this.resultTime = 0;
-		this.lines = [];
-		this.line = null;
+		this.dropLines();
 		this.emit({ type: "failed", mission, reason });
 		this.publish();
 	}
@@ -899,8 +1079,8 @@ export class MissionDirector {
 		if (this.phaseName === "active") this.end();
 		this.phaseName = "idle";
 		this.current = null;
-		this.lines = [];
-		this.line = null;
+		this.clearScenes();
+		this.dropLines();
 		this.publish();
 	}
 
@@ -986,6 +1166,7 @@ export class MissionDirector {
 			this.fired.add(index);
 			const trigger = triggers[index];
 			for (const flag of trigger.flags ?? []) this.flags.add(flag);
+			if (trigger.scene) this.playScene(trigger.scene);
 			if (trigger.say?.length) this.say(trigger.say);
 			if (trigger.notice) this.notice(trigger.notice);
 			if (trigger.spawns?.length) this.stage.spawn(trigger.spawns);
@@ -1067,6 +1248,7 @@ export class MissionDirector {
 		this.phaseName = "passed";
 		this.resultTime = 0;
 		this.lastCheckpoint = null;
+		this.failedId = "";
 		// Whatever was still waiting to be said is overtaken by events: straight on to the outro.
 		this.lines = [];
 		if (mission.outro?.length) this.say(mission.outro);
@@ -1138,6 +1320,7 @@ export class MissionDirector {
 		for (const id of objective.followers ?? []) this.stage.follow?.(id, true);
 		if (objective.wanted) this.stage.alarm?.(objective.wanted);
 		if (objective.kind === "race" && this.countdown <= 0) this.stage.startRace?.(objective.racers);
+		if (objective.scene) this.playScene(objective.scene);
 		if (objective.say?.length) this.say(objective.say);
 		this.steer();
 		this.emit({ type: "objective", mission, index: this.index, objective });
@@ -1236,6 +1419,7 @@ export class MissionDirector {
 	/** Out of the active mission: its things cleared away and the GPS stood down. */
 	private end(): void {
 		this.remaining.clear();
+		this.clearScenes();
 		this.countdown = 0;
 		this.stage.clear();
 		setObjective(null);
@@ -1295,6 +1479,8 @@ export class MissionDirector {
 			bonuses,
 			rating: passed ? this.lastResult.rating : null,
 			canResume: this.phaseName === "failed" && this.lastCheckpoint !== null,
+			cutscene: this.scene !== null,
+			skippable: this.scene !== null && !this.scene.hold,
 		});
 	}
 }

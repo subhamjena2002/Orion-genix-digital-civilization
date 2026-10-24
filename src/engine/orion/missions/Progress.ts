@@ -251,6 +251,33 @@ export function addCash(amount: number): void {
 	changed();
 }
 
+/** Pays out of the player's cash: false (and nothing taken) if they haven't got it. */
+export function spendCash(amount: number): boolean {
+	const progress = current();
+	const price = Math.max(0, Math.floor(amount));
+	if (progress.cash < price) return false;
+	progress.cash -= price;
+	changed();
+	return true;
+}
+
+/** A weapon the player now has for good: bought, or picked up off someone who dropped it. */
+export function grantWeapon(id: WeaponId): void {
+	const progress = current();
+	if (progress.weapons.includes(id)) return;
+	grant(progress, { weapons: [id] });
+	changed();
+}
+
+/** A car bought, delivered to the safehouse garage: false if it's already there. */
+export function addToGarage(car: RewardVehicle): boolean {
+	const progress = current();
+	if (progress.garage.some((owned) => owned.id === car.id)) return false;
+	grant(progress, { vehicles: [car] });
+	changed();
+	return true;
+}
+
 /** Back to a new game. */
 export function resetProgress(): void {
 	state = fresh();

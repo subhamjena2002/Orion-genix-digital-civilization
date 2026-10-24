@@ -4,6 +4,7 @@ import { onWorldReset } from "../world/WorldReset";
 import { damageableMoved, registerDamageable, unregisterDamageable, type Listener } from "../combat/CombatWorld";
 import { Health, makeDamageEvent, nextCombatId, type DamageEvent, type DamageSourceRef } from "../combat/Damage";
 import { bodyZone, zoneDamage } from "../combat/HitZones";
+import { dropWeapon } from "../combat/Pickups";
 import { weaponById } from "../combat/WeaponData";
 import { WeaponModels, type WeaponVisual } from "../combat/WeaponModels";
 import { groundHeightAt, Knockdown } from "../characters/Knockdown";
@@ -51,6 +52,9 @@ const ARREST_RANGE = 5.5;
 const UNTINTED = ["eye"];
 const DARK_PARTS = ["sock", "shoe", "black", "brown", "belt", "grey"];
 const STOW_Y = -400;
+/** Rounds in an officer's dropped pistol, or rifle. */
+const DROPPED_PISTOL_ROUNDS = 24;
+const DROPPED_RIFLE_ROUNDS = 60;
 
 const pool: OrionFootOfficer[] = [];
 
@@ -308,6 +312,10 @@ export class OrionFootOfficer extends Script {
 	private goDown(velocityX: number, velocityZ: number) {
 		this.state = "down";
 		if (this.agent) this.agent.alive = false;
+		// The gun goes down with them, beside the body, with what was left in it: the player's to take.
+		const here = this.entity.getPosition();
+		const rifle = readWanted().stars >= RIFLES_FROM_STARS;
+		dropWeapon(rifle ? "ar" : "pistol", rifle ? DROPPED_RIFLE_ROUNDS : DROPPED_PISTOL_ROUNDS, here.x + 0.7, this.groundY, here.z + 0.4);
 		this.knockdown?.strike(velocityX, velocityZ, this.model?.anim, this.yaw);
 	}
 

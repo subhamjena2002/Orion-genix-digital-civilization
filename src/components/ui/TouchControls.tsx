@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import {
 	addTouchLook,
@@ -12,6 +12,7 @@ import {
 	type TouchHoldButton,
 } from "@/engine/orion/input/TouchInput";
 import { readPlayerPose } from "@/engine/orion/player/PlayerPose";
+import { counterInReach, onShopChange, openCounterInReach } from "@/engine/orion/shops/Shops";
 import { useCombatHud } from "./CombatHud";
 import { useFlightHud } from "./FlightHud";
 
@@ -59,6 +60,8 @@ export function TouchControls() {
 	const { inVehicle, nearCar, burning } = usePlayerStatus(100);
 	const combat = useCombatHud(120);
 	const flight = useFlightHud(120);
+	// At a shop's counter: a Shop button where "Take car" would be.
+	const counter = useSyncExternalStore(onShopChange, counterInReach, () => null);
 
 	useEffect(() => {
 		// A finger lifted while the page wasn't listening never sends its "up".
@@ -150,7 +153,12 @@ export function TouchControls() {
 							<span className="orion-touch-caption">Fly</span>
 						</TapButton>
 					) : null}
-					{nearCar ? (
+					{counter ? (
+						<TapButton label={counter.kind === "guns" ? "Shop" : "Browse cars"} className="orion-touch-enter is-urgent" onTap={() => openCounterInReach()}>
+							{counter.kind === "guns" ? <ShopIcon /> : <CarIcon />}
+							<span className="orion-touch-caption">{counter.kind === "guns" ? "Shop" : "Cars"}</span>
+						</TapButton>
+					) : nearCar ? (
 						<TapButton label="Take car" className="orion-touch-enter is-urgent" onTap={() => pressTouch("interact")}>
 							<CarIcon />
 							<span className="orion-touch-caption">Take car</span>
@@ -434,6 +442,16 @@ function SwapIcon() {
 	return (
 		<Icon>
 			<path d="M4 8h13l-3.5-3.5M20 16H7l3.5 3.5" />
+		</Icon>
+	);
+}
+
+/** A shopping bag. */
+function ShopIcon() {
+	return (
+		<Icon>
+			<path d="M5 8h14l-1 12H6L5 8Z" />
+			<path d="M9 8V6.5a3 3 0 0 1 6 0V8" />
 		</Icon>
 	);
 }

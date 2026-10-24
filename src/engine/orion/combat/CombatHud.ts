@@ -14,6 +14,11 @@ export interface CombatHudState {
 	reloadProgress: number;
 	health: number;
 	maxHealth: number;
+	/** Body armour, 0..100. */
+	armour: number;
+	/** A line for a moment under the weapon panel ("+24 Pistol rounds"); `toastSerial` changes with each new one. */
+	toast: string;
+	toastSerial: number;
 	showCrosshair: boolean;
 	slots: readonly { slot: number; name: string }[];
 	/** The player is dead and about to respawn. */
@@ -33,6 +38,9 @@ const state: CombatHudState = {
 	reloadProgress: 0,
 	health: 100,
 	maxHealth: 100,
+	armour: 0,
+	toast: "",
+	toastSerial: 0,
 	showCrosshair: false,
 	slots: [],
 	wasted: false,

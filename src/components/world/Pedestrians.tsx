@@ -8,7 +8,8 @@ import { memo } from "react";
 import { OrionPedestrian } from "@/engine/orion/characters/OrionPedestrian";
 import { ORION_PEDESTRIANS, type PedestrianSpawn } from "@/engine/orion/characters/Pedestrians";
 import { ALL_MISSIONS } from "@/engine/orion/missions/MissionCatalog";
-import { missionSpawns, type PersonLook } from "@/engine/orion/missions/MissionDirector";
+import { missionGivers, missionSpawns, type PersonLook } from "@/engine/orion/missions/MissionDirector";
+import { SHOPS } from "@/engine/orion/shops/ShopCatalog";
 
 /**
  * The crowd is a fixed pool rather than a distance-culled list: pedestrians roam the whole
@@ -38,12 +39,15 @@ const PERSON_MODELS: Readonly<Record<NonNullable<PersonLook["model"]>, { path: s
 
 /**
  * Everyone any mission puts in the world, each their own slot (out of the world until needed). A
- * person several missions use is one slot, dressed as they're first listed.
+ * person several missions use is one slot, dressed as they're first listed. So are the givers who
+ * stand at their markers in person, and whoever serves behind each shop's counter.
  */
 const MISSION_HOSTILES: readonly PedestrianSpawn[] = [
 	...new Map(ALL_MISSIONS
 		.flatMap(missionSpawns)
-		.flatMap((spawn) => spawn.type === "hostile" ? [[spawn.id, spawn] as const] : [])).values(),
+		.flatMap((spawn) => spawn.type === "hostile" ? [[spawn.id, spawn as { id: string } & PersonLook] as const] : [])).values(),
+	...missionGivers(ALL_MISSIONS).map(({ id, look }) => ({ id, ...look })),
+	...SHOPS.map((shop) => ({ id: shop.keeper.id, ...shop.keeper.look })),
 ].map((spawn, index) => {
 	const model = PERSON_MODELS[spawn.model ?? "manCasual"];
 	return { id: spawn.id, assetPath: model.path, scale: model.scale, speed: 1.3, walkSpeed: model.walkSpeed, seed: 7717 * (index + 1), palette: spawn.palette ?? HOSTILE_PALETTE };

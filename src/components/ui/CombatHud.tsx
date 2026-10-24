@@ -22,6 +22,7 @@ export function useCombatHud(intervalMs: number): CombatHudState {
 				previous.weaponId === next.weaponId && previous.magazine === next.magazine && previous.reserve === next.reserve
 					&& previous.reloading === next.reloading && Math.round(previous.reloadProgress * 20) === Math.round(next.reloadProgress * 20)
 					&& Math.round(previous.health) === Math.round(next.health) && previous.wasted === next.wasted && previous.busted === next.busted
+					&& Math.round(previous.armour) === Math.round(next.armour) && previous.toastSerial === next.toastSerial
 					&& previous.slots === next.slots
 					? previous
 					: { ...next }
@@ -47,9 +48,12 @@ function useWanted(intervalMs: number): { stars: number; searching: boolean } {
 	return wanted;
 }
 
+/** A pickup's line stays up this long. */
+const TOAST_MS = 2600;
+
 /**
- * Weapon wheel strip (number keys), ammunition, health, a crosshair while a gun is out, and the
- * "wasted" screen. Hidden while driving, except health.
+ * Weapon wheel strip (number keys), ammunition, health and armour, a crosshair while a gun is out,
+ * what was just picked up, and the "wasted" screen. Hidden while driving, except health.
  */
 export function CombatHud() {
 	const combat = useCombatHud(60);
@@ -58,7 +62,17 @@ export function CombatHud() {
 	const { flying } = useFlightHud(200);
 	const inVehicle = inCar || flying;
 	const health = Math.max(0, Math.round((combat.health / combat.maxHealth) * 100));
+	const armour = Math.max(0, Math.round(combat.armour));
 	const usesAmmo = combat.magazineSize > 0;
+	// The latest pickup's line, for a moment: up until it's been on screen long enough.
+	const [dismissed, setDismissed] = useState(0);
+	useEffect(() => {
+		if (combat.toastSerial === 0) return;
+		const serial = combat.toastSerial;
+		const id = window.setTimeout(() => setDismissed(serial), TOAST_MS);
+		return () => window.clearTimeout(id);
+	}, [combat.toastSerial]);
+	const toast = combat.toastSerial > dismissed && combat.toast ? combat.toast : null;
 
 	return (
 		<>
@@ -117,12 +131,21 @@ export function CombatHud() {
 						) : null}
 					</div>
 				) : null}
+				{toast ? <div key={combat.toastSerial} className="orion-pickup-toast" role="status">{toast}</div> : null}
 				<div className="orion-health" role="status" aria-label={`Health ${health}%`}>
 					<span className="orion-health-label">Health</span>
 					<div className="orion-health-bar" aria-hidden="true">
 						<span className={health < 30 ? "is-critical" : ""} style={{ width: `${health}%` }} />
 					</div>
 				</div>
+				{armour > 0 ? (
+					<div className="orion-health orion-armour" role="status" aria-label={`Armour ${armour}%`}>
+						<span className="orion-health-label">Armour</span>
+						<div className="orion-health-bar" aria-hidden="true">
+							<span style={{ width: `${armour}%` }} />
+						</div>
+					</div>
+				) : null}
 				{wanted.stars > 0 ? (
 					<div
 						className={`orion-wanted${wanted.searching ? " is-searching" : ""}`}

@@ -144,6 +144,16 @@ const DEZ_LOOK: PersonLook = { model: "manCasual", palette: { skin: "#94603f", s
 const MARISOL_LOOK: PersonLook = { model: "womanWorker", palette: { skin: "#a9724a", shirt: "#d9762b", pants: "#3a3f33", hair: "#141010" } };
 const WITNESS_LOOK: PersonLook = { model: "womanCasual", palette: { skin: "#7d4f30", shirt: "#2c6e8f", pants: "#1f2933", hair: "#1d1512" } };
 
+/** The givers, as they stand at their markers and tell the player the job (see MissionDefinition.giver). */
+const BENNY_LOOK: PersonLook = { model: "man", palette: { skin: "#c58c63", shirt: "#3d4a5c", pants: "#2a2622", hair: "#6b6b6b" } };
+const STATIC_LOOK: PersonLook = { model: "manCasual", palette: { skin: "#e0b48f", shirt: "#4d5b3a", pants: "#23262b", hair: "#2b1d14" } };
+const KINCAID_LOOK: PersonLook = { model: "womanSuit", palette: { skin: "#8a5a3c", shirt: "#2f3b4f", pants: "#1b1f27", hair: "#141010" } };
+const NIA_LOOK: PersonLook = { model: "womanWorker", palette: { skin: "#5a3826", shirt: "#2f6e4f", pants: "#203a2c", hair: "#141010" } };
+const BRANDT_LOOK: PersonLook = { model: "womanSuit", palette: { skin: "#e4bd9c", shirt: "#4a5a3f", pants: "#3c4834", hair: "#c9a46a" } };
+const VOS_LOOK: PersonLook = { model: "womanWorker", palette: { skin: "#b98863", shirt: "#55603f", pants: "#3f4730", hair: "#2b1d14" } };
+const QUILL_LOOK: PersonLook = { model: "man", palette: { skin: "#e6c3a5", shirt: "#6b2737", pants: "#262321", hair: "#d8d4cc" } };
+const ROSA_LOOK: PersonLook = { model: "womanCasual", palette: { skin: "#a26b47", shirt: "#c4152b", pants: "#151517", hair: "#141010" } };
+
 function guard(id: string, at: { x: number; z: number }, yaw: number, role: "sentry" | "guard" = "sentry"): MissionSpawn {
 	return { type: "hostile", id, x: at.x, z: at.z, armed: true, toughness: 1.3, role, yaw, ...GUARD_LOOK };
 }
@@ -171,7 +181,7 @@ const THIEF_ROUTE: readonly Point2[] = [
 const COLD_OPEN: MissionDefinition = {
 	id: "cold-open",
 	title: "Cold Open",
-	giver: { name: "Benny Kasper", role: "Fixer · Kasper Motors", ...KASPER },
+	giver: { name: "Benny Kasper", speaker: BENNY, look: BENNY_LOOK, role: "Fixer · Kasper Motors", ...KASPER },
 	briefing: "Kid — you're the new driver? Good timing. Somebody just drove my client's silver Vesper off my lot. Take my car, catch him, and bring it back. Bent is fine. Gone is not.",
 	spawns: [
 		BENNY_CAR,
@@ -227,7 +237,7 @@ const COLD_OPEN: MissionDefinition = {
 const LOOSE_LIPS: MissionDefinition = {
 	id: "loose-lips",
 	title: "Loose Lips",
-	giver: { name: "Static", role: "Informant · lives on the scanners", ...STATIC_SPOT },
+	giver: { name: "Static", speaker: STATIC, look: STATIC_LOOK, role: "Informant · lives on the scanners", ...STATIC_SPOT },
 	requires: ["blue-lights"],
 	briefing: "Benny wants to know who told Meridian his client's car was on the lot. I've got the dispatch logs. You've got legs. Between us we've got a detective. Kind of.",
 	spawns: [
@@ -356,7 +366,7 @@ const DEPOT_REINFORCEMENTS: readonly MissionSpawn[] = [
 const QUIET_MONEY: MissionDefinition = {
 	id: "quiet-money",
 	title: "Quiet Money",
-	giver: { name: "Det. Ada Kincaid", role: "OCPD · Organised Crime", ...KINCAID_SPOT },
+	giver: { name: "Det. Ada Kincaid", speaker: KINCAID, look: KINCAID_LOOK, role: "OCPD · Organised Crime", ...KINCAID_SPOT },
 	requires: ["street-sweep"],
 	briefing: "You've been busy on Meridian's dime. Crane keeps a paper ledger at his Sea Link depot — the man doesn't trust computers. Bring it to me and I can open a case. Get seen, and his people will shoot first.",
 	intro: [{ who: KINCAID, text: "Five on the yard. Crane pays for loyalty, not eyesight. Come at them from behind." }],
@@ -441,7 +451,7 @@ const BUYERS: readonly MissionSpawn[] = [
 const TAILGATE: MissionDefinition = {
 	id: "tailgate",
 	title: "Tailgate",
-	giver: { name: "Static", role: "Informant · lives on the scanners", ...STATIC_SPOT },
+	giver: { name: "Static", speaker: STATIC, look: STATIC_LOOK, role: "Informant · lives on the scanners", ...STATIC_SPOT },
 	requires: ["quiet-money"],
 	briefing: "Jax Ruelle — Crane's driver, the guy who called you — is moving Meridian money to a buyer today. Follow him to the meet. Not close. He's paranoid, and he's good.",
 	spawns: [
@@ -538,7 +548,7 @@ const LOOKOUT_GUARDS: readonly MissionSpawn[] = [
 const EXTRACTION: MissionDefinition = {
 	id: "extraction",
 	title: "Extraction",
-	giver: { name: "Benny Kasper", role: "Fixer · Kasper Motors", ...KASPER },
+	giver: { name: "Benny Kasper", speaker: BENNY, look: BENNY_LOOK, role: "Fixer · Kasper Motors", ...KASPER },
 	requires: ["convoy"],
 	briefing: "Crane's had enough of Sunset Park making noise. Static heard it on the scanner: they've taken Marisol up to the Ghats lookout. Bring her home, kid. Quiet if you can, but bring her home.",
 	spawns: [{ type: "hostile", id: "marisol", ...lookout(7, 0), armed: false, role: "passive", yaw: L_DOWNHILL, ...MARISOL_LOOK }],
@@ -617,7 +627,7 @@ const finaleOutro: readonly Line[] = [
 const MERIDIAN_JOB: MissionDefinition = {
 	id: "meridian-job",
 	title: "The Meridian Job",
-	giver: { name: "Benny Kasper", role: "Fixer · Kasper Motors", ...KASPER },
+	giver: { name: "Benny Kasper", speaker: BENNY, look: BENNY_LOOK, role: "Fixer · Kasper Motors", ...KASPER },
 	requires: ["extraction"],
 	briefing: "Crane knows it's you. So we end it tonight: his office on the arterial, his guards, his getaway. Take my car. Whatever you decide about him at the end — decide it like you'll have to live here after.",
 	spawns: [
@@ -867,7 +877,7 @@ const CODE_THREE: MissionDefinition = {
 	id: "code-three",
 	title: "Code Three",
 	chapter: "side",
-	giver: { name: "Nia Okafor", role: "Paramedic · City Hospital", x: HOSPITAL_DOORS.x, z: HOSPITAL_DOORS.z },
+	giver: { name: "Nia Okafor", speaker: NIA, look: NIA_LOOK, role: "Paramedic · City Hospital", x: HOSPITAL_DOORS.x, z: HOSPITAL_DOORS.z },
 	briefing: "We're a driver short and there's a T-bone on the west avenue, one car on fire. Take a rig from the bay — lights and siren, Code Three. Get her out, get her back here, and don't shake her to pieces on the way.",
 	requires: ["clean-wheels"],
 	reward: { cash: 1200, rep: { law: 1 } },
@@ -994,12 +1004,161 @@ const CODE_THREE: MissionDefinition = {
 	],
 };
 
+// ---- Counting House: Benny's payback heist --------------------------------------------------------
+
+const LENA = "Lena";
+const LENA_LOOK: PersonLook = { model: "womanCasual", palette: { skin: "#d8a47f", shirt: "#1e2226", pants: "#2c2f36", hair: "#7a2a1c" } };
+/** Meridian's counting house: a payday-loan shop on the commercial strip, its cash cage out back. */
+const COUNTING_DOOR = { x: -120, z: 152 };
+/** Across the arterial from it, where the van pulls up. */
+const COUNTING_KERB = { x: -120, z: 165 };
+/** The lockup by the port where the clean car waits, in the kerb lane of the west arterial. */
+const LOCKUP = { x: -323, z: -100 };
+/** The crew van outside Kasper Motors, on Benny's side of the street, and Lena on the pavement beside it. */
+const CREW_VAN: MissionSpawn = { type: "vehicle", id: "static-van", style: "van", colour: "#d7d2c4", x: 5.25, z: 60, yaw: 0 };
+const CREW: MissionSpawn = { type: "hostile", id: "lena", x: 8.1, z: 63.5, armed: false, role: "passive", yaw: 270, ...LENA_LOOK };
+/** Meridian's security on the door: two watching the street, two walking it. */
+const DOOR_GUARDS: readonly MissionSpawn[] = [
+	guard("guard-1", { x: -124, z: 152 }, 0),
+	guard("guard-2", { x: -116, z: 152 }, 0),
+	guard("guard-3", { x: -131, z: 151.6 }, 0, "guard"),
+	guard("guard-4", { x: -109, z: 151.6 }, 0, "guard"),
+];
+/** The Cinder Boys, called in by Meridian, from the west end of the strip; and one more guard from the east. */
+const WEST_BACKUP: readonly MissionSpawn[] = [
+	{ type: "hostile", id: "m3-goon-6", x: -158, z: 152, armed: true, toughness: 1.4 },
+	{ type: "hostile", id: "m3-goon-7", x: -160, z: 156, armed: true, toughness: 1.4 },
+];
+const EAST_BACKUP: readonly MissionSpawn[] = [guard("guard-5", { x: -84, z: 152 }, 270, "guard")];
+/**
+ * Police roadblocks on the two ways west: across the west avenue's southbound lanes north of the
+ * Ghats arterial, and across the port arterial. Two cars nose to nose, a car's width of kerb free
+ * at either end for anyone brave enough.
+ */
+const ROADBLOCKS: readonly MissionSpawn[] = [
+	{ type: "vehicle", id: "roadblock-1", style: "police", colour: "#101418", x: -162.6, z: 100, yaw: 75 },
+	{ type: "vehicle", id: "roadblock-2", style: "police", colour: "#101418", x: -157.4, z: 100, yaw: 105 },
+	{ type: "vehicle", id: "roadblock-3", style: "police", colour: "#101418", x: -322.6, z: 40, yaw: 75 },
+	{ type: "vehicle", id: "roadblock-4", style: "police", colour: "#101418", x: -317.4, z: 40, yaw: 105 },
+];
+/** The clean car in the lockup. */
+const SWITCH_CAR: MissionSpawn = { type: "vehicle", id: "m1-sedan", style: "sedan", colour: "#1f4f8a", x: LOCKUP.x, z: LOCKUP.z, yaw: 0 };
+
+/**
+ * Counting House: Meridian took a car off Benny's lot, so Benny takes Meridian's till. Drive Lena,
+ * a safecracker, to the payday-loan front where Meridian counts its dirty cash; clear the door,
+ * hold it while she opens the cage and Meridian's help arrives from both ends of the street; then
+ * get out with three stars on you, through the roadblocks, to a clean car in a lockup by the port,
+ * shake the police and bring her home. Cutscenes as she meets the player, as the door's looked
+ * over, as the cage starts and at the switch; she talks on the drives.
+ */
+const COUNTING_HOUSE: MissionDefinition = {
+	id: "counting-house",
+	title: "Counting House",
+	chapter: "side",
+	giver: { name: "Benny Kasper", speaker: BENNY, look: BENNY_LOOK, role: "Fixer · Kasper Motors", ...KASPER },
+	briefing: "Meridian took a car off my lot, so we take something off theirs. They count their dirty cash behind a payday-loan shop on the commercial strip. Lena opens the cage, you drive and keep her breathing. The cops will come, so there's a clean car waiting in a lockup by the port. In, out, home.",
+	requires: ["clean-wheels"],
+	reward: { cash: 6000, rep: { street: 2, meridian: -2 } },
+	spawns: [CREW_VAN, CREW, SWITCH_CAR],
+	protect: ["lena"],
+	opening: {
+		shots: [
+			{ on: "lena", angle: 25, distance: 4.4, height: 1.9, orbit: 14, push: 0.8, say: [{ who: LENA, text: "You're Benny's new driver? I'm Lena. I open things that don't want opening." }] },
+			{ on: "giver", over: "player", say: [{ who: BENNY, text: "Best box-cracker in the city. Bring her back in one piece, kid. Both of you, ideally." }] },
+			{ on: "static-van", angle: 205, distance: 7, height: 1.6, push: 1.8, say: [{ who: LENA, text: "Van's clean. We go in, we come out, we never come back." }] },
+		],
+	},
+	objectives: [
+		{ kind: "enterVehicle", label: "Get in the crew van", vehicle: "static-van", x: CREW_VAN.x, z: CREW_VAN.z },
+		// She comes over and climbs in once the driver's in.
+		{ kind: "deliver", step: "drive", label: "Drive Lena to the counting house", vehicle: "static-van", person: "lena", ...COUNTING_KERB, radius: 12, spawns: DOOR_GUARDS, followers: ["lena"] },
+		{
+			kind: "eliminate",
+			step: "hit",
+			label: "Clear the door",
+			...COUNTING_DOOR,
+			targets: DOOR_GUARDS.map((spawn) => spawn.id),
+			scene: {
+				shots: [
+					{ on: "guard-1", angle: 0, distance: 10, height: 2.4, push: 3, say: [{ who: LENA, text: "Four on the door. Meridian pays them to stand there looking bored." }] },
+					{ on: "guard-4", angle: 28, distance: 7, height: 2, orbit: -10, seconds: 2.2 },
+					{ on: "player", angle: 160, distance: 4.5, height: 1.8, say: [{ who: LENA, text: "Clear the door. I'll be right behind you." }] },
+				],
+			},
+			done: [{ who: LENA, text: "Door's ours. Now the cage." }],
+		},
+		{
+			kind: "inspect",
+			step: "crack",
+			label: "Hold the door while Lena opens the cage",
+			...COUNTING_DOOR,
+			radius: 9,
+			seconds: 30,
+			scene: { shots: [{ on: "lena", angle: 35, distance: 3.2, height: 1.65, push: 0.7, say: [{ who: LENA, text: "Three locks and a timer. Thirty seconds — and don't let anyone shoot me." }] }] },
+			done: [{ who: LENA, text: "Open! Bags, bags, bags — okay, go!" }],
+		},
+		{
+			kind: "enterVehicle",
+			label: "Back to the van",
+			vehicle: "static-van",
+			x: COUNTING_KERB.x,
+			z: COUNTING_KERB.z,
+			wanted: 3,
+			say: [{ who: LENA, text: "Silent alarm on the cage. Every cop in the city just heard about us." }],
+		},
+		{
+			kind: "escort",
+			step: "getaway",
+			label: "Get Lena to the switch car at the port lockup",
+			person: "lena",
+			...LOCKUP,
+			radius: 14,
+			say: [{ who: DISPATCH, text: "All units, armed robbery on the commercial strip. Beige panel van, westbound. Roadblocks are going up." }],
+		},
+		{
+			kind: "enterVehicle",
+			label: "Swap into the clean car",
+			vehicle: "m1-sedan",
+			...LOCKUP,
+			scene: { shots: [{ on: "m1-sedan", angle: 200, distance: 6, height: 1.5, push: 1.5, seconds: 2.5, say: [{ who: LENA, text: "Clean car, clean plates. Leave the van, it's done its job." }] }] },
+		},
+		{ kind: "loseWanted", label: "Lose the police", say: [{ who: LENA, text: "Side streets. Tight corners. They hate tight corners." }] },
+		{ kind: "deliver", step: "home", label: "Bring Lena back to Kasper Motors", vehicleKind: "car", person: "lena", ...KASPER_YARD, radius: 10, clean: true },
+	],
+	triggers: [
+		// On the drive in: getting to know each other.
+		{ when: { step: "drive", after: 5 }, say: [{ who: LENA, text: "Benny says you caught a Vesper with a family sedan. True, or is Benny being Benny?" }] },
+		{ when: { step: "drive", after: 15 }, say: [{ who: LENA, text: "Loans out the front, cash cage out the back. Meridian launders through other people's debts. Charming." }] },
+		{ when: { step: "drive", after: 27 }, say: [{ who: BENNY, text: "Lena, the guards are Crane's, not cops. Keep it that way — cops get expensive." }] },
+		{ when: { step: "drive", after: 38 }, say: [{ who: LENA, text: "Radio down when we get close. I like to hear a door before I see it." }] },
+		// Holding the door: Meridian's help comes from both ends of the street.
+		{ when: { step: "crack", after: 7 }, spawns: WEST_BACKUP, alertAll: true, notice: "Back-up from the west", say: [{ who: LENA, text: "Cinder Boys, west end! Meridian called in the help!" }] },
+		{ when: { step: "crack", after: 17 }, spawns: EAST_BACKUP, alertAll: true, notice: "And from the east", say: [{ who: LENA, text: "One more, east side! Keep them off me!" }] },
+		// The roads west close.
+		{ when: { step: "getaway" }, spawns: ROADBLOCKS, notice: "Roadblocks on the way west" },
+		{ when: { step: "getaway", after: 12 }, say: [{ who: LENA, text: "Police cars across the avenue up ahead — go round, or go through the gap at the kerb!" }] },
+		// The drive home, with the cash in the back.
+		{ when: { step: "home", after: 4 }, say: [{ who: LENA, text: "You drive like someone who's never been told no. I like it. Benny will hate it." }] },
+		{ when: { step: "home", after: 15 }, say: [{ who: LENA, text: "Crane's going to count his till tonight and come up short. I want to see his face. I won't. But I want to." }] },
+	],
+	outro: [
+		{ who: BENNY, text: "Look at that. Crane's money, in my garage. That's going to make him angry." },
+		{ who: LENA, text: "If you ever need a door opened, kid, you know where Benny keeps me." },
+	],
+	bonuses: [
+		{ id: "quick", label: "Done inside 9:00", kind: "time", seconds: 540 },
+		{ id: "van", label: "Keep the van above 50%", kind: "intact", min: 50, vehicle: "static-van" },
+		{ id: "clean-car", label: "Bring the clean car home above 80%", kind: "intact", min: 80, vehicle: "m1-sedan" },
+	],
+};
+
 export const MISSIONS: readonly MissionDefinition[] = [
 	COLD_OPEN,
 	{
 		id: "clean-wheels",
 		title: "Clean Wheels",
-		giver: { name: "Benny Kasper", role: "Fixer · Kasper Motors", ...KASPER },
+		giver: { name: "Benny Kasper", speaker: BENNY, look: BENNY_LOOK, role: "Fixer · Kasper Motors", ...KASPER },
 		briefing: "Crane's people will be watching my lot now, so this client's sedan goes up to your new place in Hillcrest. Yes, kid — the house is yours, a thank-you. It's alarmed, so the cops will come running. Lose them first, keep it pretty, and be quick.",
 		requires: ["cold-open"],
 		reward: { cash: 500, rep: { street: 1 } },
@@ -1027,7 +1186,7 @@ export const MISSIONS: readonly MissionDefinition[] = [
 	{
 		id: "blue-lights",
 		title: "Blue Lights",
-		giver: { name: "Dez Moreno", role: "Benny's nephew · hustler", x: 86, z: -40 },
+		giver: { name: "Dez Moreno", speaker: DEZ, look: DEZ_LOOK, role: "Benny's nephew · hustler", x: 86, z: -40 },
 		briefing: "Uncle Benny thinks I'm a kid. So we do a grown-up job: there's a buyer for a patrol car, lights and all. Take one from the station lot. The whole force will be on you — shake them, then get it to the chop shop before my buyer walks.",
 		requires: ["clean-wheels"],
 		reward: { cash: 1500, rep: { street: 1, law: -1 } },
@@ -1043,7 +1202,7 @@ export const MISSIONS: readonly MissionDefinition[] = [
 	{
 		id: "street-sweep",
 		title: "Street Sweep",
-		giver: { name: "Marisol Reyes", role: "Sunset Park tenants' committee", x: -150, z: 234 },
+		giver: { name: "Marisol Reyes", speaker: MARISOL, look: MARISOL_LOOK, role: "Sunset Park tenants' committee", x: -150, z: 234 },
 		briefing: "The Cinder Boys have been leaning on families in Sunset Park — Meridian wants the land for warehouses and they're doing the asking. Five on the street, three carrying, and they'll call for back-up the moment it starts. End it.",
 		requires: ["loose-lips"],
 		reward: { cash: 1000, weapons: ["shotgun"], rep: { sunset: 2, meridian: -1 } },
@@ -1061,7 +1220,7 @@ export const MISSIONS: readonly MissionDefinition[] = [
 	{
 		id: "ring-run",
 		title: "Ring Run",
-		giver: { name: "Captain Ilsa Brandt", role: "Orion Air Base · flight instructor", x: AIRFIELD_GATE.x - 8, z: AIRFIELD_GATE.z },
+		giver: { name: "Captain Ilsa Brandt", speaker: BRANDT, look: BRANDT_LOOK, role: "Orion Air Base · flight instructor", x: AIRFIELD_GATE.x - 8, z: AIRFIELD_GATE.z },
 		briefing: "Major Vos says you're the civilian who's been embarrassing Meridian Logistics. She wants you in the air. I want proof you won't crash my jet. Eight rings, two of them down on the waves, two and a half minutes.",
 		requires: ["tailgate"],
 		reward: { cash: 3000, weapons: ["ar"] },
@@ -1075,7 +1234,7 @@ export const MISSIONS: readonly MissionDefinition[] = [
 	{
 		id: "convoy",
 		title: "Convoy",
-		giver: { name: "Major Odile Vos", role: "Orion Army Base", x: HELIPAD.x - 14, z: HELIPAD.z - 10 },
+		giver: { name: "Major Odile Vos", speaker: VOS, look: VOS_LOOK, role: "Orion Army Base", x: HELIPAD.x - 14, z: HELIPAD.z - 10 },
 		briefing: "Ordnance stolen from my depot is moving under Meridian Logistics manifests. The vans left the city a minute ago for the expressway. The gunship's on the pad. None of them reaches the hills.",
 		requires: ["ring-run"],
 		reward: { cash: 5000, weapons: ["rocketLauncher"], rep: { meridian: -2 } },
@@ -1101,7 +1260,7 @@ export const MISSIONS: readonly MissionDefinition[] = [
 		id: "coastal-sprint",
 		title: "Coastal Sprint",
 		chapter: "side",
-		giver: { name: "Tomas Quill", role: "Collector · hates Silas Crane", x: 372, z: -151 },
+		giver: { name: "Tomas Quill", speaker: QUILL, look: QUILL_LOOK, role: "Collector · hates Silas Crane", x: 372, z: -151 },
 		briefing: "Crane outbid me on a car once. I've hated him professionally ever since — and anyone who annoys him is a friend. My Vesper, the sea link, the far end in thirty seconds. Beat the clock and she's yours.",
 		requires: ["clean-wheels"],
 		reward: { cash: 750, vehicles: [{ id: "reward-coupe", style: "luxury", colour: "#b3121b", name: "Red Vesper" }] },
@@ -1115,10 +1274,11 @@ export const MISSIONS: readonly MissionDefinition[] = [
 		outro: [{ who: QUILL, text: "Magnificent. Keep her. Send Crane a photo." }],
 	},
 	CODE_THREE,
+	COUNTING_HOUSE,
 	raceMission(DOWNTOWN, {
 		id: "downtown-dash",
 		title: "Downtown Dash",
-		giver: { name: "Rosa \"Redline\" Vega", role: "Street racing", x: -100, z: 9 },
+		giver: { name: "Rosa \"Redline\" Vega", speaker: ROSA, look: ROSA_LOOK, role: "Street racing", x: -100, z: 9 },
 		briefing: "Two laps round the blocks, lights or no lights. My three best are already on the grid. Jax Ruelle used to race here before Crane bought him. You start at the back — win it.",
 		requires: ["clean-wheels"],
 		reward: { cash: 1500, rep: { street: 1 } },
@@ -1127,7 +1287,7 @@ export const MISSIONS: readonly MissionDefinition[] = [
 	raceMission(SEA_LINK, {
 		id: "sea-link-showdown",
 		title: "Sea Link Showdown",
-		giver: { name: "Rosa \"Redline\" Vega", role: "Street racing", x: 352, z: -169 },
+		giver: { name: "Rosa \"Redline\" Vega", speaker: ROSA, look: ROSA_LOOK, role: "Street racing", x: 352, z: -169 },
 		briefing: "Straight line, top speed, whoever blinks loses. The far end of the bridge, first one there.",
 		requires: ["downtown-dash"],
 		reward: { cash: 2500, rep: { street: 1 } },
@@ -1136,7 +1296,7 @@ export const MISSIONS: readonly MissionDefinition[] = [
 	raceMission(GHATS, {
 		id: "ghats-hillclimb",
 		title: "Ghats Hillclimb",
-		giver: { name: "Rosa \"Redline\" Vega", role: "Street racing", x: -320, z: -9 },
+		giver: { name: "Rosa \"Redline\" Vega", speaker: ROSA, look: ROSA_LOOK, role: "Street racing", x: -320, z: -9 },
 		briefing: "Up the Ghats, through the tunnel, to the top. They know every bend. Beat them and the gold Vesper is yours.",
 		requires: ["sea-link-showdown"],
 		reward: { cash: 4000, rep: { street: 2 }, vehicles: [{ id: "reward-gold-coupe", style: "luxury", colour: "#c9a227", name: "Gold Vesper" }] },

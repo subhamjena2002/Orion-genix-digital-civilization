@@ -374,7 +374,7 @@ export function WorldMap() {
 						<div className="orion-map-legend">
 							<p className="orion-map-legend-title">Map legend</p>
 							<ul>
-								{(["player", "waypoint", "objective", "mission", "target", "safehouse", "hospital", "police", "airport", "army"] as const).map((kind) => (
+								{(["player", "waypoint", "objective", "mission", "target", "safehouse", "gunShop", "showroom", "hospital", "police", "airport", "army"] as const).map((kind) => (
 									<li key={kind}>
 										<svg viewBox={kind === "waypoint" ? "-0.6 -1.15 1.2 1.2" : "-0.6 -0.6 1.2 1.2"} width={16} height={16} aria-hidden="true"><BlipIcon kind={kind} /></svg>
 										{BLIP_LABELS[kind]}

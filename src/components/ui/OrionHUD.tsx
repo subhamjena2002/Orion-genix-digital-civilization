@@ -10,6 +10,7 @@ import { enterFullscreen, useFullscreen } from "./fullscreen";
 import { LandscapeMode } from "./LandscapeMode";
 import { MissionHud } from "./MissionHud";
 import { MissionLog } from "./MissionLog";
+import { ShopPanel } from "./ShopPanel";
 import { TouchControls } from "./TouchControls";
 import { useTouchDevice } from "./useTouchDevice";
 import { WorldContext } from "./WorldContext";
@@ -44,7 +45,7 @@ export function OrionHUD() {
 			<DrowningOverlay />
 			<WorldHeader />
 
-			<div className="relative flex-1 p-5 sm:p-8">
+			<div className="orion-hud-layer relative flex-1 p-5 sm:p-8">
 				{/* Under everything else in the HUD, so the open map sits over the buttons. */}
 				{touch ? <TouchControls /> : null}
 
@@ -57,6 +58,7 @@ export function OrionHUD() {
 				<DrivingHud touch={touch} />
 				<CombatHud />
 				<MissionHud />
+				<ShopPanel />
 				<FlightHud touch={touch} />
 				{touch ? <LandscapeMode /> : null}
 			</div>

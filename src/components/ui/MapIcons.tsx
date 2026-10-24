@@ -6,7 +6,7 @@ import { MAP_COLOURS } from "./MapLayers";
  * screen. Shared by the map and its legend, so the legend always matches.
  */
 
-export const BLIP_LABELS: Readonly<Record<Exclude<BlipKind, "shop">, string>> = {
+export const BLIP_LABELS: Readonly<Record<BlipKind, string>> = {
 	player: "You",
 	waypoint: "Waypoint",
 	objective: "Objective",
@@ -16,6 +16,8 @@ export const BLIP_LABELS: Readonly<Record<Exclude<BlipKind, "shop">, string>> = 
 	ally: "Contact",
 	lead: "Street lead",
 	safehouse: "Safehouse",
+	gunShop: "Gun shop",
+	showroom: "Car showroom",
 	hospital: "Hospital",
 	police: "Police",
 	airport: "Air base",
@@ -118,6 +120,24 @@ export function BlipIcon({ kind }: Readonly<{ kind: BlipKind }>) {
 				<g>
 					<circle r={0.5} fill="#2e7d4f" stroke="#ffffff" strokeWidth={0.08} />
 					<path d="M0 -0.3 L0.3 -0.04 L0.2 -0.04 L0.2 0.26 L-0.2 0.26 L-0.2 -0.04 L-0.3 -0.04 Z" fill="#ffffff" />
+				</g>
+			);
+		case "gunShop":
+			return (
+				<g>
+					<circle r={0.5} fill="#c8402a" stroke="#ffffff" strokeWidth={0.08} />
+					{/* A pistol side on, muzzle to the right. */}
+					<path d="M-0.3 -0.16 L0.32 -0.16 L0.32 0 L-0.04 0 L-0.08 0.28 L-0.26 0.28 L-0.2 0 L-0.3 0 Z" fill="#ffffff" />
+				</g>
+			);
+		case "showroom":
+			return (
+				<g>
+					<circle r={0.5} fill="#1f9d5a" stroke="#ffffff" strokeWidth={0.08} />
+					{/* A car side on. */}
+					<path d="M-0.34 0.12 L-0.34 -0.02 L-0.18 -0.04 L-0.08 -0.18 L0.14 -0.18 L0.24 -0.04 L0.34 -0.02 L0.34 0.12 Z" fill="#ffffff" />
+					<circle cx={-0.18} cy={0.14} r={0.07} fill="#1f9d5a" stroke="#ffffff" strokeWidth={0.04} />
+					<circle cx={0.18} cy={0.14} r={0.07} fill="#1f9d5a" stroke="#ffffff" strokeWidth={0.04} />
 				</g>
 			);
 		case "player":

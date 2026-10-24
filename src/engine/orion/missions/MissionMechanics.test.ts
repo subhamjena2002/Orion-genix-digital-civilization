@@ -485,3 +485,27 @@ describe("emergency calls (Code Three's mechanics)", () => {
 		expect(director.objective?.step).toBe("board");
 	});
 });
+
+describe("spoken dialogue", () => {
+	it("hands each line to the voice, and holds the subtitle while it's still speaking", () => {
+		const spoken: string[] = [];
+		let busy = false;
+		director.setVoice({ speak: (line) => { spoken.push(line.text); busy = true; }, speaking: () => busy, stop: () => { busy = false; } });
+		director.start(mission([{ kind: "goto", label: "Go", x: 100, z: 0, radius: 5 }], {
+			intro: [{ who: "Rico", text: "First.", seconds: 1 }, { who: "Rico", text: "Second.", seconds: 1 }],
+		}));
+		director.update(0.1, at(0, 0));
+		expect(spoken).toEqual(["First."]);
+		// Past its reading time, but still being said: held.
+		director.update(2, at(0, 0));
+		expect(readMissionHud().subtitle?.text).toBe("First.");
+		busy = false;
+		director.update(0.1, at(0, 0));
+		expect(spoken).toEqual(["First.", "Second."]);
+		// A voice that never finishes doesn't hold the line for ever.
+		director.update(10, at(0, 0));
+		expect(readMissionHud().subtitle).toBeNull();
+		director.setVoice(null);
+	});
+});
+

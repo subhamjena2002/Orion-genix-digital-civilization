@@ -7,6 +7,7 @@ import { emitGameEvent } from "../missions/GameEvents";
 import { pavedHeightAt } from "../roads/RoadNetwork";
 import { terrainHeightAt } from "../world/Mountains";
 import { takeTeleport } from "./Teleport";
+import { readCinematicView, type CinematicView } from "./CinematicCamera";
 import { controlsHeld } from "./ControlHold";
 import { writeFlightHud } from "../aircraft/FlightHud";
 import { GUNSHIP_WEAPONS } from "../aircraft/GunshipWeapons";
@@ -445,7 +446,9 @@ export class OrionThirdPersonController extends Script {
 		const teleport = takeTeleport();
 		if (teleport) this.teleport(teleport.x, teleport.z, teleport.yaw);
 
-		const interact = this.interactPressed;
+		// Held through a cutscene (and a race's countdown): no getting in or out.
+		const held = controlsHeld();
+		const interact = this.interactPressed && !held;
 		this.interactPressed = false;
 		if (interact && this.mode === "onFoot") {
 			if (!this.tryBoardGunship() && !this.tryBoardJet()) this.tryCarjack();
@@ -500,6 +503,11 @@ export class OrionThirdPersonController extends Script {
 			running = stickLength >= STICK_RUN;
 			gait = Math.min(1, stickLength / STICK_FULL_JOG);
 		}
+		if (held) {
+			axisX = 0;
+			axisZ = 0;
+			running = false;
+		}
 		const axisLength = Math.hypot(axisX, axisZ);
 		const normalizedX = axisLength > 0 ? axisX / axisLength : 0;
 		const normalizedZ = axisLength > 0 ? axisZ / axisLength : 0;
@@ -524,7 +532,7 @@ export class OrionThirdPersonController extends Script {
 		const blend = 1 - Math.exp(-response * dt);
 		this.currentVelocity.x += (this.desiredVelocity.x - this.currentVelocity.x) * blend;
 		this.currentVelocity.z += (this.desiredVelocity.z - this.currentVelocity.z) * blend;
-		if ((this.keys.has("Space") || stick.jump) && this.isGrounded()) {
+		if (!held && (this.keys.has("Space") || stick.jump) && this.isGrounded()) {
 			this.currentVelocity.y = this.jumpForce / this.entity.rigidbody.mass;
 		}
 
@@ -544,12 +552,19 @@ export class OrionThirdPersonController extends Script {
 
 		// Shooting or swinging turns the character to where the camera aims; otherwise they turn
 		// towards the direction of travel, and hold the last facing when idle.
-		const combat = this.runCombat(dt, true);
+		const combat = this.runCombat(dt, !held);
 		// Something else turned the body since last frame (getting out of a car, a respawn): the
 		// turn starts from there, at rest.
 		if (Math.abs(angleDelta(this.turn.yaw, this.characterYaw)) > 0.01) this.turn.rate = 0;
 		this.turn.yaw = this.characterYaw;
-		if (combat?.faceAim) {
+		const cinematic = held ? readCinematicView() : null;
+		if (cinematic && Number.isFinite(cinematic.faceX)) {
+			// In a cutscene, turned to whoever they're talking to.
+			const here = this.entity.getPosition();
+			if (Math.hypot(cinematic.faceX - here.x, cinematic.faceZ - here.z) > 0.3) {
+				stepTurn(this.turn, Math.atan2(cinematic.faceX - here.x, cinematic.faceZ - here.z) * 180 / Math.PI, dt, WALK_TURN);
+			}
+		} else if (combat?.faceAim) {
 			stepTurn(this.turn, this.yaw, dt, AIM_TURN);
 		} else if (axisLength > 0) {
 			const targetFacing = Math.atan2(this.desiredVelocity.x, this.desiredVelocity.z) * 180 / Math.PI;
@@ -891,6 +906,8 @@ export class OrionThirdPersonController extends Script {
 
 	/** The camera looks past the aircraft it's following (its own box would pull it in close). */
 	private readonly cameraSees = (entity: Entity) => this.mode !== "flying" || entity.name !== "gunship";
+	/** A cutscene's camera looks past the player and whatever they're sat in: over a shoulder, at a car with them in it. */
+	private readonly cinematicSees = (entity: Entity) => entity !== this.entity && entity !== this.car?.entity && this.cameraSees(entity);
 
 	// ---- The gunship ---------------------------------------------------------------------------
 
@@ -1324,11 +1341,11 @@ export class OrionThirdPersonController extends Script {
 	 * How far the camera may sit behind the player before solid geometry gets in the way, so
 	 * backing against a wall doesn't put the camera inside the building.
 	 */
-	private allowedCameraDistance(distance: number): number {
+	private allowedCameraDistance(distance: number, sees = this.cameraSees): number {
 		// Start outside the player's own capsule so the ray can't hit the player.
 		const start = this.rayStart.copy(this.cameraTarget).add(this.rayScratch.copy(this.rayDirection).mulScalar(CAMERA_RAY_START));
 		const end = this.desiredCameraPosition.copy(this.cameraTarget).add(this.rayScratch.copy(this.rayDirection).mulScalar(distance));
-		const hit = this.physics?.raycastFirst(start, end, { filterCallback: this.cameraSees });
+		const hit = this.physics?.raycastFirst(start, end, { filterCallback: sees });
 		if (!hit) return distance;
 
 		const blocked = Math.hypot(
@@ -1341,6 +1358,11 @@ export class OrionThirdPersonController extends Script {
 
 	private updateCamera(dt: number, focus?: Vec3, distance = this.cameraDistance, height = this.cameraHeight) {
 		if (!this.camera) return;
+		const cinematic = readCinematicView();
+		if (cinematic) {
+			this.placeCinematicCamera(cinematic);
+			return;
+		}
 		const position = focus ?? this.entity.getPosition();
 
 		// A capsule resting on box colliders micro-bounces at the seams. Reading that raw
@@ -1371,6 +1393,26 @@ export class OrionThirdPersonController extends Script {
 		this.camera.lookAt(this.cameraTarget, UP);
 		writeCameraView(this.cameraPosition.x, this.cameraPosition.z, -this.rayDirection.x, -this.rayDirection.z);
 		writeCameraLens(this.camera.camera?.fov ?? this.baseFov, this.app.graphicsDevice.height);
+	}
+
+	/**
+	 * A cutscene's shot (see CinematicCamera): the camera where the shot puts it, pulled in along
+	 * the line to what it's looking at if a wall's in the way, as the follow camera is.
+	 */
+	private placeCinematicCamera(view: Readonly<CinematicView>) {
+		const camera = this.camera;
+		if (!camera) return;
+		this.cameraTarget.set(view.atX, view.atY, view.atZ);
+		this.rayDirection.set(view.fromX - view.atX, view.fromY - view.atY, view.fromZ - view.atZ);
+		const reach = this.rayDirection.length();
+		if (reach < 1e-3) return;
+		this.rayDirection.mulScalar(1 / reach);
+		const allowed = this.allowedCameraDistance(reach, this.cinematicSees);
+		this.cameraPosition.copy(this.cameraTarget).add(this.rayScratch.copy(this.rayDirection).mulScalar(allowed));
+		camera.setPosition(this.cameraPosition);
+		camera.lookAt(this.cameraTarget, UP);
+		writeCameraView(this.cameraPosition.x, this.cameraPosition.z, -this.rayDirection.x, -this.rayDirection.z);
+		writeCameraLens(camera.camera?.fov ?? this.baseFov, this.app.graphicsDevice.height);
 	}
 
 	/**

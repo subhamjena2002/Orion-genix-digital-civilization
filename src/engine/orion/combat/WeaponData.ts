@@ -80,6 +80,8 @@ export interface WeaponDefinition {
 	magazineSize: number;
 	/** Spare rounds carried at the start. */
 	startingAmmo: number;
+	/** The most spare rounds that can be carried: a pickup or a purchase stops there. */
+	maxAmmo: number;
 	reloadTime: number;
 	/** How far it can hit, in metres. */
 	range: number;
@@ -111,7 +113,7 @@ export const WEAPONS: readonly WeaponDefinition[] = [
 	{
 		id: "fists", name: "Fists", type: "unarmed", hold: "unarmed", slot: 1,
 		damage: 14, damageType: "melee", fireRate: 2.2, automatic: false,
-		magazineSize: 0, startingAmmo: 0, reloadTime: 0, range: 1.1, spread: 0, pellets: 1,
+		magazineSize: 0, startingAmmo: 0, maxAmmo: 0, reloadTime: 0, range: 1.1, spread: 0, pellets: 1,
 		recoil: { pitch: 0, yaw: 0 }, impulse: 1.6, equipTime: 0.15,
 		// Man_Punch is 0.92 s; at 1.6x the fist lands ~0.2 s in, and the swing ends with the clip.
 		melee: { windup: 0.2, active: 0.12, recovery: 0.25, cooldown: 0.05, reach: 1.1, arcDegrees: 55 },
@@ -123,7 +125,7 @@ export const WEAPONS: readonly WeaponDefinition[] = [
 	{
 		id: "sword", name: "Sword", type: "melee", hold: "blade", slot: 2,
 		damage: 48, damageType: "blade", fireRate: 1.4, automatic: false,
-		magazineSize: 0, startingAmmo: 0, reloadTime: 0, range: 1.9, spread: 0, pellets: 1,
+		magazineSize: 0, startingAmmo: 0, maxAmmo: 0, reloadTime: 0, range: 1.9, spread: 0, pellets: 1,
 		recoil: { pitch: 0, yaw: 0 }, impulse: 2.2, equipTime: 0.35,
 		// Man_SwordSlash is 1.04 s; at 1.3x the blade crosses the front ~0.28 s in.
 		melee: { windup: 0.28, active: 0.16, recovery: 0.32, cooldown: 0.04, reach: 1.9, arcDegrees: 80 },
@@ -136,7 +138,7 @@ export const WEAPONS: readonly WeaponDefinition[] = [
 	{
 		id: "pistol", name: "Pistol", type: "hitscan", hold: "pistol", slot: 3,
 		damage: 30, damageType: "bullet", fireRate: 4, automatic: false,
-		magazineSize: 12, startingAmmo: 72, reloadTime: 1.35, range: 70, spread: 0.9, pellets: 1,
+		magazineSize: 12, startingAmmo: 72, maxAmmo: 360, reloadTime: 1.35, range: 70, spread: 0.9, pellets: 1,
 		recoil: { pitch: 1.6, yaw: 0.4 }, impulse: 1.2, equipTime: 0.3,
 		animations: { attack: "", speed: 1 },
 		sounds: { fire: "pistol", empty: "empty", reload: "reload", equip: "equip" },
@@ -147,7 +149,7 @@ export const WEAPONS: readonly WeaponDefinition[] = [
 	{
 		id: "ar", name: "Assault Rifle", type: "hitscan", hold: "rifle", slot: 4,
 		damage: 24, damageType: "rifle", fireRate: 10, automatic: true,
-		magazineSize: 30, startingAmmo: 210, reloadTime: 2.1, range: 140, spread: 1.4, pellets: 1,
+		magazineSize: 30, startingAmmo: 210, maxAmmo: 600, reloadTime: 2.1, range: 140, spread: 1.4, pellets: 1,
 		recoil: { pitch: 0.75, yaw: 0.35 }, impulse: 1.4, equipTime: 0.45,
 		animations: { attack: "", speed: 1 },
 		sounds: { fire: "rifle", empty: "empty", reload: "reload", equip: "equip" },
@@ -165,7 +167,7 @@ export const WEAPONS: readonly WeaponDefinition[] = [
 	{
 		id: "shotgun", name: "Shotgun", type: "hitscan", hold: "shotgun", slot: 5,
 		damage: 13, damageType: "buckshot", fireRate: 1.15, automatic: false,
-		magazineSize: 6, startingAmmo: 42, reloadTime: 2.6, range: 38, spread: 5, pellets: 9,
+		magazineSize: 6, startingAmmo: 42, maxAmmo: 120, reloadTime: 2.6, range: 38, spread: 5, pellets: 9,
 		recoil: { pitch: 4.2, yaw: 1 }, impulse: 2.6, equipTime: 0.45,
 		animations: { attack: "", speed: 1 },
 		sounds: { fire: "shotgun", empty: "empty", reload: "reload", equip: "equip" },
@@ -176,7 +178,7 @@ export const WEAPONS: readonly WeaponDefinition[] = [
 	{
 		id: "rocketLauncher", name: "Rocket Launcher", type: "projectile", hold: "launcher", slot: 6,
 		damage: 0, damageType: "explosive", fireRate: 0.7, automatic: false,
-		magazineSize: 1, startingAmmo: 8, reloadTime: 2.4, range: 300, spread: 0.3, pellets: 1,
+		magazineSize: 1, startingAmmo: 8, maxAmmo: 20, reloadTime: 2.4, range: 300, spread: 0.3, pellets: 1,
 		recoil: { pitch: 5, yaw: 0.6 }, impulse: 0, equipTime: 0.7,
 		projectile: { speed: 48, gravity: 1.2, lifetime: 6, explosionRadius: 8, explosionDamage: 240 },
 		animations: { attack: "", speed: 1 },

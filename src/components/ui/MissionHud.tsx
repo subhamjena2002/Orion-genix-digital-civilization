@@ -104,9 +104,11 @@ function BonusList({ bonuses, className }: Readonly<{ bonuses: readonly HudBonus
 
 /**
  * Missions on screen: the giver's briefing when the player steps into a marker, then the
- * objective line (with a counter and a clock when it has them), any choice to make, the optional
- * objectives, subtitles as people talk, and the "passed" or "failed" banner at the end. Keys: E
- * or Enter to take a mission, Esc to turn it down, Z / X / V to choose, R to retry (from the last
+ * objective (top left, under the header, with a counter and a clock when it has them), any choice
+ * to make, the optional
+ * objectives, subtitles as people talk, and the "passed" or "failed" banner at the end. A
+ * cutscene is letterboxed with the rest of the HUD hidden. Keys: E or Enter to take a mission,
+ * Esc to turn it down, Space to skip a cutscene, Z / X / V to choose, R to retry (from the last
  * checkpoint, if there was one), T to restart from the top.
  */
 export function MissionHud() {
@@ -116,7 +118,8 @@ export function MissionHud() {
 		function handleKeyDown(event: KeyboardEvent) {
 			if (event.repeat) return;
 			const phase = missions.phase;
-			if (phase === "briefing" && (event.code === "KeyE" || event.code === "Enter")) missions.accept();
+			if (event.code === "Space" && missions.inScene) missions.skipScene();
+			else if (phase === "briefing" && (event.code === "KeyE" || event.code === "Enter")) missions.accept();
 			else if (phase === "briefing" && (event.code === "Escape" || event.code === "Backspace")) missions.decline();
 			else if (phase === "failed" && missions.mission?.chapter !== "job" && canRetry()) {
 				if (event.code === "KeyR") retryMission(true);
@@ -135,7 +138,13 @@ export function MissionHud() {
 		<>
 			<MissionPanel hud={hud} />
 			{hud.notice ? <div key={hud.notice} className="orion-mission-notice" role="status">{hud.notice}</div> : null}
-			{hud.subtitle ? (
+			{hud.cutscene ? (
+				<div className="orion-cutscene" aria-hidden={!hud.skippable}>
+					{hud.skippable ? <button type="button" className="orion-cutscene-skip orion-focus" onClick={() => missions.skipScene()}>Skip · Space</button> : null}
+				</div>
+			) : null}
+			{/* The briefing's card has the giver's words in full while they say them. */}
+			{hud.subtitle && hud.phase !== "briefing" ? (
 				<p key={`${hud.subtitle.who}:${hud.subtitle.text}`} className="orion-subtitle" role="status" aria-live="polite">
 					<span className="orion-subtitle-who">{hud.subtitle.who}</span> {hud.subtitle.text}
 				</p>
@@ -173,6 +182,7 @@ function MissionPanel({ hud }: Readonly<{ hud: MissionHudState }>) {
 					</div>
 				) : null}
 				<div className="orion-mission-objective" role="status" aria-live="polite">
+					<span className="orion-mission-objective-title">{hud.title}</span>
 					<div key={hud.objectiveIndex} className="orion-mission-objective-line">
 						<span>{hud.objective}</span>
 						{hud.counter ? <span className="orion-mission-chip">{hud.counter}</span> : null}

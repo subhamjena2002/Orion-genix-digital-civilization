@@ -16,7 +16,7 @@ describe("deferred models", () => {
 
 	it("take the vehicles marked deferred first, and only those", () => {
 		const deferredVehicles = VEHICLE_MODELS.filter((spec) => spec.deferred).map((spec) => `${VEHICLE_MODEL_BASE}/${spec.file}`);
-		expect(deferredVehicles).toEqual(expect.arrayContaining(["/models/vehicles/orion-fire-truck.glb", "/models/vehicles/orion-sedan.glb"]));
+		expect(deferredVehicles).toEqual(expect.arrayContaining(["/models/vehicles/orion-fire-truck.glb", "/models/vehicles/orion-sedan-2026.glb"]));
 		expect(DEFERRED_MODELS.slice(0, deferredVehicles.length)).toEqual(deferredVehicles);
 		// Nothing in ordinary traffic waits: the city's streets look right from the first frame.
 		for (const [style] of ORION_VEHICLES.map((vehicle) => [vehicle.style] as const)) {

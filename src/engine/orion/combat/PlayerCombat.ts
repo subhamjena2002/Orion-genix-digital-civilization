@@ -13,9 +13,11 @@ import { MeleeAttack } from "./MeleeAttack";
 import { scatter } from "./Scatter";
 import { Projectiles } from "./Projectiles";
 import { publishCombatHud } from "./CombatHud";
-import { WEAPONS, type WeaponDefinition } from "./WeaponData";
+import { weaponById, WEAPONS, type WeaponDefinition, type WeaponId } from "./WeaponData";
 import { WeaponInventory } from "./WeaponInventory";
-import { onProgressChange, ownsWeapon } from "../missions/Progress";
+import { grantWeapon, onProgressChange, ownsWeapon } from "../missions/Progress";
+import { PICKUP_REACH, PICKUP_REACH_DRIVING, takePickupsNear, updatePickups } from "./Pickups";
+import { MAX_ARMOUR, setPlayerSupplies, type PlayerSupplies } from "./PlayerSupplies";
 import { WeaponModels, type WeaponVisual } from "./WeaponModels";
 import { playAt } from "../audio/SoundBank";
 
@@ -90,6 +92,13 @@ export class PlayerCombat {
 	public readonly inventory = new WeaponInventory(WEAPONS, "fists");
 	private readonly stopWatchingProgress: () => void;
 	public readonly health = new Health(100);
+	/** Body armour (bought): hits come off it before they reach health. Gone at a respawn. */
+	private armour = 0;
+	/** A line under the weapon panel for a moment: "+24 Pistol rounds", "Picked up: Assault Rifle". */
+	private toast = "";
+	private toastSerial = 0;
+	/** What a shop counter can hand the player (see PlayerSupplies). */
+	private readonly supplies: PlayerSupplies;
 	public readonly source: DamageSourceRef = { id: nextCombatId(), kind: "player", x: 0, z: 0 };
 
 	private readonly melee = new MeleeAttack(WEAPONS[0].melee!);
@@ -167,6 +176,20 @@ export class PlayerCombat {
 			takeDamage: (event) => this.hurt(event),
 		};
 		registerDamageable(this.body);
+		const armourLeft = () => this.armour;
+		this.supplies = {
+			spareFor: (weapon) => this.inventory.spareFor(weapon),
+			addAmmo: (weapon, rounds) => this.inventory.addAmmo(weapon, rounds),
+			get armour() {
+				return armourLeft();
+			},
+			addArmour: (amount) => {
+				const added = Math.max(0, Math.min(amount, MAX_ARMOUR - this.armour));
+				this.armour += added;
+				return added;
+			},
+		};
+		setPlayerSupplies(this.supplies);
 		this.inventory.setOwnership(ownsWeapon);
 		this.slotList = this.ownedSlots();
 		this.stopWatchingProgress = onProgressChange(() => {
@@ -195,6 +218,8 @@ export class PlayerCombat {
 		this.body.z = context.z;
 		damageableMoved(this.body);
 		this.regenerate(dt);
+		updatePickups(dt);
+		this.collectPickups(context);
 
 		if (!context.active) {
 			// In a car or mid-carjack: put the weapon away and drop any swing.
@@ -310,9 +335,10 @@ export class PlayerCombat {
 		visual.root.setRotation(this.holdRotation);
 	}
 
-	/** Back to full health, fists out and a fresh game's ammo (respawn). */
+	/** Back to full health, fists out and a fresh game's ammo (respawn); any armour's gone. */
 	public reset(): void {
 		this.health.reset();
+		this.armour = 0;
 		this.inventory.restock();
 		this.melee.cancel();
 		this.endSwingAnimation();
@@ -320,6 +346,7 @@ export class PlayerCombat {
 	}
 
 	public destroy(): void {
+		setPlayerSupplies(null);
 		this.stopWatchingProgress();
 		unregisterDamageable(this.body);
 		this.models.destroy();
@@ -525,9 +552,35 @@ export class PlayerCombat {
 	private hurt(event: DamageEvent) {
 		if (this.shielded) return;
 		this.sinceHurt = 0;
-		const killed = this.health.damage(event.amount);
+		// Armour takes what it can; the rest gets through.
+		const absorbed = Math.min(this.armour, event.amount);
+		this.armour -= absorbed;
+		const killed = this.health.damage(event.amount - absorbed);
 		this.onHurt?.(event.amount);
 		if (killed) this.onDeath?.();
+	}
+
+	/**
+	 * Weapons lying where the player walks or drives: the gun if they haven't got one like it,
+	 * its rounds as spares. A weapon they're already carrying their fill of is left lying.
+	 */
+	private collectPickups(context: CombatContext) {
+		if (!this.health.alive) return;
+		const reach = context.active ? PICKUP_REACH : PICKUP_REACH_DRIVING;
+		const wanted = (weapon: WeaponId) => !ownsWeapon(weapon) || this.inventory.spareFor(weapon) < weaponById(weapon).maxAmmo;
+		for (const pickup of takePickupsNear(context.x, context.z, reach, (candidate) => wanted(candidate.weapon))) {
+			const weapon = weaponById(pickup.weapon);
+			const had = ownsWeapon(pickup.weapon);
+			if (!had) grantWeapon(pickup.weapon);
+			const added = this.inventory.addAmmo(pickup.weapon, pickup.rounds);
+			this.showToast(had ? `+${added} ${weapon.name} rounds` : `Picked up: ${weapon.name}`);
+			playAt("equip", pickup.x, pickup.y + 0.5, pickup.z, { level: 0.7, channel: "own" });
+		}
+	}
+
+	private showToast(text: string) {
+		this.toast = text;
+		this.toastSerial++;
 	}
 
 	private regenerate(dt: number) {
@@ -567,6 +620,9 @@ export class PlayerCombat {
 			reloadProgress: this.inventory.reloadProgress,
 			health: this.health.current,
 			maxHealth: this.health.max,
+			armour: this.armour,
+			toast: this.toast,
+			toastSerial: this.toastSerial,
 			showCrosshair: carried.definition.type === "hitscan" || carried.definition.type === "projectile",
 			slots: this.slotList,
 		});

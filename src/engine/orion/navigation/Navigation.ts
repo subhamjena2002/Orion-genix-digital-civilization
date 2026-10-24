@@ -3,6 +3,7 @@ import { HOSPITALS } from "../world/Hospitals";
 import { ACCESS_ROAD, BASE } from "../world/MilitaryBase";
 import { AIRFIELD_BOUNDS } from "../world/Airfield";
 import { POLICE_STATION } from "../police/Police";
+import { SHOPS } from "../shops/ShopCatalog";
 import { CITY_EXTENT_X, CITY_EXTENT_Z, ROAD_GRID } from "../roads/RoadNetwork";
 import { ESTATE_ROAD_LINKS } from "../world/Estates";
 import { RoadGraph, type Point, type RoadLink, type Route } from "./RoadGraph";
@@ -17,7 +18,9 @@ import { RoadGraph, type Point, type RoadLink, type Route } from "./RoadGraph";
  */
 
 export type BlipKind =
-	| "player" | "waypoint" | "objective" | "mission" | "hospital" | "police" | "airport" | "army" | "safehouse" | "shop"
+	| "player" | "waypoint" | "objective" | "mission" | "hospital" | "police" | "airport" | "army" | "safehouse"
+	/** Where the cash goes: Orion Arms, and Kasper Motors' showroom. */
+	| "gunShop" | "showroom"
 	/** A mission's quarry: someone to take out, a vehicle to destroy. */
 	| "target"
 	/** A car a mission wants the player in. */
@@ -56,6 +59,7 @@ export const LANDMARK_BLIPS: readonly Blip[] = [
 	{ id: "police-hq", kind: "police", x: POLICE_STATION.position[0], z: POLICE_STATION.position[1], label: "Police HQ" },
 	{ id: "airfield", kind: "airport", x: (AIRFIELD_BOUNDS.minX + AIRFIELD_BOUNDS.maxX) / 2, z: AIRFIELD_BOUNDS.minZ + 120, label: "Air Base" },
 	{ id: "army-base", kind: "army", x: BASE.centre[0], z: BASE.centre[1], label: BASE.name },
+	...SHOPS.map((shop): Blip => ({ id: shop.id, kind: shop.kind === "guns" ? "gunShop" : "showroom", x: shop.x, z: shop.z, label: shop.name })),
 ];
 
 // ---- The road network ----------------------------------------------------------------------------

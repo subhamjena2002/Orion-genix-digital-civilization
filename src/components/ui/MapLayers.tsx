@@ -9,6 +9,7 @@ import { ORION_ROAD_SEGMENTS } from "@/engine/orion/roads/RoadNetwork";
 import { AIRFIELD_FENCE, AIRFIELD_SURFACES, RUNWAY, SHELTER, SHELTERS } from "@/engine/orion/world/Airfield";
 import { ESTATE_NAMES, ESTATE_ROADS, HOUSE_LOTS, lotOutline } from "@/engine/orion/world/Estates";
 import { HOSPITAL_REPLACED_BUILDINGS, HOSPITALS } from "@/engine/orion/world/Hospitals";
+import { SHOPS } from "@/engine/orion/shops/ShopCatalog";
 import { ACCESS_ROAD, BASE, BASE_BOUNDS } from "@/engine/orion/world/MilitaryBase";
 import { landPath, ORION_LAND } from "@/engine/orion/world/StateOutline";
 import { ORION_DISTRICTS, ORION_PARCELS } from "@/engine/orion/world/WorldModel";
@@ -55,7 +56,8 @@ const BEACH_MAP_WIDTH = 26;
 const RAIL_PATH = railPolyline().map((point) => `${point.x},${point.z}`).join(" ");
 const COAST_PATHS = ORION_LAND.map((land) => ({ ...land, d: landPath(land.points) }));
 const PARKS = ORION_PARCELS.filter((parcel) => parcel.zoning === "park");
-const CITY_BUILDINGS = ORION_BUILDING_MAP.filter((placement) => !POLICE_STATION.replacesBuildings.includes(placement.id) && !HOSPITAL_REPLACED_BUILDINGS.includes(placement.id));
+const SHOP_PLOTS = new Set(SHOPS.flatMap((shop) => shop.site.replaces));
+const CITY_BUILDINGS = ORION_BUILDING_MAP.filter((placement) => !POLICE_STATION.replacesBuildings.includes(placement.id) && !HOSPITAL_REPLACED_BUILDINGS.includes(placement.id) && !SHOP_PLOTS.has(placement.id));
 const ESTATE_LINES = ESTATE_ROADS.map((road) => ({ id: road.id, points: road.points.map(([x, z]) => `${x.toFixed(1)},${z.toFixed(1)}`).join(" "), deadEnds: [!road.startJoins ? road.points[0] : null, !road.endJoins ? road.points[road.points.length - 1] : null].filter((point): point is readonly [number, number] => point !== null) }));
 const LOT_SHAPES = HOUSE_LOTS.map((lot) => ({ lot, garden: lotOutline(lot).map(([x, z]) => `${x.toFixed(1)},${z.toFixed(1)}`).join(" ") }));
 
@@ -171,6 +173,17 @@ export const MapLayers = memo(function MapLayers({ unit, labels }: Readonly<{ un
 				<rect key={hospital.id} x={hospital.position[0] - hospital.footprint[0] / 2} y={hospital.position[1] - hospital.footprint[1] / 2} width={hospital.footprint[0]} height={hospital.footprint[1]} fill="#f2f2ef" stroke="#c9c6bd" strokeWidth={px(0.6)} />
 			))}
 			<rect x={POLICE_STATION.position[0] - POLICE_STATION.footprint[0] / 2} y={POLICE_STATION.position[1] - POLICE_STATION.footprint[1] / 2} width={POLICE_STATION.footprint[0]} height={POLICE_STATION.footprint[1]} fill="#7f9be0" />
+			{/* The gun store's roof, and the car lot's asphalt. */}
+			{SHOPS.map((shop) => (
+				<rect
+					key={shop.id}
+					x={shop.site.x - (shop.site.yaw % 180 === 0 ? shop.site.width : shop.site.depth) / 2}
+					y={shop.site.z - (shop.site.yaw % 180 === 0 ? shop.site.depth : shop.site.width) / 2}
+					width={shop.site.yaw % 180 === 0 ? shop.site.width : shop.site.depth}
+					height={shop.site.yaw % 180 === 0 ? shop.site.depth : shop.site.width}
+					fill={shop.kind === "guns" ? MAP_COLOURS.block : "#8d9096"}
+				/>
+			))}
 
 			{labels ? (
 				<g fontFamily="var(--font-geist-sans), sans-serif" textAnchor="middle" style={{ pointerEvents: "none" }}>
