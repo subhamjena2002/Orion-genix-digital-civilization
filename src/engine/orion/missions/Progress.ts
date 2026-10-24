@@ -1,6 +1,6 @@
 import type { WeaponId } from "../combat/WeaponData";
 import { holds, type Faction, type MissionDefinition, type MissionReward, type RewardVehicle } from "./MissionDirector";
-import { SAVE_WEAPONS } from "./SaveSchema";
+import { SAVE_STARTING_WEAPONS, SAVE_WEAPONS } from "./SaveSchema";
 
 /**
  * How far the player has got: the cash in their pocket, the missions passed (and best times on
@@ -39,7 +39,7 @@ export interface ProgressState {
 export const FACTIONS: readonly Faction[] = ["street", "sunset", "law", "meridian"];
 
 /** What a new game starts with: fists, a blade and a pistol. */
-export const STARTING_WEAPONS: readonly WeaponId[] = ["fists", "sword", "pistol"];
+export const STARTING_WEAPONS: readonly WeaponId[] = SAVE_STARTING_WEAPONS;
 
 const STORAGE_KEY = "orion.progress.v1";
 /** Standing runs from this to its negative. */

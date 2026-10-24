@@ -1,7 +1,9 @@
 # Cloud saves (Cloudflare D1)
 
 The game keeps the player's progress in the browser as before, and also backs it up to a
-Cloudflare D1 database in the background. Players don't need an account.
+Cloudflare D1 database in the background. Players don't need an account. Signing in (see
+[accounts.md](accounts.md)) moves the guest save into an account, so it follows them across
+devices.
 
 ## How the pieces fit
 
@@ -54,8 +56,8 @@ Errors come back as `{ "error": "<code>" }` with these statuses:
 - **`owner`.** A non-secret tag derived from the hash. The game uses it to tell whether a cached
   save belongs to the current guest.
 - **No recovery.** Clearing cookies or site data, or switching browser or device, means a new
-  guest. Nothing can recover the old save. Adding recovery would need a separate feature (an
-  account, or a transfer code).
+  guest. Nothing can recover the old save. Signing in to an account (accounts.md)
+  is the way to keep a save beyond one browser.
 
 ### Protections
 

@@ -6,9 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { handleApi, type Env } from "../../../../worker/index";
 import { CookieJar, memoryDatabase } from "../../../../worker/testing";
-import { CloudSave, mergeSaves } from "./CloudSave";
+import { CloudSave } from "./CloudSave";
 import type { MissionDefinition } from "./MissionDirector";
 import { addCash, collect, parseProgress, readProgress, recordPass, resetProgress, setProgressStorage } from "./Progress";
+import { mergeSaves } from "./SaveMerge";
 import { canonicalSave, SAVE_SCHEMA_VERSION, type SaveData } from "./SaveSchema";
 
 const ORIGIN = "https://game.test";

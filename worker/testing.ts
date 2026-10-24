@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
 import type { Env } from "./index";
@@ -9,7 +9,8 @@ import type { Env } from "./index";
  */
 export function memoryDatabase(): { env: Env; db: DatabaseSync } {
 	const db = new DatabaseSync(":memory:");
-	db.exec(readFileSync(new URL("../migrations/0001_guest_saves.sql", import.meta.url), "utf8"));
+	const migrations = new URL("../migrations/", import.meta.url);
+	for (const file of readdirSync(migrations).filter((name) => name.endsWith(".sql")).sort()) db.exec(readFileSync(new URL(file, migrations), "utf8"));
 	const env: Env = {
 		DB: {
 			prepare(query: string) {
@@ -31,7 +32,7 @@ export function memoryDatabase(): { env: Env; db: DatabaseSync } {
 	return { env, db };
 }
 
-/** A browser's cookie jar for one origin, as far as the save API needs one. */
+/** A browser's cookie jar for one origin, as far as the API needs one: Max-Age=0 removes a cookie. */
 export class CookieJar {
 	private readonly cookies = new Map<string, string>();
 
@@ -40,11 +41,17 @@ export class CookieJar {
 	}
 
 	public take(response: Response): void {
-		const set = response.headers.get("set-cookie");
-		if (!set) return;
-		const [pair] = set.split(";");
-		const at = pair.indexOf("=");
-		this.cookies.set(pair.slice(0, at), pair.slice(at + 1));
+		for (const set of response.headers.getSetCookie()) {
+			const [pair] = set.split(";");
+			const at = pair.indexOf("=");
+			const name = pair.slice(0, at);
+			if (/;\s*Max-Age=0(;|$)/i.test(set)) this.cookies.delete(name);
+			else this.cookies.set(name, pair.slice(at + 1));
+		}
+	}
+
+	public get(name: string): string | undefined {
+		return this.cookies.get(name);
 	}
 
 	public clear(): void {
