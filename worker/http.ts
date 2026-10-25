@@ -107,6 +107,25 @@ export async function limited(limiter: RateLimiter | undefined, key: string): Pr
 	}
 }
 
+/**
+ * A write's JSON body, once it's passed the checks every write must: from the game's own page,
+ * JSON, at most `maxChars`, and an object. Otherwise the refusal to send.
+ */
+export async function readJsonBody(request: Request, url: URL, maxChars: number): Promise<{ body: Record<string, unknown> } | { refused: Response }> {
+	if (!sameOrigin(request, url)) return { refused: refuse(403, "cross_origin") };
+	if (!(request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) return { refused: refuse(415, "json_only") };
+	if (Number(request.headers.get("content-length") ?? "0") > maxChars * 4) return { refused: refuse(413, "too_large") };
+	const text = await request.text();
+	if (text.length > maxChars) return { refused: refuse(413, "too_large") };
+	try {
+		const parsed: unknown = JSON.parse(text);
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { refused: refuse(400, "body") };
+		return { body: parsed as Record<string, unknown> };
+	} catch {
+		return { refused: refuse(400, "body") };
+	}
+}
+
 export function clientAddress(request: Request): string {
 	return request.headers.get("cf-connecting-ip") ?? "local";
 }

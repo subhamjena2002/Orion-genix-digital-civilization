@@ -35,6 +35,11 @@
     // Per guest: the game saves at most every couple of seconds, at checkpoints.
     { "name": "SAVE_LIMITER", "namespace_id": "4101", "simple": { "limit": 20, "period": 60 } },
     // Per address: new guests handed out.
-    { "name": "GUEST_LIMITER", "namespace_id": "4102", "simple": { "limit": 30, "period": 60 } }
+    { "name": "GUEST_LIMITER", "namespace_id": "4102", "simple": { "limit": 30, "period": 60 } },
+    // Per address and per email: sign-up and sign-in attempts (worker/auth.ts).
+    { "name": "AUTH_LIMITER", "namespace_id": "4103", "simple": { "limit": 10, "period": 60 } }
   ]
+  // Secrets, set with `npx wrangler secret put <NAME>` (never in this file):
+  //   TURNSTILE_SECRET  Cloudflare Turnstile's secret key. While unset, sign-up and sign-in skip
+  //                     the challenge; set it together with NEXT_PUBLIC_TURNSTILE_SITE_KEY at build.
 }

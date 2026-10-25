@@ -1,6 +1,7 @@
 import Link from "next/link";
 import Image from "next/image";
 
+import { AccountLink } from "@/components/account/AccountLink";
 import { Constellation } from "@/components/landing/Constellation";
 import { DeviceCheck } from "@/components/landing/DeviceCheck";
 import { PlayLink } from "@/components/landing/PlayLink";
@@ -174,7 +175,10 @@ export default function Home() {
 					<a href="#specs">Specs</a>
 					<a href="#faq">FAQ</a>
 				</nav>
-				<PlayLink from="nav" className="lp-button lp-button-primary lp-button-small">Play free</PlayLink>
+				<div className="lp-nav-actions">
+					<AccountLink className="lp-nav-account" />
+					<PlayLink from="nav" className="lp-button lp-button-primary lp-button-small">Play free</PlayLink>
+				</div>
 			</header>
 
 			<main id="top">

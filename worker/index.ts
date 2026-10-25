@@ -24,6 +24,10 @@ export interface Env {
 	SAVE_LIMITER?: RateLimiter;
 	/** Per address, on handing out new guests and on anything refused early. */
 	GUEST_LIMITER?: RateLimiter;
+	/** Per address and per email, on sign-up and sign-in. */
+	AUTH_LIMITER?: RateLimiter;
+	/** Cloudflare Turnstile's secret key. When set, sign-up and sign-in need a passed challenge. */
+	TURNSTILE_SECRET?: string;
 }
 
 /** 400 days: the longest a browser keeps a cookie. Each visit renews it. */

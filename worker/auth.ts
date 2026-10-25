@@ -1,7 +1,8 @@
 import { mergeSaves, newGameSave } from "../src/engine/orion/missions/SaveMerge";
 import { checkSave, MAX_SAVE_CHARS, SAVE_SCHEMA_VERSION, sameSave, type SaveData } from "../src/engine/orion/missions/SaveSchema";
-import { clearCookie, GUEST_COOKIE, json, newId, newToken, readCookie, readToken, refuse, sameOrigin, SESSION_COOKIE, setCookie, sha256 } from "./http";
+import { clearCookie, clientAddress, GUEST_COOKIE, json, limited, newId, newToken, readCookie, readJsonBody, readToken, refuse, sameOrigin, SESSION_COOKIE, setCookie, sha256 } from "./http";
 import type { Env } from "./index";
+import { burnPasswordCheck, hashPassword, isBreached, MAX_PASSWORD, passwordProblem, verifyPassword } from "./password";
 
 /**
  * Accounts: who is signed in, and what happens to a guest's save when they sign in
@@ -9,6 +10,9 @@ import type { Env } from "./index";
  * `startSession`; this file has the parts they share.
  *
  *   GET  /api/auth/me       the signed-in player ({ user: null } for a guest).
+ *   POST /api/auth/signup   { email, password, displayName?, turnstileToken? }: a new account,
+ *                           signed in.
+ *   POST /api/auth/signin   { email, password, turnstileToken? }
  *   POST /api/auth/signout  ends this browser's session and starts it over as a new guest.
  *
  * A session is a random token in an HttpOnly cookie, stored as its hash (migrations/0002). It
@@ -23,6 +27,17 @@ export const SESSION_TOUCH_MS = 60 * 60 * 1000;
 const USER_AGENT_CHARS = 200;
 /** Rounds of merge-and-write when the account's save changes while a guest's joins it. */
 const JOIN_ATTEMPTS = 3;
+/** Sign-up and sign-in bodies: an email, a password and a Turnstile token. */
+const MAX_AUTH_BODY = 4096;
+const MAX_EMAIL = 254;
+const MAX_DISPLAY_NAME = 32;
+/** Something@something.something, with no spaces or control characters: the mailbox decides the rest. */
+const EMAIL = /^[^\s@\u0000-\u001f\u007f]+@[^\s@\u0000-\u001f\u007f]+\.[^\s@\u0000-\u001f\u007f]+$/u;
+const CONTROL = /[\u0000-\u001f\u007f]/u;
+/** Wrong passwords in a row before the account stops taking any for a while. */
+const LOCK_AFTER = 10;
+const LOCK_MS = 15 * 60 * 1000;
+const TURNSTILE_TIMEOUT_MS = 5000;
 
 export interface Session {
 	userId: string;
@@ -41,6 +56,13 @@ interface UserRow {
 	display_name: string;
 	has_password: number;
 	providers: string;
+}
+
+interface PasswordRow {
+	id: string;
+	password_hash: string | null;
+	failed_logins: number;
+	locked_until: number | null;
 }
 
 interface GuestRow {
@@ -178,27 +200,139 @@ async function joinSave(env: Env, userId: string, guest: SaveData): Promise<void
 	throw new Error("account save kept changing");
 }
 
+/** What the game is told about the signed-in player: nothing it doesn't show them. */
+async function userView(env: Env, userId: string) {
+	const row = await env.DB.prepare(
+		"SELECT email, email_verified, display_name, password_hash IS NOT NULL AS has_password, (SELECT json_group_array(provider) FROM oauth_accounts WHERE user_id = users.id) AS providers FROM users WHERE id = ?1",
+	).bind(userId).first<UserRow>();
+	if (!row) return null;
+	return {
+		email: row.email,
+		emailVerified: row.email_verified === 1,
+		displayName: row.display_name,
+		hasPassword: row.has_password === 1,
+		providers: JSON.parse(row.providers) as string[],
+	};
+}
+
 async function me(request: Request, url: URL, env: Env): Promise<Response> {
 	const { session, cookies } = await currentSession(request, url, env);
 	if (!session) return json({ user: null }, 200, {}, cookies);
-	const row = await env.DB.prepare(
-		"SELECT email, email_verified, display_name, password_hash IS NOT NULL AS has_password, (SELECT json_group_array(provider) FROM oauth_accounts WHERE user_id = users.id) AS providers FROM users WHERE id = ?1",
-	).bind(session.userId).first<UserRow>();
-	if (!row) return json({ user: null }, 200, {}, [clearCookie(url, SESSION_COOKIE)]);
-	return json(
-		{
-			user: {
-				email: row.email,
-				emailVerified: row.email_verified === 1,
-				displayName: row.display_name,
-				hasPassword: row.has_password === 1,
-				providers: JSON.parse(row.providers) as string[],
-			},
-		},
-		200,
-		{},
-		cookies,
-	);
+	const user = await userView(env, session.userId);
+	if (!user) return json({ user: null }, 200, {}, [clearCookie(url, SESSION_COOKIE)]);
+	return json({ user }, 200, {}, cookies);
+}
+
+/** The email as stored, if it looks like one. */
+function readEmail(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const email = normaliseEmail(value);
+	return email.length <= MAX_EMAIL && EMAIL.test(email) ? email : null;
+}
+
+/** The name shown in the game: the one given, or else the email's part before the @. */
+function readDisplayName(value: unknown, email: string): string | null {
+	if (value !== undefined && value !== null && typeof value !== "string") return null;
+	const given = (value ?? "").normalize("NFKC").trim().replace(/\s+/g, " ");
+	const name = given === "" ? email.slice(0, email.indexOf("@")) : given;
+	if (name === "" || CONTROL.test(name)) return null;
+	return [...name].slice(0, MAX_DISPLAY_NAME).join("");
+}
+
+/**
+ * Whether the request carries a passed Turnstile challenge for this site. Not checked where no
+ * secret is set (local development); refused if Turnstile can't be reached, since otherwise a
+ * bot would only need to wait for an outage.
+ */
+async function passesTurnstile(request: Request, url: URL, env: Env, token: unknown): Promise<boolean> {
+	if (!env.TURNSTILE_SECRET) return true;
+	if (typeof token !== "string" || token.length < 1 || token.length > 2048) return false;
+	const form = new FormData();
+	form.append("secret", env.TURNSTILE_SECRET);
+	form.append("response", token);
+	form.append("remoteip", clientAddress(request));
+	try {
+		const response = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body: form, signal: AbortSignal.timeout(TURNSTILE_TIMEOUT_MS) });
+		const result = (await response.json()) as { success?: boolean; hostname?: string };
+		return result.success === true && (result.hostname === undefined || result.hostname === url.hostname);
+	} catch {
+		return false;
+	}
+}
+
+const tryLater = (seconds: number) => refuse(429, "try_later", { "retry-after": String(seconds) });
+
+/**
+ * A new account with a password, signed in straight away (the address is confirmed later, by
+ * email). Saying an email is taken does tell whoever asks that it has an account here; once
+ * sign-up emails exist, that answer moves into an email to the address instead.
+ */
+async function signUp(request: Request, url: URL, env: Env): Promise<Response> {
+	const read = await readJsonBody(request, url, MAX_AUTH_BODY);
+	if ("refused" in read) return read.refused;
+	const { body } = read;
+	if (await limited(env.AUTH_LIMITER, `signup:${clientAddress(request)}`)) return tryLater(60);
+	const email = readEmail(body.email);
+	if (!email) return refuse(400, "email");
+	const problem = passwordProblem(body.password);
+	if (problem) return refuse(400, problem);
+	const password = body.password as string;
+	const displayName = readDisplayName(body.displayName, email);
+	if (!displayName) return refuse(400, "display_name");
+	if (!(await passesTurnstile(request, url, env, body.turnstileToken))) return refuse(400, "turnstile");
+	if (await env.DB.prepare("SELECT id FROM users WHERE email = ?1").bind(email).first()) return refuse(409, "email_taken");
+	if ((await isBreached(password)) === true) return refuse(400, "password_breached");
+
+	let userId: string;
+	try {
+		userId = await createUser(env, { email, displayName, emailVerified: false, passwordHash: await hashPassword(password) });
+	} catch (error) {
+		// Someone else signed up with it a moment ago.
+		if (error instanceof Error && /unique/i.test(error.message)) return refuse(409, "email_taken");
+		throw error;
+	}
+	const cookies = await startSession(request, url, env, userId);
+	return json({ user: await userView(env, userId) }, 201, {}, cookies);
+}
+
+/**
+ * Signing in with a password. Every way it can fail says the same thing (no such email, no
+ * password on the account, wrong password) and takes as long, so it can't be used to find out
+ * who has an account. Guessing is slowed per address and per email by the rate limiter, and an
+ * account that takes 10 wrong passwords in a row takes none for 15 minutes.
+ */
+async function signIn(request: Request, url: URL, env: Env): Promise<Response> {
+	const read = await readJsonBody(request, url, MAX_AUTH_BODY);
+	if ("refused" in read) return read.refused;
+	const { body } = read;
+	const { password } = body;
+	if (typeof password !== "string" || password.length > MAX_PASSWORD * 4) return refuse(400, "password");
+	const email = readEmail(body.email);
+	if (await limited(env.AUTH_LIMITER, `signin:${clientAddress(request)}`)) return tryLater(60);
+	if (email && (await limited(env.AUTH_LIMITER, `signin:${email}`))) return tryLater(60);
+	if (!(await passesTurnstile(request, url, env, body.turnstileToken))) return refuse(400, "turnstile");
+
+	const row = email
+		? await env.DB.prepare("SELECT id, password_hash, failed_logins, locked_until FROM users WHERE email = ?1").bind(email).first<PasswordRow>()
+		: null;
+	if (!row || row.password_hash === null) {
+		await burnPasswordCheck(password);
+		return refuse(401, "invalid_credentials");
+	}
+	const now = Date.now();
+	if (row.locked_until !== null && row.locked_until > now) return tryLater(Math.ceil((row.locked_until - now) / 1000));
+
+	const checked = await verifyPassword(password, row.password_hash);
+	if (!checked.ok) {
+		const failures = row.failed_logins + 1;
+		const lock = failures >= LOCK_AFTER;
+		await env.DB.prepare("UPDATE users SET failed_logins = ?1, locked_until = ?2 WHERE id = ?3").bind(lock ? 0 : failures, lock ? now + LOCK_MS : null, row.id).first();
+		return refuse(401, "invalid_credentials");
+	}
+	const rehashed = checked.rehash ? await hashPassword(password) : null;
+	await env.DB.prepare("UPDATE users SET failed_logins = 0, locked_until = NULL, password_hash = COALESCE(?1, password_hash), updated_at = ?2 WHERE id = ?3").bind(rehashed, now, row.id).first();
+	const cookies = await startSession(request, url, env, row.id);
+	return json({ user: await userView(env, row.id) }, 200, {}, cookies);
 }
 
 /**
@@ -215,6 +349,8 @@ async function signOut(request: Request, url: URL, env: Env): Promise<Response> 
 
 export async function handleAuth(request: Request, url: URL, env: Env): Promise<Response> {
 	if (url.pathname === "/api/auth/me") return request.method === "GET" ? me(request, url, env) : refuse(405, "method", { allow: "GET" });
+	if (url.pathname === "/api/auth/signup") return request.method === "POST" ? signUp(request, url, env) : refuse(405, "method", { allow: "POST" });
+	if (url.pathname === "/api/auth/signin") return request.method === "POST" ? signIn(request, url, env) : refuse(405, "method", { allow: "POST" });
 	if (url.pathname === "/api/auth/signout") return request.method === "POST" ? signOut(request, url, env) : refuse(405, "method", { allow: "POST" });
 	return refuse(404, "not_found");
 }

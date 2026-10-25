@@ -230,6 +230,27 @@
   }
 }
 
+.lp-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.lp-nav-account {
+  max-width: 14ch;
+  overflow: hidden;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--lp-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 160ms ease;
+}
+
+.lp-nav-account:hover {
+  color: var(--lp-ink);
+}
+
 .lp-nav-links {
   display: flex;
   gap: 1.8rem;

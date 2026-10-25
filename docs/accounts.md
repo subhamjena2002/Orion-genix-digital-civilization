@@ -9,19 +9,25 @@ API (`worker/auth.ts`), because the site is a static export with no Next server.
 | Phase | What | State |
 |---|---|---|
 | 1 | Tables, sessions, `/api/auth/me`, sign-out, guest save joining the account | **Done** |
-| 2 | Email and password sign-up and sign-in (Turnstile, breach check, rate limits) | To do |
-| 3 | Google sign-in (OAuth code flow with PKCE, account linking) | To do |
+| 2 | Email and password sign-up and sign-in (Turnstile, breach check, rate limits), `/signin` and `/signup` pages, "Sign in" in the landing header | **Done** |
+| 3 | Google sign-in (OAuth code flow with PKCE, account linking) | To do (the button is there, disabled) |
 | 4 | Email verification and password reset | To do |
-| 5 | Pages (`/signin`, `/signup`, `/account`), in-game prompt, privacy and terms | To do |
+| 5 | `/account` page, in-game prompt, privacy and terms | To do |
 | 6 | Signed-in devices, change password, delete account | To do |
 
-Before phases 2–4 can ship, three things need settling:
+Before going live, these need settling:
 
-- **A custom domain.** Email can't be sent from `workers.dev`.
-- **An email provider.** Resend, or Cloudflare Email Service.
 - **The Workers plan.** On the free plan, a request gets 10 ms of CPU. PBKDF2-SHA256 at 100k
-  iterations (the most Workers allows) took about 16 ms in Node on the development laptop.
-  Expect to need Workers Paid, or confirm the timing in production first.
+  iterations (the most Workers allows) took about 16 ms in Node on the development laptop, and
+  sign-up and sign-in each hash once. Expect to need Workers Paid, or confirm the timing in
+  production first.
+- **Turnstile** (optional, recommended). Create a widget in the Cloudflare dashboard, then:
+  - set `NEXT_PUBLIC_TURNSTILE_SITE_KEY` when building
+  - set `TURNSTILE_SECRET` with `npx wrangler secret put TURNSTILE_SECRET`
+
+  Set both or neither: a secret with no site key on the page refuses every sign-in.
+- **Phase 4 only:** a custom domain (email can't be sent from `workers.dev`) and an email
+  provider (Resend, or Cloudflare Email Service).
 
 ## Tables (`migrations/0002_accounts.sql`)
 
@@ -75,8 +81,48 @@ A guest save that's still a new game is just dropped.
 | Method | Path | What it does |
 |---|---|---|
 | GET | `/api/auth/me` | `{ user: null }`, or `{ user: { email, emailVerified, displayName, hasPassword, providers } }` |
+| POST | `/api/auth/signup` | `{ email, password, displayName?, turnstileToken? }`. Creates the account and signs in: `201 { user }`. |
+| POST | `/api/auth/signin` | `{ email, password, turnstileToken? }`. Returns `200 { user }`, or `401 invalid_credentials` for any wrong email or password. |
 | POST | `/api/auth/signout` | Same origin only. Ends the session and clears the session and guest cookies, so the next `/api/save` starts a new guest. Fine when not signed in. |
 | GET/PUT | `/api/save` | Unchanged contract. Uses the account's save when signed in, otherwise the guest's. `owner` is different for an account and a guest. |
+
+Sign-up and sign-in only take JSON from the game's own page (otherwise `403` or `415`). Their
+errors:
+
+| Error | Status | Meaning |
+|---|---|---|
+| `email`, `display_name` | 400 | Not a usable email or player name. |
+| `password_too_short`, `password_too_long` | 400 | The password must be 10–128 characters, counted as characters. There are no other rules. |
+| `password_breached` | 400 | The password is in Have I Been Pwned's breach list. Only the first five characters of its SHA-1 are sent; if the service is down, sign-up goes ahead. |
+| `turnstile` | 400 | The Turnstile check is missing or failed (only once a secret is set). |
+| `email_taken` | 409 | There's already an account with this email. This does tell anyone who asks that the email has an account. In phase 4 it changes to "check your inbox", with the answer sent by email instead. |
+| `invalid_credentials` | 401 | No such email, an account with no password, or the wrong password. The answer and the time taken are the same for all three. |
+| `try_later` | 429 | Too many attempts (with `retry-after`). The limit is 10 a minute per address and per email (`AUTH_LIMITER`). After 10 wrong passwords in a row, the account takes none for 15 minutes. |
+
+### Passwords (`worker/password.ts`)
+
+- **Hashing.** PBKDF2-SHA256, 100,000 iterations, a 16-byte random salt, stored as
+  `pbkdf2-sha256$iterations$salt$hash`.
+- **Same password however it's typed.** Passwords are NFKC-normalised first, so the same
+  password typed with composed or decomposed accents matches.
+- **Comparison.** The hashes are compared in constant time, so timing reveals nothing.
+- **Upgrades.** A hash stored at fewer iterations is replaced at the next successful sign-in.
+
+### Pages
+
+- **`/signin` and `/signup`** (`src/components/account/`):
+  - The landing page's look, and work at phone width.
+  - Labelled fields with the `autocomplete` values password managers look for (`username`,
+    `current-password`, `new-password`), plus a show/hide toggle.
+  - Errors are announced to screen readers.
+  - Turnstile appears when its site key is set. The disabled Google button waits for phase 3.
+- **After signing in** the browser goes to `?return=` (a path on this site only) or `/play`.
+  It's a full page load, so the game starts under the account's save.
+- **Already signed in:** visiting either page shows who you're signed in as, with Play and
+  Sign out.
+- **The landing header** shows "Sign in", or the player's name once signed in.
+- **Where it works.** Plain `npm run dev` has no API, so the pages say sign-in isn't available
+  there. Use `npm run cf:dev` (http://localhost:8787).
 
 ## Notes for the game client (phase 5)
 
@@ -89,8 +135,10 @@ A guest save that's still a new game is just dropped.
 
 ## Testing
 
-`npm test` covers these in `worker/auth.test.ts`, on a real in-memory SQLite database with the
-migrations applied:
+`npm test` covers these on a real in-memory SQLite database with the migrations applied.
+`worker/signin.test.ts` covers sign-up, sign-in, locking, rate limits and Turnstile, with the
+outside services stubbed. `worker/password.test.ts` covers hashing and the breach check.
+`worker/auth.test.ts` covers:
 
 - sessions, sliding expiry, forged cookies
 - guest saves joining an account: adoption, merge, replay, rollback

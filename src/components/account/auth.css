@@ -1,0 +1,307 @@
+/*
+ * The sign-in and sign-up pages (components/account): one glass card on the landing page's
+ * black and neon. Uses the landing tokens (landing.css), prefixed lp-auth-.
+ */
+
+.lp-auth-page {
+  display: flex;
+  flex-direction: column;
+}
+
+.lp-auth {
+  position: relative;
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: clamp(24px, 6vh, 72px) var(--lp-gutter) clamp(40px, 8vh, 96px);
+  isolation: isolate;
+}
+
+.lp-auth-glow {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(40rem 26rem at 20% 10%, rgba(255, 45, 149, 0.16), transparent 70%),
+    radial-gradient(36rem 24rem at 85% 90%, rgba(34, 211, 238, 0.14), transparent 70%);
+}
+
+.lp-auth-card {
+  width: min(100%, 440px);
+  padding: clamp(24px, 5vw, 40px);
+  border: 1px solid var(--lp-line-strong);
+  border-radius: 24px;
+  background: linear-gradient(160deg, rgba(20, 20, 32, 0.86), rgba(8, 8, 14, 0.92));
+  backdrop-filter: blur(16px) saturate(1.3);
+  box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.03) inset, 0 0 90px -40px rgba(255, 45, 149, 0.55);
+}
+
+.lp-auth-title {
+  margin: 0.7rem 0 0.5rem;
+  font-family: var(--lp-display);
+  font-size: clamp(1.6rem, 5vw, 2.1rem);
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  line-height: 1.1;
+}
+
+.lp-auth-lead {
+  margin: 0 0 1.5rem;
+  color: var(--lp-muted);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.lp-auth-lead strong {
+  color: var(--lp-ink);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Google ---------- */
+
+.lp-auth-google {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 48px;
+  padding: 0.7rem 1rem;
+  border: 1px solid #747775;
+  border-radius: 999px;
+  background: #131314;
+  color: #e3e3e3;
+  font: 500 0.95rem/1 var(--font-geist-sans), "Roboto", sans-serif;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.lp-auth-google:hover:not(:disabled) {
+  background: #1e1f20;
+  border-color: #8e918f;
+}
+
+.lp-auth-google:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.lp-auth-google-mark {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+
+.lp-auth-soon {
+  flex: none;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--lp-muted);
+  font: 600 0.62rem/1 var(--font-geist-mono), monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.lp-auth-or {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin: 1.4rem 0;
+  color: var(--lp-faint);
+  font: 600 0.68rem/1 var(--font-geist-mono), monospace;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.lp-auth-or::before,
+.lp-auth-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--lp-line-strong);
+}
+
+/* ---------- Form ---------- */
+
+.lp-auth-form {
+  display: grid;
+  gap: 1.1rem;
+}
+
+.lp-auth-field {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.lp-auth-field label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.lp-auth-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.lp-auth-optional {
+  margin-left: 0.35rem;
+  color: var(--lp-faint);
+  font-weight: 400;
+}
+
+.lp-auth-field input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--lp-line-strong);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--lp-ink);
+  /* 16px or more, so phones don't zoom in on focus. */
+  font: 400 1rem/1.2 var(--font-geist-sans), sans-serif;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.lp-auth-field input::placeholder {
+  color: var(--lp-faint);
+}
+
+.lp-auth-field input:hover {
+  border-color: rgba(255, 255, 255, 0.26);
+}
+
+.lp-auth-field input:focus {
+  outline: none;
+  border-color: var(--lp-cyan);
+  background: rgba(34, 211, 238, 0.05);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.18);
+}
+
+.lp-auth-field input[aria-invalid="true"] {
+  border-color: var(--lp-pink);
+  box-shadow: 0 0 0 3px rgba(255, 45, 149, 0.16);
+}
+
+.lp-auth-password {
+  position: relative;
+}
+
+.lp-auth-password input {
+  padding-right: 4.8rem;
+}
+
+.lp-auth-reveal {
+  position: absolute;
+  top: 50%;
+  right: 0.45rem;
+  transform: translateY(-50%);
+  min-height: 36px;
+  padding: 0 0.8rem;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--lp-cyan);
+  font: 600 0.78rem/1 var(--font-geist-sans), sans-serif;
+  cursor: pointer;
+}
+
+.lp-auth-reveal:hover {
+  background: rgba(34, 211, 238, 0.1);
+}
+
+.lp-auth-hint {
+  margin: 0;
+  color: var(--lp-faint);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.lp-auth-hint-warn {
+  color: var(--lp-gold);
+}
+
+.lp-auth-turnstile {
+  min-height: 65px;
+}
+
+.lp-auth-error {
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(255, 45, 149, 0.45);
+  border-radius: 12px;
+  background: rgba(255, 45, 149, 0.1);
+  color: #ffd0e6;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.lp-auth-error a,
+.lp-auth-switch a {
+  color: var(--lp-cyan);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.lp-auth-submit {
+  width: 100%;
+  min-height: 50px;
+  margin-top: 0.2rem;
+}
+
+.lp-auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.lp-auth-actions > * {
+  flex: 1 1 140px;
+}
+
+.lp-auth-actions + .lp-auth-error {
+  margin-top: 1rem;
+}
+
+.lp-auth-switch {
+  margin: 1.3rem 0 0;
+  color: var(--lp-muted);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.lp-auth-switch + .lp-auth-switch {
+  margin-top: 0.6rem;
+}
+
+.lp-auth-switch .lp-auth-guest {
+  color: var(--lp-muted);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.lp-auth-switch .lp-auth-guest:hover {
+  color: var(--lp-ink);
+}
+
+.lp-auth-fine {
+  margin: 1.2rem 0 0;
+  color: var(--lp-faint);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-auth-field input,
+  .lp-auth-google {
+    transition: none;
+  }
+}

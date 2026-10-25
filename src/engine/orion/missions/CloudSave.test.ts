@@ -348,7 +348,7 @@ describe("merging saves", () => {
 });
 
 describe("where requests come from", () => {
-	it("only the cloud save talks to the save API: nothing in the frame, physics, traffic or AI code does", () => {
+	it("only the cloud save and the account pages talk to the API: nothing in the frame, physics, traffic or AI code does", () => {
 		const files: string[] = [];
 		const walk = (dir: string) => {
 			for (const name of readdirSync(dir)) {
@@ -359,7 +359,8 @@ describe("where requests come from", () => {
 		};
 		walk(join(__dirname, "..", "..", ".."));
 		const talking = files.filter((path) => readFileSync(path, "utf8").includes("/api/")).map((path) => path.replace(/\\/g, "/").replace(/^.*\/src\//, "src/"));
-		expect(talking).toEqual(["src/engine/orion/missions/CloudSave.ts"]);
+		// authApi runs only on the sign-in pages and the landing header, never in the game.
+		expect(talking.sort()).toEqual(["src/components/account/authApi.ts", "src/engine/orion/missions/CloudSave.ts"]);
 		const progress = readFileSync(join(__dirname, "Progress.ts"), "utf8");
 		expect(progress).not.toMatch(/fetch\(/);
 	}, 30_000);
