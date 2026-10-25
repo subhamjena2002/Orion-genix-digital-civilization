@@ -6,7 +6,15 @@
 export type VehicleStyle =
 	| "hatchback" | "sedan" | "executive" | "suv" | "luxury" | "auto" | "police" | "truck" | "militaryWagon"
 	// The civic fleet (see VEHICLE_MODELS): public and service vehicles.
-	| "taxi" | "van" | "serviceTruck" | "towTruck" | "bus" | "schoolBus" | "garbageTruck" | "ambulance" | "fireTruck";
+	| "taxi" | "van" | "serviceTruck" | "towTruck" | "bus" | "schoolBus" | "garbageTruck" | "ambulance" | "fireTruck"
+	// The premium line: sold only at Kasper Motors (see PREMIUM_STYLES), never in traffic.
+	| "grandTourer" | "flagship" | "grandSuv" | "roadster" | "hypercar";
+
+/**
+ * Cars that can only be had by buying them: they're never in the fleet, never parked for the
+ * taking, and the ones on show in the showroom are locked (see ParkedVehicle's `forSale`).
+ */
+export const PREMIUM_STYLES: ReadonlySet<VehicleStyle> = new Set<VehicleStyle>(["grandTourer", "flagship", "grandSuv", "roadster", "hypercar"]);
 
 export interface VehicleShape {
 	length: number;
@@ -51,6 +59,12 @@ export const VEHICLE_SHAPES: Readonly<Record<VehicleStyle, VehicleShape>> = {
 	garbageTruck: { length: 8.5, width: 2.5, bodyHeight: 1.6, clearance: 0.35, cabinLength: 2, cabinHeight: 1.25, cabinOffset: 3, wheelRadius: 0.5, maxSpeed: 7 },
 	ambulance: { length: 6.5, width: 2.2, bodyHeight: 1.3, clearance: 0.3, cabinLength: 1.8, cabinHeight: 1.1, cabinOffset: 2, wheelRadius: 0.4, maxSpeed: 11 },
 	fireTruck: { length: 9.5, width: 2.5, bodyHeight: 1.5, clearance: 0.35, cabinLength: 2.4, cabinHeight: 1.25, cabinOffset: 3.3, wheelRadius: 0.5, maxSpeed: 10 },
+	// The premium line (see VEHICLE_MODELS), at their built sizes.
+	grandTourer: { length: 4.95, width: 1.95, bodyHeight: 0.62, clearance: 0.13, cabinLength: 2.3, cabinHeight: 0.42, cabinOffset: -0.15, wheelRadius: 0.375, maxSpeed: 12.5 },
+	flagship: { length: 5.46, width: 1.96, bodyHeight: 0.7, clearance: 0.15, cabinLength: 2.9, cabinHeight: 0.52, cabinOffset: -0.2, wheelRadius: 0.395, maxSpeed: 11.5 },
+	grandSuv: { length: 4.95, width: 1.99, bodyHeight: 0.85, clearance: 0.26, cabinLength: 2.9, cabinHeight: 0.6, cabinOffset: -0.3, wheelRadius: 0.46, maxSpeed: 11.5 },
+	roadster: { length: 4.55, width: 1.94, bodyHeight: 0.58, clearance: 0.13, cabinLength: 1.55, cabinHeight: 0.36, cabinOffset: 0.0, wheelRadius: 0.365, maxSpeed: 12.5 },
+	hypercar: { length: 4.76, width: 2.04, bodyHeight: 0.6, clearance: 0.1, cabinLength: 2.3, cabinHeight: 0.36, cabinOffset: 0.1, wheelRadius: 0.38, maxSpeed: 14 },
 };
 
 export interface VehicleSpawn {

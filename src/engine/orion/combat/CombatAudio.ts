@@ -292,7 +292,8 @@ class CombatAudio {
 	 */
 	private playCrash(placed: Placement, severity: number): boolean {
 		const heavy = severity >= 0.9;
-		const played = playOneShot(heavy ? "crash-heavy" : "crash-light", placed, { level: 0.6 + 0.6 * Math.min(1.5, severity), variation: 0.08, echo: heavy ? 0.35 : 0.15, channel: "vehicles" });
+		// Level follows the hit: a bump at walking pace is a soft knock, not most of a full crunch.
+		const played = playOneShot(heavy ? "crash-heavy" : "crash-light", placed, { level: 0.15 + Math.min(1.5, severity), variation: 0.08, echo: heavy ? 0.35 : 0.15, channel: "vehicles" });
 		if (played && severity >= 1.15) playOneShot("glass", placed, { level: 0.55 * Math.min(1.4, severity), delay: 0.03, echo: 0.1, channel: "vehicles" });
 		return played;
 	}

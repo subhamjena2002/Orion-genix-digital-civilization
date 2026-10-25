@@ -6,7 +6,7 @@ import { Constellation } from "@/components/landing/Constellation";
 import { DeviceCheck } from "@/components/landing/DeviceCheck";
 import { PlayLink } from "@/components/landing/PlayLink";
 import { ShareButton } from "@/components/landing/ShareButton";
-import { GAME_FACTS, SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "./site";
+import { GAME_FACTS, SITE_ALTERNATE_NAMES, SITE_AUTHOR, SITE_DESCRIPTION, SITE_KEYWORDS, SITE_NAME, SITE_URL } from "./site";
 import "./landing.css";
 
 /**
@@ -113,22 +113,41 @@ const INSTALLED_APP_REDIRECT = `(function(){try{var m=function(q){return window.
 
 function JsonLd() {
 	const absolute = (path: string) => `${SITE_URL}${path}`;
+	const organization = { "@id": absolute("/#organization") };
 	const data = [
+		{
+			"@context": "https://schema.org",
+			"@type": "Organization",
+			"@id": organization["@id"],
+			name: SITE_NAME,
+			url: absolute("/"),
+			logo: absolute("/icon-512.png"),
+			founder: { "@type": "Person", name: SITE_AUTHOR },
+		},
 		{
 			"@context": "https://schema.org",
 			"@type": "WebSite",
 			name: SITE_NAME,
+			alternateName: SITE_ALTERNATE_NAMES,
 			url: absolute("/"),
+			inLanguage: "en",
+			publisher: organization,
 		},
 		{
 			"@context": "https://schema.org",
 			"@type": "VideoGame",
 			name: SITE_NAME,
+			alternateName: SITE_ALTERNATE_NAMES,
 			description: SITE_DESCRIPTION,
+			keywords: SITE_KEYWORDS.join(", "),
+			author: { "@type": "Person", name: SITE_AUTHOR },
+			publisher: organization,
 			url: absolute("/"),
 			image: absolute("/landing/hero-gunship.webp"),
 			screenshot: SCREENSHOTS.map((name) => absolute(`/landing/${name}.webp`)),
-			genre: ["Action", "Open world", "Driving", "Racing", "Flight"],
+			genre: ["Action", "Open world", "Driving", "Racing", "Flight", "Shooter"],
+			gameLocation: "Orion State",
+			numberOfPlayers: { "@type": "QuantitativeValue", value: 1 },
 			gamePlatform: ["Web browser", "PC", "Mac", "Chromebook", "Android", "iOS"],
 			operatingSystem: "Windows, macOS, ChromeOS, Linux, Android, iOS, iPadOS",
 			applicationCategory: "Game",

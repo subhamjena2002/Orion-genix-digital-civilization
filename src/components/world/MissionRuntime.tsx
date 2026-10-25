@@ -77,7 +77,7 @@ export const MissionRuntime = memo(function MissionRuntime() {
 	useEffect(() => {
 		missions.setStage(missionStage);
 		missions.setFlagSource(hasFlag);
-		// Dialogue said out loud as well as shown (browser speech; silent where there's none).
+		// Dialogue said out loud as well as shown (recorded performances, else browser speech).
 		const voice = createMissionVoice();
 		missions.setVoice(voice);
 		const stopListening = missions.on((event) => {

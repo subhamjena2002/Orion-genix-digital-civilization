@@ -7,8 +7,16 @@ import { LOD_PROFILES, projectedPixels, selectLod } from "../rendering/lod/LodPo
 import { buildMesh, compactGeometry, isMergeable, mergeGeometry, mergeMeshInstances, readVertexStream } from "../rendering/MeshMerge";
 import { shareBatchGeometry } from "../rendering/SharedBatchGeometry";
 import { DOOR_NODE, DRIVER_SIDE, GLASS_NODE, NOT_SIDE_GLASS, SEAT_LATERAL } from "./Carjack";
+import { FoldingRoof, ROOF_NODE } from "./FoldingRoof";
+import type { HitDetail, RayLike } from "../combat/Damage";
+import { decals } from "../effects/Decals";
+import { glassShards } from "../effects/GlassShards";
 import { BodyDamage, isLoosePart, type CrashHit } from "./BodyDamage";
 import { BodyJolt } from "./BodyJolt";
+import type { GlassHit, PaneResult } from "./CarGlass";
+import { FlatTyre } from "./FlatTyre";
+import { rayInstance, type InstanceHit } from "./MeshRaycast";
+import { flatDrop, type TyreCorner } from "./TyreDamage";
 import type { OrionVehicle } from "./OrionVehicle";
 import { buildOf } from "./VehicleDamage";
 import { createLodEntities, flatMaterialWarm, groupByMaterial, requestVehicleLods, type LodEntities } from "./VehicleLod";
@@ -74,7 +82,19 @@ interface Wheel {
 	rest: Quat;
 	/** Front wheels turn with the steering. */
 	front: boolean;
+	/** Centre in the model entity's frame, and the tyre's half-width (for rounds hitting it). */
+	centre: Vec3;
+	halfWidth: number;
+	/** Where the pivot sits in its parent at rest (a flat lowers it). */
+	restPosition: Vec3;
+	/** How far it's let down below the body for a flat (m). */
+	drop: number;
 }
+
+/** Share of a wheel's radius inside which a round on its face hits the rim, not the sidewall. */
+const RIM_SHARE = 0.72;
+/** Materials of the lamps' lenses (a round there cracks the lens). */
+const LAMP_MATERIAL = /headlight|tail_light|lamp_glass|headlight_lens|indicator|brake|reverse/i;
 
 const DEG = 180 / Math.PI;
 // Shared rather than allocated per frame; materials copy the value they're given.
@@ -226,6 +246,8 @@ export class OrionVehicleModel extends Script {
 	/** The rear wing that moves (see VehicleModelSpec.activeWing): its rest pose and where it is. */
 	private wing: { entity: Entity; position: Vec3; rotation: Quat; lift: number; tilt: number } | null = null;
 	private readonly wingTurn = new Quat();
+	/** A convertible's soft top (see FoldingRoof), handed to the car so the driver can work it. */
+	private roof: FoldingRoof | null = null;
 	private readonly wingRotation = new Quat();
 	/** The crash lurch on top of the driving lean (see BodyJolt), while it's still moving. */
 	private readonly jolt = new BodyJolt();
@@ -258,8 +280,23 @@ export class OrionVehicleModel extends Script {
 	/** A burnt shell's paint differs from the colours baked into LOD3. */
 	private burnt = false;
 	private destroyed = false;
-	/** Dents, glass, paint wear and loose panels (made on the first crash). */
+	/** Dents, glass, paint wear and loose panels (made on the first crash or hit). */
 	private damage: BodyDamage | null = null;
+	/** Holds bullet holes, cracks and soot; moves with the body. */
+	private marks: Entity | null = null;
+	/** The parts a round can strike that aren't glass or wheels: the body and its panels. */
+	private solidParts: MeshInstance[] = [];
+	/** Flat tyres being shown, by wheel. */
+	private readonly flats = new Map<number, FlatTyre>();
+	/** Body tilt (degrees) from flat tyres, added to the driving lean. */
+	private sagPitch = 0;
+	private sagRoll = 0;
+	private sagKey = "";
+	private readonly rayScratch = new Vec3();
+	private readonly rayDirection = new Vec3();
+	private readonly toModel = new Mat4();
+	private readonly instanceHit: InstanceHit = { distance: 0, tri: 0, nx: 0, ny: 0, nz: 0 };
+	private readonly glassHit: GlassHit = { distance: 0, pane: 0, nx: 0, ny: 0, nz: 0 };
 	private model: Entity | null = null;
 	private lastHeading: number | null = null;
 
@@ -322,6 +359,7 @@ export class OrionVehicleModel extends Script {
 
 		// Looked up lazily: the driving script on the parent may initialise after this one.
 		this.vehicle ??= ((this.entity.parent as Entity | null)?.script?.get("orionVehicle") ?? null) as OrionVehicle | null;
+		if (this.roof && this.vehicle && this.vehicle.roof !== this.roof) this.vehicle.roof = this.roof;
 		if (this.cabin && this.vehicle) {
 			this.vehicle.carjack.setCabin(this.cabin.roof, this.cabin.headForward);
 			this.cabin = null;
@@ -352,9 +390,11 @@ export class OrionVehicleModel extends Script {
 			this.lastHeading = heading;
 			this.damage.update(dt, acceleration, dt > 0 ? turn / dt : 0);
 		}
+		this.updateFlats();
 		// Simplified levels carry the wheels baked in; there's nothing separate to spin.
 		if (this.lodLevel === 0) this.spinWheels(dt, speed);
 		if (this.wing && this.lodLevel === 0) this.animateWing(dt, speed);
+		if (this.roof && this.lodLevel === 0) this.roof.update(dt);
 		this.updateLights(dt);
 	}
 
@@ -393,6 +433,8 @@ export class OrionVehicleModel extends Script {
 		const wingPattern = this.spec.activeWing;
 		const wing = wingPattern ? (model.find((node) => wingPattern.test(node.name))[0] as Entity | undefined) : undefined;
 		if (wing) this.wing = { entity: wing, position: wing.getLocalPosition().clone(), rotation: wing.getLocalRotation().clone(), lift: 0, tilt: 0 };
+		// Found (and stowed) before the levels are grouped: the distant car shows its top down too.
+		if (this.spec.foldingRoof) this.roof = FoldingRoof.find(model, this.spec.foldingRoof);
 		if (this.police && this.spec.lightBarNode) this.splitLightBar(model, this.spec.lightBarNode);
 		if (this.police && this.sirenMaterials.length === 0) this.addLightBar(visibleInstances);
 		// Grouped before merging hides the originals: the simplified levels are the whole car.
@@ -400,6 +442,9 @@ export class OrionVehicleModel extends Script {
 		this.radius = localBounds(this.entity, visibleInstances).halfExtents.length();
 		this.mergeRigidParts(model);
 		this.batchModel(model);
+		this.findSolidParts(model);
+		this.marks = new Entity("damage-marks");
+		this.entity.addChild(this.marks);
 		this.model = model;
 		this.ready = true;
 		this.on("destroy", () => {
@@ -446,6 +491,8 @@ export class OrionVehicleModel extends Script {
 		const full = level === 0;
 		if (this.mergedBody) this.mergedBody.enabled = full;
 		this.setBatchVisible(full);
+		if (this.marks && this.marks.enabled !== full) this.marks.enabled = full;
+		for (const flat of this.flats.values()) flat.visible = full;
 		// The simplified levels carry the wheels baked in. Wheels left out of the batch (a lorry's
 		// sixteen tyres and rims) were still drawn on top of them: twice the wheels, a draw call each.
 		for (const wheel of this.wheels) {
@@ -480,7 +527,7 @@ export class OrionVehicleModel extends Script {
 		// Panels that can hang loose after a crash stay separate too (see BodyDamage).
 		const keepsOwnNode = (node: GraphNode) => (
 			wheelPivots.has(node) || DOOR_NODE.test(node.name) || isLoosePart(node) || (GLASS_NODE.test(node.name) && !NOT_SIDE_GLASS.test(node.name))
-			|| (spec.activeWing?.test(node.name) ?? false)
+			|| (spec.activeWing?.test(node.name) ?? false) || (spec.foldingRoof !== undefined && ROOF_NODE.test(node.name))
 		);
 		const movable = (node: GraphNode | null) => {
 			for (let current = node; current && current !== model; current = current.parent) {
@@ -675,27 +722,377 @@ export class OrionVehicleModel extends Script {
 		const left = (hit.dirX * this.joltAxis.x + hit.dirZ * this.joltAxis.z) / (Math.hypot(this.joltAxis.x, this.joltAxis.z) || 1);
 		this.jolt.kick(along, left, hit.deltaV);
 		this.jolting = true;
-		this.damage ??= new BodyDamage(
+		this.bodyDamage()?.hit(hit);
+	}
+
+	/** The car's damage model, made on first need. */
+	private bodyDamage(): BodyDamage | null {
+		if (this.damage) return this.damage;
+		if (!this.ready || !this.model || !this.marks) return null;
+		this.vehicle ??= ((this.entity.parent as Entity | null)?.script?.get("orionVehicle") ?? null) as OrionVehicle | null;
+		const vehicle = this.vehicle;
+		const car = this.entity.parent as Entity | null;
+		if (!vehicle || !car) return null;
+		this.damage = new BodyDamage(
 			this.app,
 			car,
 			this.mergedBody,
 			this.model,
 			buildOf(vehicle.style),
-			() => this.paintMaterials,
+			() => this.allPaint(),
 			() => vehicle.carjack,
 			this.batchGroupId,
+			this.marks,
+			() => car.getPosition().y - vehicle.halfHeight,
+			() => ({ x: vehicle.velocityX, z: vehicle.velocityZ }),
 		);
-		this.damage.hit(hit);
+		return this.damage;
 	}
 
-	/** Back to factory condition: dents out, glass in, paint fresh, panels shut. */
+	/** Back to factory condition: dents out, glass in, paint fresh, panels shut, tyres up. */
 	public resetDamage() {
 		this.damage?.reset();
+		for (const flat of this.flats.values()) flat.destroy();
+		this.flats.clear();
+		this.applySag(true);
+		if (this.marks) decals(this.app).releaseAll(this.marks);
+	}
+
+	/** Every window out at once (the car going up, a blast). */
+	public shatterGlass(x: number, y: number, z: number) {
+		this.bodyDamage()?.shatterGlass(x, y, z);
+	}
+
+	/** Each wheel's place on the car, in the order tyre damage is kept (see OrionVehicle.tyres). */
+	public get wheelCorners(): TyreCorner[] {
+		return this.wheels.map((wheel) => ({ front: wheel.front, left: wheel.centre.x > 0 }));
+	}
+
+	/**
+	 * What a round entering the car's box at `entry` actually strikes, within `limit`: a pane of
+	 * glass, a tyre or its rim, a lamp, or the body. Fills `detail` and returns the distance, or
+	 * -1 if it finds a way through (over the bonnet, through an empty window and out). Before the
+	 * model is ready, the box is all there is.
+	 */
+	public refineHit(ray: Readonly<RayLike>, entry: number, limit: number, detail: HitDetail): number {
+		if (!this.ready || !this.model) {
+			detail.part = "body";
+			detail.index = -1;
+			detail.nx = -ray.dx;
+			detail.ny = -ray.dy;
+			detail.nz = -ray.dz;
+			detail.incidence = 1;
+			detail.sidewall = false;
+			return entry;
+		}
+		// Start a little before the box: a round fired from right against the car still counts.
+		const start = Math.max(0, entry - 0.5);
+		const ox = ray.ox + ray.dx * start;
+		const oy = ray.oy + ray.dy * start;
+		const oz = ray.oz + ray.dz * start;
+		const reach = limit - start;
+		let best = reach;
+		let found = false;
+		const damage = this.bodyDamage();
+		if (damage && damage.raycastGlass(ox, oy, oz, ray.dx, ray.dy, ray.dz, best, this.glassHit)) {
+			best = this.glassHit.distance;
+			found = true;
+			this.fillDetail(detail, "glass", this.glassHit.pane, this.glassHit.nx, this.glassHit.ny, this.glassHit.nz, ray, false);
+		}
+		const tyre = this.raycastTyres(ox, oy, oz, ray.dx, ray.dy, ray.dz, best, detail, ray);
+		if (tyre >= 0) {
+			best = tyre;
+			found = true;
+		}
+		for (const instance of this.solidParts) {
+			if (!instance.visible && instance.node !== this.mergedBody) continue;
+			if (!rayInstance(ox, oy, oz, ray.dx, ray.dy, ray.dz, best, instance, this.instanceHit)) continue;
+			best = this.instanceHit.distance;
+			found = true;
+			const lamp = LAMP_MATERIAL.test(instance.material?.name ?? "");
+			this.fillDetail(detail, lamp ? "lamp" : "body", -1, this.instanceHit.nx, this.instanceHit.ny, this.instanceHit.nz, ray, false);
+		}
+		return found ? start + best : -1;
+	}
+
+	/**
+	 * A round's effect on the part it struck (from refineHit): the glass cracks or goes, a hole
+	 * in the paint, a lamp lens broken. (x, y, z) is the point; (dx, dy, dz) the round's path.
+	 * Tyre damage itself is kept by the car (OrionVehicle); this only marks the rubber.
+	 */
+	public struck(detail: Readonly<HitDetail>, x: number, y: number, z: number, dx: number, dy: number, dz: number, glassDamage: number): PaneResult | null {
+		const damage = this.bodyDamage();
+		if (!damage) return null;
+		switch (detail.part) {
+			case "glass":
+				return damage.shootGlass(detail.index, x, y, z, detail.nx, detail.ny, detail.nz, dx, dy, dz, glassDamage);
+			case "body":
+				damage.mark("metal", x, y, z, detail.nx, detail.ny, detail.nz, 0.05 + Math.random() * 0.015);
+				return null;
+			case "tyre":
+				damage.mark("rubber", x, y, z, detail.nx, detail.ny, detail.nz, 0.035);
+				return null;
+			case "lamp":
+				damage.mark("crack", x, y, z, detail.nx, detail.ny, detail.nz, 0.12);
+				glassShards(this.app).burst({ x, y, z, dirX: detail.nx, dirY: 0.2, dirZ: detail.nz, spread: 0.06, count: 6, floor: ((this.entity.parent as Entity | null)?.getPosition().y ?? y) - (this.vehicle?.halfHeight ?? 0.6), style: "cubes" });
+				return null;
+			default:
+				return null;
+		}
+	}
+
+	/**
+	 * Smashes the side windows within `radius` of a point (a carjacker's elbow). Says whether any
+	 * glass was there to break, so a window already shot out isn't broken again.
+	 */
+	public smashWindowsNear(x: number, y: number, z: number, radius: number): "smashed" | "already" | "none" {
+		const damage = this.bodyDamage();
+		if (!damage) return "none";
+		return damage.glassPanes.smashNear(x, y, z, radius);
+	}
+
+	/**
+	 * Fire damage left on the body: soot over the engine bay or the whole shell, found by
+	 * dropping rays onto the bodywork.
+	 */
+	public scorch(level: number, wholeCar: boolean) {
+		const damage = this.bodyDamage();
+		const car = this.entity.parent as Entity | null;
+		if (!damage || !car) return;
+		const spots: { x: number; y: number; z: number; nx: number; ny: number; nz: number; size: number }[] = [];
+		const vehicle = this.vehicle;
+		const halfLength = vehicle?.halfLength ?? 2;
+		const halfWidth = vehicle?.halfWidth ?? 0.9;
+		const transform = car.getWorldTransform();
+		const along = wholeCar ? [0.6, 0.15, -0.35, -0.7] : [0.75, 0.5];
+		for (const share of along) {
+			for (const side of wholeCar ? [-0.45, 0.45] : [-0.3, 0.3]) {
+				const from = transform.transformPoint(this.rayScratch.set(side * halfWidth, 3, share * halfLength), new Vec3());
+				const hit = this.dropOntoBody(from.x, from.y, from.z);
+				if (hit) spots.push({ ...hit, size: (wholeCar ? 1.2 : 0.9) * (0.8 + Math.random() * 0.4) });
+			}
+		}
+		damage.soot(level, spots);
+	}
+
+	/** Where a ray dropped straight down from (x, y, z) first meets the body, if it does. */
+	private dropOntoBody(x: number, y: number, z: number): { x: number; y: number; z: number; nx: number; ny: number; nz: number } | null {
+		let best = 6;
+		let found: { x: number; y: number; z: number; nx: number; ny: number; nz: number } | null = null;
+		for (const instance of this.solidParts) {
+			if (!rayInstance(x, y, z, 0, -1, 0, best, instance, this.instanceHit)) continue;
+			best = this.instanceHit.distance;
+			found = { x, y: y - best, z, nx: this.instanceHit.nx, ny: this.instanceHit.ny, nz: this.instanceHit.nz };
+		}
+		return found;
+	}
+
+	private fillDetail(detail: HitDetail, part: HitDetail["part"], index: number, nx: number, ny: number, nz: number, ray: Readonly<RayLike>, sidewall: boolean): void {
+		detail.part = part;
+		detail.index = index;
+		detail.nx = nx;
+		detail.ny = ny;
+		detail.nz = nz;
+		detail.incidence = Math.min(1, Math.abs(nx * ray.dx + ny * ray.dy + nz * ray.dz));
+		detail.sidewall = sidewall;
+	}
+
+	/**
+	 * Rounds against the tyres, each a cylinder across the car: the tread all round, the
+	 * sidewalls on its faces (the rim inside RIM_SHARE of the radius). Returns the distance along
+	 * the given ray, or -1, filling `detail` on a hit.
+	 */
+	private raycastTyres(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, limit: number, detail: HitDetail, ray: Readonly<RayLike>): number {
+		if (this.wheels.length === 0) return -1;
+		const toModel = this.toModel.copy(this.entity.getWorldTransform()).invert();
+		const origin = toModel.transformPoint(this.rayScratch.set(ox, oy, oz), this.rayScratch);
+		const direction = toModel.transformVector(this.rayDirection.set(dx, dy, dz), this.rayDirection);
+		let best = limit;
+		let hitWheel = -1;
+		let hitPart: "tyre" | "rim" = "tyre";
+		let sidewall = false;
+		let nLocalX = 0;
+		let nLocalY = 0;
+		let nLocalZ = 0;
+		this.wheels.forEach((wheel, index) => {
+			const radius = wheel.radius;
+			const cy = wheel.centre.y - wheel.drop;
+			const py = origin.y - cy;
+			const pz = origin.z - wheel.centre.z;
+			const px = origin.x - wheel.centre.x;
+			// The tread: |(y, z)| = radius, within the width.
+			const a = direction.y * direction.y + direction.z * direction.z;
+			if (a > 1e-10) {
+				const b = py * direction.y + pz * direction.z;
+				const c = py * py + pz * pz - radius * radius;
+				const disc = b * b - a * c;
+				if (disc >= 0) {
+					const t = (-b - Math.sqrt(disc)) / a;
+					if (t >= 0 && t < best && Math.abs(px + direction.x * t) <= wheel.halfWidth) {
+						best = t;
+						hitWheel = index;
+						hitPart = "tyre";
+						sidewall = false;
+						const hy = py + direction.y * t;
+						const hz = pz + direction.z * t;
+						nLocalX = 0;
+						nLocalY = hy / radius;
+						nLocalZ = hz / radius;
+					}
+				}
+			}
+			// The faces: x = ±halfWidth, within the radius.
+			if (Math.abs(direction.x) > 1e-10) {
+				for (const face of [-1, 1]) {
+					const t = (face * wheel.halfWidth - px) / direction.x;
+					if (t < 0 || t >= best) continue;
+					const hy = py + direction.y * t;
+					const hz = pz + direction.z * t;
+					const r = Math.hypot(hy, hz);
+					if (r > radius) continue;
+					best = t;
+					hitWheel = index;
+					hitPart = r > radius * RIM_SHARE ? "tyre" : "rim";
+					sidewall = true;
+					nLocalX = face;
+					nLocalY = 0;
+					nLocalZ = 0;
+				}
+			}
+		});
+		if (hitWheel < 0) return -1;
+		const normal = this.entity.getWorldTransform().transformVector(this.rayScratch.set(nLocalX, nLocalY, nLocalZ), this.rayScratch).normalize();
+		if (normal.x * dx + normal.y * dy + normal.z * dz > 0) normal.mulScalar(-1);
+		this.fillDetail(detail, hitPart, hitWheel, normal.x, normal.y, normal.z, ray, sidewall);
+		return best;
+	}
+
+	/**
+	 * Shows the flat tyres the car has: a punctured wheel gets its own sagging tyre (see
+	 * FlatTyre), shaped as the air goes, and the body settles onto it.
+	 */
+	private updateFlats() {
+		const vehicle = this.vehicle;
+		if (!vehicle || this.wheels.length === 0) return;
+		const tyres = vehicle.tyres;
+		let changed = false;
+		for (let index = 0; index < this.wheels.length; index++) {
+			const deflation = tyres[index]?.deflation ?? 0;
+			let flat = this.flats.get(index);
+			if (deflation <= 0) {
+				if (flat) {
+					flat.destroy();
+					this.flats.delete(index);
+					changed = true;
+				}
+				continue;
+			}
+			if (!flat) {
+				flat = new FlatTyre(this.app, this.wheels[index].pivot, this.entity);
+				flat.visible = this.lodLevel === 0 && this.shown;
+				this.flats.set(index, flat);
+			}
+			flat.setDeflation(deflation);
+			changed = true;
+		}
+		if (changed) this.applySag(false);
+	}
+
+	/**
+	 * The body down on its flat tyres: each flat wheel's centre drops by what its tyre lost, the
+	 * body leans (pitch and roll, fitted over all the wheels) to follow, and each wheel is let
+	 * down or tucked up by whatever the lean doesn't account for, so every tyre stays on the road.
+	 */
+	private applySag(clear: boolean) {
+		const drops = this.wheels.map((wheel, index) => {
+			const flat = this.flats.get(index);
+			if (clear || !flat) return 0;
+			const { tyre, rim } = flat.radii;
+			return flatDrop(tyre, rim) * (this.vehicle?.tyres[index]?.deflation ?? 0);
+		});
+		const key = drops.map((drop) => drop.toFixed(3)).join(",");
+		if (key === this.sagKey) return;
+		this.sagKey = key;
+		// Least squares for drop ≈ pitch·z − roll·x (pitch nose-down, roll left-up, radians).
+		let zz = 0;
+		let xx = 0;
+		let xz = 0;
+		let zd = 0;
+		let xd = 0;
+		this.wheels.forEach((wheel, index) => {
+			const { x, z } = wheel.centre;
+			zz += z * z;
+			xx += x * x;
+			xz += x * z;
+			zd += z * drops[index];
+			xd += x * drops[index];
+		});
+		const det = zz * xx - xz * xz;
+		let pitch = 0;
+		let roll = 0;
+		if (Math.abs(det) > 1e-9) {
+			pitch = (zd * xx - xd * xz) / det;
+			roll = (zd * xz - xd * zz) / det;
+		}
+		this.sagPitch = pitch * DEG;
+		this.sagRoll = roll * DEG;
+		const down = this.entity.getWorldTransform().getY(this.rayScratch).normalize().mulScalar(-1);
+		this.wheels.forEach((wheel, index) => {
+			const lean = pitch * wheel.centre.z - roll * wheel.centre.x;
+			const drop = clear ? 0 : drops[index] - lean;
+			if (Math.abs(drop - wheel.drop) < 1e-4) return;
+			wheel.drop = drop;
+			const parent = wheel.pivot.parent as Entity | null;
+			if (!parent) return;
+			const offset = new Mat4().copy(parent.getWorldTransform()).invert().transformVector(down.clone().mulScalar(drop), new Vec3());
+			wheel.pivot.setLocalPosition(wheel.restPosition.x + offset.x, wheel.restPosition.y + offset.y, wheel.restPosition.z + offset.z);
+			const flat = this.flats.get(index);
+			if (flat) flat.entity.setLocalPosition(wheel.centre.x, wheel.centre.y - drop, wheel.centre.z);
+		});
+		// Re-pose the body with the new lean on the next posed frame.
+		this.shownPitch = Number.NaN;
+	}
+
+	/** Everything solid a round can hit: the merged body and the separate panels, not glass or wheels. */
+	private findSolidParts(model: Entity) {
+		const wheelPivots = new Set<GraphNode>(this.wheels.map((wheel) => wheel.pivot));
+		const underWheel = (node: GraphNode | null) => {
+			for (let current = node; current && current !== model; current = current.parent) if (wheelPivots.has(current)) return true;
+			return false;
+		};
+		const parts: MeshInstance[] = [];
+		for (const render of model.findComponents("render") as RenderComponent[]) {
+			if (!render.enabled || !render.entity.enabled) continue;
+			for (const instance of render.meshInstances) {
+				if (!instance.visible || !instance.material || underWheel(instance.node)) continue;
+				const material = instance.material as StandardMaterial;
+				if (material.blendType !== BLEND_NONE && /glass|window|windshield|windscreen/i.test(material.name ?? "")) continue;
+				parts.push(instance);
+			}
+		}
+		this.solidParts = parts;
+	}
+
+	/**
+	 * Every material drawing this car's paint: its own, and the batch's copies of them. A dynamic
+	 * batch draws its parts (doors, bonnet, boot) with a clone of their material, so a change made
+	 * to the paint alone left those panels in their old colour — a burnt-out shell kept bright doors.
+	 */
+	private allPaint(): StandardMaterial[] {
+		const list = [...this.paintMaterials];
+		if (this.batchGroupId === null) return list;
+		const names = new Set(list.map((material) => material.name));
+		const batches = (this.app.batcher as unknown as { _batchList: BatchHandle[] } | null)?._batchList ?? [];
+		for (const batch of batches) {
+			const material = batch.meshInstance.material as StandardMaterial;
+			if (batch.batchGroupId === this.batchGroupId && names.has(material.name) && !list.includes(material)) list.push(material);
+		}
+		return list;
 	}
 
 	public repaint(colour: string | null) {
 		this.burnt = colour !== null;
-		for (const material of this.paintMaterials) {
+		for (const material of this.allPaint()) {
 			material.diffuse = new Color().fromString(colour ?? this.paint);
 			// Soot has no lacquer.
 			material.clearCoat = colour ? 0 : 1;
@@ -874,8 +1271,13 @@ export class OrionVehicleModel extends Script {
 				wheel.setPosition(worldPosition);
 			}
 			const rest = new Quat().mul2(inverseModel, pivot.getRotation());
-			const front = toModel.transformPoint(bounds.center).z > 0;
-			this.wheels.push({ pivot, radius: Math.max(bounds.halfExtents.y, 0.05), rest, front });
+			const centre = toModel.transformPoint(bounds.center, new Vec3());
+			const front = centre.z > 0;
+			const local = localBounds(this.entity, instances);
+			this.wheels.push({
+				pivot, radius: Math.max(local.halfExtents.y, 0.05), rest, front, centre,
+				halfWidth: Math.max(local.halfExtents.x, 0.05), restPosition: pivot.getLocalPosition().clone(), drop: 0,
+			});
 		}
 	}
 
@@ -992,8 +1394,8 @@ export class OrionVehicleModel extends Script {
 		this.pitch += (targetPitch - this.pitch) * blend;
 		this.roll += (targetRoll - this.roll) * blend;
 		if (this.jolting) this.jolting = this.jolt.update(dt);
-		const pitch = this.pitch + this.jolt.pitch;
-		const roll = this.roll + this.jolt.roll;
+		const pitch = this.pitch + this.jolt.pitch + this.sagPitch;
+		const roll = this.roll + this.jolt.roll + this.sagRoll;
 		// Setting a transform dirties the car and everything in it for the frame's hierarchy
 		// sync; a parked car rewriting the same zero tilt cost every one of its nodes, every frame.
 		if (Math.abs(pitch - this.shownPitch) < BODY_TILT_EPSILON && Math.abs(roll - this.shownRoll) < BODY_TILT_EPSILON) return;
@@ -1042,6 +1444,7 @@ export class OrionVehicleModel extends Script {
 			this.scratch.mul2(modelRotation, this.scratch);
 			wheel.pivot.setRotation(this.scratch);
 		}
+		for (const [index, flat] of this.flats) if (this.wheels[index].front) flat.steer(steer);
 	}
 
 	private updateLights(dt: number) {

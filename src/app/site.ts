@@ -12,6 +12,18 @@ export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://orion-geni
 
 export const SITE_NAME = "OrionGenix";
 
+/** How people misspell or space the name when they search for it. */
+export const SITE_ALTERNATE_NAMES = ["Orion Genix", "Orion Genix game", "Orion State"];
+
+/** Who makes it, for the share cards and the structured data. */
+export const SITE_AUTHOR = "Subham Jena";
+
+/**
+ * Google Search Console's HTML-tag verification code (the content="…" value it gives you), set at
+ * build time. Left unset, no tag is written.
+ */
+export const GOOGLE_SITE_VERIFICATION = process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION;
+
 /** Under 60 characters, so search results show it whole. */
 export const SITE_TITLE = "OrionGenix — Free Open-World Game in Your Browser";
 
@@ -40,7 +52,14 @@ export const SITE_KEYWORDS = [
 	"games for laptop without graphics card",
 	"low end pc games",
 	"WebGL game",
+	"open world driving game",
+	"free car driving game online",
+	"open world game for pc free",
+	"open world game for mobile browser",
+	"shooting game online free",
+	"no download games",
 	"OrionGenix",
+	"Orion Genix",
 ];
 
 /** Facts the page quotes, kept true to the game as built. */

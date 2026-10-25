@@ -19,6 +19,8 @@ import type { BuildingPlacement } from "@/engine/orion/buildings/Buildings";
 import { designBuilding } from "@/engine/orion/buildings/CityBuildingDesign";
 import { cityBuildingMaterials } from "@/engine/orion/buildings/CityBuildingMaterials";
 import { buildCityBuilding } from "@/engine/orion/buildings/CityBuildingMesh";
+import { BAYS } from "@/engine/orion/buildings/FacadeTextures";
+import { registerShopBuilding } from "@/engine/orion/buildings/ShopfrontGlass";
 import { hashString } from "@/engine/orion/rendering/CanvasTextures";
 import type { MeshData } from "@/engine/orion/world/MeshData";
 
@@ -65,7 +67,10 @@ export const CityBuilding = memo(function CityBuilding({ placement, groundY }: R
 		const body = new PlayCanvasEntity("building-geometry");
 		body.addComponent("render", { meshInstances: instances, castShadows: true, receiveShadows: true });
 		root.addChild(body);
+		// Shop windows that can be shot out (see ShopfrontGlass).
+		const forgetShops = spec.ground === "shop" ? registerShopBuilding(root, geometry.width, geometry.depth, spec.bayOffset / BAYS) : null;
 		return () => {
+			forgetShops?.();
 			body.destroy();
 			for (const mesh of meshes) mesh.destroy();
 		};

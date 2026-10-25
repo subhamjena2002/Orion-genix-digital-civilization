@@ -294,6 +294,8 @@ export class OrionThirdPersonController extends Script {
 		if (digit && !event.repeat) this.combatInput.slotPressed = Number(digit[1]);
 		if (event.code === "KeyR" && !event.repeat) this.combatInput.reloadPressed = true;
 		if (event.code === "KeyH" && !event.repeat) this.soundHorn();
+		// O at the wheel of a convertible: the roof up or down.
+		if (event.code === "KeyO" && !event.repeat && this.mode === "driving") this.car?.roof?.toggle();
 		this.keys.add(event.code);
 	};
 	/** H at the wheel: a car's horn, or the deep air horn of a lorry or bus. */

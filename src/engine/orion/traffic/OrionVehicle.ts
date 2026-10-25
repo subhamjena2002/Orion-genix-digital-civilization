@@ -4,8 +4,14 @@ import { onWorldReset } from "../world/WorldReset";
 import { emitGameEvent } from "../missions/GameEvents";
 import { combatAudio } from "../combat/CombatAudio";
 import { damageableMoved, registerDamageable, unregisterDamageable, type Listener } from "../combat/CombatWorld";
-import type { DamageEvent, DamageSourceRef } from "../combat/Damage";
-import { makeDamageEvent, nextCombatId } from "../combat/Damage";
+import type { DamageEvent, DamageSourceRef, HitDetail, RayLike } from "../combat/Damage";
+import { makeDamageEvent, nextCombatId, unscaledDamage } from "../combat/Damage";
+import { playAt } from "../audio/SoundBank";
+import { decals } from "../effects/Decals";
+import { glassDamage } from "./GlassDamage";
+import { deflate, hitTyre, newTyre, NO_TYRE_EFFECT, repairTyre, tyreHandling, tyreHitDamage, type TyreHandling, type TyreState } from "./TyreDamage";
+import { VehicleFire } from "./VehicleFire";
+import type { OrionVehicleModel } from "./OrionVehicleModel";
 import { approachSpeed, junctionPosition, nearestJunction, stepToward, steerToward, wrapAngle } from "../police/PursuitDriver";
 import { requestOfficer, type OrionFootOfficer } from "../police/OrionFootOfficer";
 import { FIRE_FROM_STARS, fireAtPlayer, nextShotDelay, policeGun } from "../police/PoliceFire";
@@ -18,24 +24,25 @@ import { BURNT_PAINT, getCarMeshes } from "./CarMeshes";
 import { CarPhysics, carSpecFor, type CarControls } from "./CarPhysics";
 import { crashEffects, type DamageSource } from "./CrashEffects";
 import { crashImpulse, type CrashBody } from "./CrashImpulse";
+import { extentAlong, footprintContact, separationShares, type Contact, type Footprint } from "./VehicleContacts";
 import { EmissionAccumulator } from "../effects/ParticleField";
 import {
 	BLAST_RADIUS,
 	BURN_SECONDS,
 	blastAt,
-	burnDown,
 	BURNING_BELOW,
 	conditionOf,
 	buildOf,
 	crashDamage,
-	damageEffect,
+	FIRE_DRAIN_PER_SECOND,
 	PEDESTRIAN_DAMAGE,
 	powerFactor,
-	WRECK_FIRE_SECONDS,
+	SMOKING_BELOW,
+	type DamageEffect,
 	type VehicleCondition,
 	type VehicleBuild,
 } from "./VehicleDamage";
-import type { CrashHit } from "./BodyDamage";
+import type { FoldingRoof } from "./FoldingRoof";
 import { skidMarks } from "./SkidMarks";
 import type { VehicleStyle } from "./Vehicles";
 import { pavedHeightAt, ROAD_GRID } from "../roads/RoadNetwork";
@@ -85,9 +92,33 @@ const TURN_SPEED = { left: 4.5, right: 5.5 } as const;
 const FOLLOW_GAP = 2.2;
 const PERSON_GAP = 2.5;
 const PERSON_RADIUS = 0.45;
-/** Seconds held up by a crossing (non-parallel) car before it's ignored, to break deadlocks. */
+/** Room either side of the body that counts as in the way: for a car, and for someone on foot. */
+const VEHICLE_CLEARANCE = 0.35;
+/**
+ * Someone waiting on the kerb at a corner stood just inside the wider margin of a car turning past,
+ * and the two waited on each other for good.
+ */
+const PERSON_CLEARANCE = 0.1;
+/**
+ * Seconds held up by a crossing (non-parallel) car before right of way is dropped, to break
+ * deadlocks. The car still never drives into anything (see bodyBlocked): it only edges forward
+ * while there is room.
+ */
 const DEADLOCK_SECONDS = 4;
 const DEADLOCK_RELEASE_SECONDS = 2.5;
+/** Room kept to anything in front when checking a lane-following car can physically move. */
+const CONTACT_MARGIN = 0.15;
+/** Physically blocked this long while out of sight: the car is recycled onto another road. */
+const BLOCKED_RECYCLE_SECONDS = 6;
+/** Physically blocked this long in sight: it backs up a little to let the other car through. */
+const BLOCKED_BACKOFF_SECONDS = 7;
+const BACKOFF_SPEED = 1.2;
+const BACKOFF_DISTANCE = 2.5;
+/** After backing off, it holds this long so the other car can go. */
+const BACKOFF_HOLD_SECONDS = 2;
+/** Changing lane round a stalled car: the road left on the leg it needs, and how fast it drifts across. */
+const LANE_CHANGE_ROOM = 14;
+const LANE_CHANGE_SPEED = 3.5;
 const TURN_CHANCE = 0.4;
 const BRAKE_LIGHT_THRESHOLD = 0.4;
 const FLASH_SECONDS = 0.28;
@@ -116,10 +147,14 @@ const WALL: CrashBody = { mass: Infinity, inertia: Infinity, velocityX: 0, veloc
 const STRIKE_SPEED = 1.4;
 const PERSON_HIT_RADIUS = 0.32;
 const PERSON_MASS = 75;
-/** Traffic stuck behind a stalled car waits this long, then squeezes past for a while. */
+/**
+ * Traffic stuck behind a stalled car waits this long, then changes lane round it where the road
+ * has a second lane; where it hasn't, it queues (and is recycled once out of sight).
+ */
 const STALLED_SPEED = 0.5;
 const STALLED_WAIT_SECONDS = 3;
-const STALLED_PASS_SECONDS = 5;
+/** Queued behind a stalled car with no lane to change into, this long and out of sight: recycled. */
+const STALLED_RECYCLE_SECONDS = 12;
 const RIDE_SMOOTHING = 14;
 /** Effects are only drawn for cars this close to the camera. */
 const EFFECT_DISTANCE = 160;
@@ -157,6 +192,23 @@ const CRASH_FULL_VOLUME = 9;
 const CRASH_QUIETEST = 0.12;
 /** Shortest gap between one car's crash sounds, in seconds. */
 const CRASH_SOUND_GAP = 0.25;
+/**
+ * Closing speed (m/s) below which a contact is a push, not a crash: the bodies part and slow, but
+ * there is no sound, shake, knock or dent.
+ */
+const CONTACT_PUSH_SPEED = 1.2;
+/** Touching the same car (or any wall) again within this long is the same collision. */
+const CONTACT_MEMORY = 0.35;
+/** ...unless it closes at least this fast again (a second ram while still against it). */
+const REHIT_SPEED = 3;
+/**
+ * A lane-following car is only knocked off its lane by a hit at least this hard (closing m/s);
+ * a gentler one meets it like a wall, and it carries on its way.
+ */
+const KNOCK_OFF_LANE_SPEED = 2;
+/** Car-against-car checks along a step lie at most this share of the car's half-width apart. */
+const SWEEP_SPACING = 0.6;
+const MAX_SWEEP_SAMPLES = 8;
 
 // Police pursuit (cars with a pursuitSlot: see updatePursuitSlot).
 /** Where a dispatched unit joins the chase: out of sight, this far from the player. */
@@ -292,6 +344,18 @@ const SWEEP_LIFTS: readonly number[] = [0, 0.75];
  * and it drove straight into it. Skipped where it would sit at the centre sweep anyway (cars).
  */
 const SWEEP_LOW_ABOVE_BOTTOM = 0.5;
+/**
+ * Outline points (fractions of half-width, half-length) checked for being inside a wall after
+ * each step (see pushOutOfWorld): closer along the sides than the sweep's, so a post or a
+ * building's corner can't sit between two of them.
+ */
+const OUTLINE_POINTS: readonly [number, number][] = [
+	[-1, 1], [-0.5, 1], [0, 1], [0.5, 1], [1, 1],
+	[-1, 0.5], [1, 0.5], [-1, 0], [1, 0], [-1, -0.5], [1, -0.5],
+	[-1, -1], [-0.5, -1], [0, -1], [0.5, -1], [1, -1],
+];
+/** Push-outs per step: a car wedged into a corner is pushed off one wall, then the other. */
+const PUSH_OUT_PASSES = 2;
 
 type RaycastAll = (start: Vec3, end: Vec3, options?: { filterCallback?: (entity: Entity) => boolean }) => RaycastResult[];
 
@@ -329,6 +393,13 @@ export class OrionVehicle extends Script {
 	public homeYaw = 0;
 	/** Height of the ground the car stands on at home. */
 	public homeGround = 0;
+	/**
+	 * On show in the showroom (see PREMIUM_STYLES): locked, so it can't be taken, and proof against
+	 * weapons, so it stays on its plinth. The only way to drive one is to buy it.
+	 */
+	public forSale = false;
+	/** A convertible's soft top, if it has one (set by OrionVehicleModel once its model is ready). */
+	public roof: FoldingRoof | null = null;
 	public brakeOn: Material | null = null;
 	public brakeOff: Material | null = null;
 	public flashRedOn: Material | null = null;
@@ -346,8 +417,15 @@ export class OrionVehicle extends Script {
 	/** True once the car has exploded; it stays a burnt shell until it's recycled. */
 	public burnedOut = false;
 	private burnTimer = 0;
-	/** Seconds since the car exploded. */
-	private burnedFor = 0;
+	/** The fire, if there is one: its strength, the water on it, the smoulder after (see VehicleFire). */
+	public readonly blaze = new VehicleFire();
+	/** Each wheel's tyre, in the model's wheel order (see OrionVehicleModel.wheelCorners). */
+	public readonly tyres: TyreState[] = [];
+	private readonly tyreEffect: TyreHandling = { ...NO_TYRE_EFFECT };
+	/** Damage taken since the fire was put out: enough of it lights a hot engine again. */
+	private damageSinceOut = 0;
+	/** The engine was scorched by a fire that's been put out. */
+	private scorched = false;
 	private readonly damageSource: DamageSource = {
 		x: 0, y: 0, z: 0, sin: 0, cos: 1, halfWidth: 0, halfLength: 0, groundY: 0, stage: "smoking", severity: 0,
 	};
@@ -362,8 +440,22 @@ export class OrionVehicle extends Script {
 	private resting = false;
 	private stillFor = 0;
 	private readonly controls: CarControls = { drive: 0, steer: 0, handbrake: false, brake: 0 };
-	private ignoreStalledSeconds = 0;
+	/** The stalled car being passed by a lane change (left out of speed planning meanwhile). */
+	private passing: TrafficAgent | null = null;
 	private stalledBlockSeconds = 0;
+	/** Lateral offset from the lane's centre while changing lane, m along leftOf (eases to 0). */
+	private laneShift = 0;
+	/** Sideways speed of that drift, m/s along leftOf (for the slight angle it's driven at). */
+	private laneDrift = 0;
+	/** Seconds this lane-following car has been unable to move for a car in its way. */
+	private hardBlockedSeconds = 0;
+	private backoffLeft = 0;
+	private holdSeconds = 0;
+	/** Contact bookkeeping: running seconds, and when each car (null: a wall) was last touched. */
+	private contactClock = 0;
+	private readonly touching = new Map<OrionVehicle | null, number>();
+	/** A hit another car dealt this one, for its camera shake on its next frame. */
+	private receivedImpact = 0;
 	private skidding = false;
 	/**
 	 * Body height while off-lane. Kept here rather than read back from the entity, because a
@@ -446,7 +538,19 @@ export class OrionVehicle extends Script {
 	/** The burning car this engine is going to, and what it's doing about it. */
 	private fireTarget: OrionVehicle | null = null;
 	private fireDuty: "responding" | "hosing" | "leaving" = "responding";
-	private hoseSeconds = 0;
+	/** Where the monitor's jet is landing now, walked onto the fire (see respondToFire). */
+	private readonly hoseAim = new Vec3();
+	private hoseAimed = false;
+	/** How far short of the fire the engine pulls up; closer after the jet couldn't get there. */
+	private fireStandoff = FIRE_STANDOFF;
+	/** Whether the monitor last had a clear line to the fire, and when to look again. */
+	private hoseClear = true;
+	private hoseSight = 0;
+	/** Seconds hosing with no water getting to the fire; seconds of cooling once it's out. */
+	private hoseBlocked = 0;
+	private hoseCooling = 0;
+	private wetPatchTimer = 0;
+	private readonly firePoint3 = new Vec3();
 	private dutySeconds = 0;
 	private readonly hoseTrail = new EmissionAccumulator();
 
@@ -461,15 +565,28 @@ export class OrionVehicle extends Script {
 		this.bodyModel()?.crash({ x, y, z, dirX, dirZ, deltaV, lost: 100 - this.integrity });
 	}
 
-	private bodyModelScript: { crash(hit: CrashHit): void; resetDamage(): void } | null = null;
+	private bodyModelScript: OrionVehicleModel | null = null;
 
 	/** The model's script, once it exists (a model streams in after the car does). */
-	private bodyModel(): { crash(hit: CrashHit): void; resetDamage(): void } | null {
+	private bodyModel(): OrionVehicleModel | null {
 		if (!this.bodyModelScript) {
 			const model = this.entity.findByName("car-model") as Entity | null;
-			this.bodyModelScript = (model?.script?.get("orionVehicleModel") as unknown as { crash(hit: CrashHit): void; resetDamage(): void } | null) ?? null;
+			this.bodyModelScript = (model?.script?.get("orionVehicleModel") as unknown as OrionVehicleModel | null) ?? null;
 		}
 		return this.bodyModelScript;
+	}
+
+	/**
+	 * A carjacker breaking the window at (x, y, z): the glass system breaks it, or says it's
+	 * already gone. "none" if this car has no breakable glass there (the rig breaks its own).
+	 */
+	public smashWindowAt(x: number, y: number, z: number): "smashed" | "already" | "none" {
+		return this.bodyModel()?.smashWindowsNear(x, y, z, 0.8) ?? "none";
+	}
+
+	/** Any tyre flat or going down. */
+	public get hasFlat(): boolean {
+		return this.tyres.some((tyre) => tyre.punctured);
 	}
 
 	/** Share of crash damage this car takes: a unit on a chase shrugs most of it off. */
@@ -484,6 +601,15 @@ export class OrionVehicle extends Script {
 		return this.pursuitSlot >= 0 && !this.stowed && this.driver === "police" && !this.burnedOut && this.integrity > 0;
 	}
 
+	/**
+	 * Whether there's an engine running to be heard: someone at the wheel, or the player getting in.
+	 * A parked car is empty, a crashed one has stalled, a burnt-out one has no engine left, and a
+	 * unit waiting out of the world isn't anywhere.
+	 */
+	public get engineRunning(): boolean {
+		return !this.stowed && !this.burnedOut && this.driver !== "parked" && this.driver !== "wrecked";
+	}
+
 	/** False for a police unit waiting out of the world (it can't be seen, entered or hit). */
 	public get inWorld(): boolean {
 		return !this.stowed;
@@ -491,24 +617,50 @@ export class OrionVehicle extends Script {
 
 	/** Flames showing: a car burning down to going up, or a wreck still alight. */
 	public get onFire(): boolean {
-		if (this.stowed) return false;
-		if (this.burnedOut) return this.burnedFor < WRECK_FIRE_SECONDS;
-		return this.integrity < BURNING_BELOW;
+		return !this.stowed && this.blaze.burning;
 	}
 
 	/**
-	 * Put out by a fire crew: a burning car stops burning (smoking, badly damaged, but it won't
-	 * go up); a burning wreck goes straight to smouldering.
+	 * Puts the flames out at once (the fire crew's job is done by water: see douse). A burning
+	 * car stops burning — badly damaged, smoking, but it won't go up; a wreck smoulders.
 	 */
 	public extinguish() {
-		if (this.burnedOut) {
-			this.burnedFor = Math.max(this.burnedFor, WRECK_FIRE_SECONDS);
-			return;
+		if (!this.blaze.burning) return;
+		this.blaze.putOut();
+		this.fireWentOut();
+	}
+
+	/**
+	 * Water from a hose landing on this car's fire this frame: `flow` is the share of a full jet
+	 * that's actually reaching it. Knocks the fire back, and cools it once out.
+	 */
+	public douse(flow: number, dt: number) {
+		const wasBurning = this.blaze.burning;
+		this.blaze.applyWater(flow, dt);
+		if (wasBurning && !this.blaze.burning) this.fireWentOut();
+	}
+
+	/** Where the fire is: the engine bay on a running car, the middle of a wreck. */
+	public firePoint(out: Vec3): Vec3 {
+		const position = this.entity.getPosition();
+		const x = this.agent?.x ?? position.x;
+		const z = this.agent?.z ?? position.z;
+		const forward = this.burnedOut ? 0 : this.halfLength * ENGINE_FORWARD;
+		const radians = this.headingDegrees / DEGREES;
+		return out.set(x + Math.sin(radians) * forward, position.y + this.halfHeight * 0.2, z + Math.cos(radians) * forward);
+	}
+
+	/** The flames are out: the engine's dead, the paint scorched where it burned. */
+	private fireWentOut() {
+		this.burnTimer = 0;
+		this.damageSinceOut = 0;
+		if (this.physics) this.physics.powerFactor = powerFactor(0);
+		if (!this.burnedOut && !this.scorched) {
+			this.scorched = true;
+			this.bodyModel()?.scorch(0.55, false);
 		}
-		if (this.integrity < BURNING_BELOW) {
-			this.integrity = BURNING_BELOW + 2;
-			this.burnTimer = 0;
-		}
+		// An engine that's burned doesn't run: nobody drives it away.
+		if (this.driver === "ai" || this.driver === "police") this.driver = "wrecked";
 	}
 	private dispatchTimer = 0;
 	/** Route: the junction being driven to, and the step that led to it. */
@@ -584,7 +736,7 @@ export class OrionVehicle extends Script {
 		this.rideHeight = ROAD_TOP_Y + this.halfHeight;
 		this.random = mulberry32(this.seed);
 		this.laneIndex = this.random() < 0.5 ? 0 : 1;
-		this.agent = registerTrafficAgent("vehicle", this.halfLength);
+		this.agent = registerTrafficAgent("vehicle", this.halfLength, this.halfWidth);
 		if (this.pursuitSlot >= 0 || this.fireSlot >= 0 || this.missionSlot >= 0) this.stow();
 		else if (this.hasHome) this.parkAtHome();
 		else this.respawnNearPlayer(0);
@@ -615,6 +767,7 @@ export class OrionVehicle extends Script {
 		// The agent carries the pose this car set itself; the entity's own position can be the
 		// spawn value React re-applied between frames.
 		this.updateCondition(dt, this.agent?.x ?? position.x, position.y, this.agent?.z ?? position.z);
+		this.updateTyres(dt);
 		// Crashed and parked cars stay where they are, like any other car, until they're far
 		// away and out of sight.
 		// Anything but the car the player is in: that includes a car held for a carjack the
@@ -647,13 +800,47 @@ export class OrionVehicle extends Script {
 		dt = Math.min(this.aiSkipped, MAX_AI_STEP);
 		this.aiSkipped = 0;
 
-		const targetSpeed = this.plannedSpeed(dt) * powerFactor(this.integrity);
+		let targetSpeed = this.plannedSpeed(dt) * powerFactor(this.integrity) * (this.tyres.length > 0 ? this.flatPace : 1);
+		if (this.holdSeconds > 0) {
+			this.holdSeconds -= dt;
+			targetSpeed = 0;
+		}
 		// Kept for the engine sound, which needs to know whether the car is pulling or coasting.
 		this.targetSpeed = targetSpeed;
 		if (targetSpeed > this.speed) this.speed = Math.min(targetSpeed, this.speed + ACCELERATION * dt);
 		else this.speed = Math.max(targetSpeed, this.speed - MAX_BRAKING * dt);
 
-		this.advance(this.speed * dt);
+		if (this.backoffLeft > 0) {
+			this.backOff(dt);
+			return;
+		}
+		// Planning keeps a gap to what it gives way to; this is the last word on what's physically
+		// there, whoever has right of way: lane following moves the car without any contact
+		// response, so it must never step into another body.
+		let step = this.speed * dt;
+		if (step > 0 && this.bodyBlocked(step)) {
+			step = 0;
+			this.speed = 0;
+			this.hardBlockedSeconds += dt;
+			if (this.hardBlockedSeconds > BLOCKED_RECYCLE_SECONDS && !inCameraView(position.x, position.z, VISIBLE_RANGE)) {
+				this.respawnNearPlayer(RESPAWN_MIN);
+				return;
+			}
+			if (this.hardBlockedSeconds > BLOCKED_BACKOFF_SECONDS) {
+				this.hardBlockedSeconds = 0;
+				this.backoffLeft = BACKOFF_DISTANCE;
+			}
+		} else if (step > 0) {
+			this.hardBlockedSeconds = 0;
+		}
+		// Queued behind a wreck with no lane to get round it by: once nobody's looking, off it goes
+		// to another road rather than waiting there for good.
+		if (this.stalledBlockSeconds > STALLED_RECYCLE_SECONDS && !inCameraView(position.x, position.z, VISIBLE_RANGE)) {
+			this.respawnNearPlayer(RESPAWN_MIN);
+			return;
+		}
+		this.easeLaneShift(dt);
+		this.advance(step);
 		this.braking = targetSpeed < this.speed - 0.05 || this.speed < BRAKE_LIGHT_THRESHOLD;
 		this.updateLights(dt, this.braking);
 		this.trackTurnRate(dt);
@@ -673,8 +860,43 @@ export class OrionVehicle extends Script {
 	 * destruction, such as disabling the engine sooner or detaching parts.
 	 */
 	public takeWeaponDamage(event: DamageEvent) {
+		if (this.forSale) return;
 		if (event.source?.kind === "player") this.playerHarmedAt = performance.now() / 1000;
-		this.applyDamage(event.amount);
+		// Where the round went decides what it does: glass and tyres take their own damage, and
+		// cost the car itself little; the body takes the hole and the hit to its condition.
+		const detail = event.detail;
+		let share = 1;
+		if (detail) {
+			const raw = unscaledDamage("vehicle", event);
+			const model = this.bodyModel();
+			const travel = Math.hypot(event.directionX, event.directionZ) || 1;
+			const dx = event.directionX / travel;
+			const dz = event.directionZ / travel;
+			switch (detail.part) {
+				case "glass":
+					model?.struck(detail, event.x, event.y, event.z, dx, 0, dz, glassDamage(event.type, raw));
+					share = 0.25;
+					break;
+				case "tyre":
+					this.damageTyre(detail.index, tyreHitDamage(event.type, raw, detail.incidence, detail.sidewall), event.x, event.y, event.z);
+					model?.struck(detail, event.x, event.y, event.z, dx, 0, dz, 0);
+					share = 0.1;
+					break;
+				case "rim":
+					share = 0.5;
+					break;
+				case "lamp":
+					model?.struck(detail, event.x, event.y, event.z, dx, 0, dz, 0);
+					share = 0.4;
+					break;
+				default:
+					model?.struck(detail, event.x, event.y, event.z, dx, 0, dz, 0);
+					break;
+			}
+		} else if (event.type === "explosive") {
+			this.blastDamage(event.amount, event.x, event.y, event.z);
+		}
+		this.applyDamage(event.amount * share);
 		if (event.type === "explosive" && event.amount >= INSTANT_WRECK_DAMAGE && this.integrity <= 0 && !this.burnedOut && !this.stowed) {
 			const position = this.entity.getPosition();
 			this.explode(this.agent?.x ?? position.x, position.y, this.agent?.z ?? position.z);
@@ -683,6 +905,63 @@ export class OrionVehicle extends Script {
 			const shove = event.impulse * 0.6;
 			this.receiveImpact(event.directionX * shove, event.directionZ * shove, (Math.random() - 0.5) * event.impulse * 6);
 		}
+	}
+
+	/**
+	 * A tyre hit: soaks into that tyre, and once holed it starts to go down (with the hiss of the
+	 * air leaving). See TyreDamage for how many rounds that takes.
+	 */
+	private damageTyre(index: number, damage: number, x: number, y: number, z: number) {
+		if (index < 0) return;
+		while (this.tyres.length <= index) this.tyres.push(newTyre());
+		const tyre = this.tyres[index];
+		// A thud into rubber, not the ring of a round off metal.
+		playAt("hit-flesh", x, y, z, { level: 0.35, rate: 0.62, variation: 0.08, channel: "impacts" });
+		if (!hitTyre(tyre, this.build, damage)) return;
+		playAt("tyre-hiss", x, y, z, { level: 0.55, variation: 0.06, channel: "vehicles" });
+	}
+
+	/**
+	 * A blast close by: the windows go once it's strong enough, and the near tyres burst. (Its
+	 * hit to the car's condition and its shove are handled with every other blast.)
+	 */
+	private blastDamage(amount: number, x: number, y: number, z: number) {
+		const model = this.bodyModel();
+		if (amount >= 30) model?.shatterGlass(x, y, z);
+		if (amount < 45) return;
+		const corners = model?.wheelCorners ?? [];
+		const position = this.entity.getPosition();
+		const radians = this.headingDegrees / DEGREES;
+		// Which side and end the blast is on, in the car's own frame (+X its left).
+		const ax = x - position.x;
+		const az = z - position.z;
+		const along = ax * Math.sin(radians) + az * Math.cos(radians);
+		const across = ax * Math.cos(radians) - az * Math.sin(radians);
+		corners.forEach((corner, index) => {
+			const facing = (corner.left ? across > -0.5 : across < 0.5) && (corner.front ? along > -1.5 : along < 1.5);
+			if (facing || amount >= 70) this.damageTyre(index, 999, x, y, z);
+		});
+	}
+
+	/** Lets the air out of holed tyres and hands the handling to the car's physics. */
+	private updateTyres(dt: number) {
+		if (this.tyres.length === 0) return;
+		let any = false;
+		for (const tyre of this.tyres) {
+			deflate(tyre, dt);
+			if (tyre.deflation > 0) any = true;
+		}
+		const physics = this.physics;
+		if (!physics) return;
+		const corners = this.bodyModel()?.wheelCorners;
+		physics.tyres = any && corners ? tyreHandling(this.tyres, corners, this.tyreEffect) : NO_TYRE_EFFECT;
+	}
+
+	/** Share of its usual pace a lane-following car keeps on flats: it limps on, hazards and all. */
+	private get flatPace(): number {
+		let worst = 0;
+		for (const tyre of this.tyres) worst = Math.max(worst, tyre.deflation);
+		return 1 - 0.6 * worst;
 	}
 
 	/** This car as a combat target: an oriented box the size of its collider. */
@@ -700,6 +979,7 @@ export class OrionVehicle extends Script {
 				return isAlive();
 			},
 			takeDamage: (event) => this.takeWeaponDamage(event),
+			refineHit: (ray: Readonly<RayLike>, entry: number, limit: number, detail: HitDetail) => this.bodyModel()?.refineHit(ray, entry, limit, detail) ?? entry,
 		};
 		this.syncTarget(this.entity.getPosition().y);
 		registerDamageable(this.target);
@@ -784,6 +1064,15 @@ export class OrionVehicle extends Script {
 	public applyDamage(amount: number) {
 		if (this.burnedOut || amount <= 0) return;
 		this.integrity = Math.max(0, this.integrity - amount);
+		// A put-out engine fire only lights again with a fresh blow to a car that's still hot or
+		// still wrecked enough to burn: a real cause, never on its own.
+		if (this.blaze.out) {
+			this.damageSinceOut += amount;
+			if (this.damageSinceOut >= REIGNITE_DAMAGE && this.integrity < BURNING_BELOW) {
+				this.blaze.reset();
+				this.damageSinceOut = 0;
+			}
+		}
 	}
 
 	public get mass(): number {
@@ -871,6 +1160,7 @@ export class OrionVehicle extends Script {
 			this.agent.z = this.homeZ;
 			this.agent.speed = 0;
 		}
+		this.clearTrafficAround(this.homeX, this.homeZ, this.homeYaw / DEGREES);
 		this.lastYaw = null;
 	}
 
@@ -901,9 +1191,15 @@ export class OrionVehicle extends Script {
 		this.burnedOut = false;
 		this.integrity = 100;
 		this.burnTimer = 0;
-		this.burnedFor = 0;
 		this.fireHeld = false;
-		if (this.physics) this.physics.powerFactor = 1;
+		this.blaze.reset();
+		this.scorched = false;
+		this.damageSinceOut = 0;
+		for (const tyre of this.tyres) repairTyre(tyre);
+		if (this.physics) {
+			this.physics.powerFactor = 1;
+			this.physics.tyres = NO_TYRE_EFFECT;
+		}
 	}
 
 	private carPhysics(): CarPhysics {
@@ -915,8 +1211,10 @@ export class OrionVehicle extends Script {
 	private beginManual(): CarPhysics {
 		const car = this.carPhysics();
 		if (!this.manual) {
+			// From the lane's pose, which the agent holds: the entity is only re-posed now and then
+			// (see applyPose), and React can put its spawn position back between frames.
 			const position = this.entity.getPosition();
-			car.reset(position.x, position.z, this.headingDegrees / DEGREES, this.speed);
+			car.reset(this.agent?.x ?? position.x, this.agent?.z ?? position.z, this.headingDegrees / DEGREES, this.speed);
 			this.rideY = this.rideHeight;
 			this.manual = true;
 			this.resting = false;
@@ -960,12 +1258,19 @@ export class OrionVehicle extends Script {
 		car.stabilityControl = this.driver !== "wrecked";
 		const previousX = car.x;
 		const previousZ = car.z;
+		const previousHeading = car.heading;
 		car.step(dt, controls);
-		this.impact = 0;
-		if (Math.hypot(car.x - previousX, car.z - previousZ) > 1e-5) {
-			this.resolveCollisions(car, previousX, previousZ);
-			this.strikePeople(car);
-		}
+		this.impact = this.receivedImpact;
+		this.receivedImpact = 0;
+		this.contactClock += dt;
+		const moved = Math.hypot(car.x - previousX, car.z - previousZ) > 1e-5;
+		const turned = car.heading !== previousHeading;
+		if (moved) this.resolveCollisions(car, previousX, previousZ);
+		// The sweep only follows the centre's travel: a car turning or spinning on the spot swings its
+		// corners into whatever's beside it, and a ray that starts inside a wall never reports it.
+		if (moved || turned) this.pushOutOfWorld(car);
+		if (moved || turned) this.resolveCarContacts(car, previousX, previousZ, previousHeading);
+		if (moved) this.strikePeople(car);
 
 		this.headingDegrees = car.heading * DEGREES;
 		let ground = this.groundHeight(car.x, car.z, this.rideY);
@@ -1083,23 +1388,29 @@ export class OrionVehicle extends Script {
 
 	/** Smoke, flames, the countdown to going up, and the loss of engine power. */
 	private updateCondition(dt: number, x: number, y: number, z: number) {
-		if (this.burnedOut) {
-			this.burnedFor += dt;
-		} else {
-			// Once alight, the fire eats what's left of the car, then the tank goes — unless a
-			// mission is holding it (a crash scene).
-			if (!this.fireHeld) this.integrity = burnDown(this.integrity, dt);
-			if (this.integrity <= 0) {
-				this.burnTimer += dt;
-				if (this.burnTimer >= BURN_SECONDS) {
-					this.explode(x, y, z);
-					return;
+		const fire = this.blaze;
+		if (!this.burnedOut) {
+			// Low enough, the engine catches — unless that fire has been put out.
+			if (this.integrity < BURNING_BELOW && fire.stage === "none") fire.ignite(false);
+			// A mission holding the fire (a crash scene) keeps it burning without burning down.
+			if (fire.burning && !this.fireHeld) {
+				// The fire eats what's left of the car as hard as it's burning, then the tank goes.
+				this.integrity = Math.max(0, this.integrity - FIRE_DRAIN_PER_SECOND * fire.intensity * dt);
+				if (this.integrity <= 0) {
+					this.burnTimer += dt;
+					if (this.burnTimer >= BURN_SECONDS) {
+						this.explode(x, y, z);
+						return;
+					}
 				}
 			}
 		}
-		if (this.physics) this.physics.powerFactor = powerFactor(this.integrity);
+		const wasBurning = fire.burning;
+		fire.update(dt, this.burnedOut ? WRECK_BURN_RATE : 0);
+		if (wasBurning && !fire.burning) this.fireWentOut();
+		if (this.physics) this.physics.powerFactor = fire.out || fire.burning ? powerFactor(0) : powerFactor(this.integrity);
 
-		const effect = damageEffect(this.integrity, this.burnedOut, this.burnedFor);
+		const effect = this.damageEffect();
 		// Effects are the expensive part, so only cars near the camera get them.
 		if (!effect || distanceFromCamera(x, z) > EFFECT_DISTANCE) return;
 		const source = this.damageSource;
@@ -1117,8 +1428,31 @@ export class OrionVehicle extends Script {
 		source.groundY = y - this.halfHeight;
 		source.stage = effect.stage;
 		source.severity = effect.severity;
+		source.water = fire.water;
 		crashEffects(this.app).vehicleDamage(this, source, dt);
 	}
+
+	/** What the car gives off now: engine smoke, flames as strong as the fire, the smoke and steam after. */
+	private damageEffect(): DamageEffect | null {
+		const fire = this.blaze;
+		const effect = this.effectScratch;
+		if (fire.burning) {
+			effect.stage = this.burnedOut ? "wreck-fire" : "burning";
+			effect.severity = fire.intensity;
+			return effect;
+		}
+		if (fire.smouldering) {
+			effect.stage = "smouldering";
+			effect.severity = fire.residue;
+			return effect;
+		}
+		if (this.burnedOut || fire.out || this.integrity >= SMOKING_BELOW) return null;
+		effect.stage = "smoking";
+		effect.severity = Math.max(0, Math.min(1, 1 - (this.integrity - BURNING_BELOW) / (SMOKING_BELOW - BURNING_BELOW)));
+		return effect;
+	}
+
+	private readonly effectScratch: DamageEffect = { stage: "smoking", severity: 0 };
 
 	/**
 	 * The car goes up: a fireball, and everything close by is hurt and thrown clear. What's
@@ -1131,8 +1465,23 @@ export class OrionVehicle extends Script {
 		this.burnedOut = true;
 		this.integrity = 0;
 		this.burnTimer = 0;
+		// The whole car alight now, burning down what's left of it.
+		this.blaze.ignite(true, 1);
 		emitGameEvent({ type: "vehicleDestroyed", id: this.entity.name, byPlayer: blamed || this.driver === "player" });
 		crashEffects(this.app).explosion(x, y + this.halfHeight * 0.5, z, y - this.halfHeight);
+		// Every window blown out, the tyres burnt down to the rims, soot over the shell and a
+		// scorch on the road under it: what stays once the fire's out.
+		const model = this.bodyModel();
+		model?.shatterGlass(x, y, z);
+		model?.scorch(1, true);
+		const corners = model?.wheelCorners ?? [];
+		for (let index = 0; index < corners.length; index++) {
+			while (this.tyres.length <= index) this.tyres.push(newTyre());
+			const tyre = this.tyres[index];
+			tyre.punctured = true;
+			tyre.deflation = Math.max(tyre.deflation, 0.6);
+		}
+		decals(this.app).place("soot", null, x, y - this.halfHeight + 0.01, z, 0, 1, 0, Math.max(this.halfLength, this.halfWidth) * 2.6, { life: 600, opacity: 0.85 });
 
 		for (const car of drivableCars()) {
 			if (car === this) continue;
@@ -1191,9 +1540,9 @@ export class OrionVehicle extends Script {
 	);
 
 	/**
-	 * Sweeps the body outline along this step's movement. On contact the car stops at the
-	 * surface, the speed into it bounces back a little, the rest scrapes along, and an
-	 * off-centre hit spins the car. Another car takes its share of the momentum.
+	 * Sweeps the body outline along this step's movement, against the world (other vehicles are
+	 * resolveCarContacts' job). On contact the car stops at the surface, the speed into it
+	 * bounces back a little, the rest scrapes along, and an off-centre hit spins the car.
 	 */
 	private resolveCollisions(car: CarPhysics, fromX: number, fromZ: number) {
 		const raycastAll = this.raycastAll;
@@ -1219,14 +1568,16 @@ export class OrionVehicle extends Script {
 			if (px * dirX + pz * dirZ < -0.01) continue;
 			// Two heights: buildings stand on plinths above the road, so a single ray at the
 			// body's centre would pass underneath them. Neither is low enough to catch a kerb.
-			// A tall vehicle adds a low one, so it can't ride over a car into it.
+			// A tall vehicle adds a low one, so it can't ride over a low obstacle.
 			for (let lift = -1; lift < SWEEP_LIFTS.length; lift++) {
 				const low = centreY - this.halfHeight + SWEEP_LOW_ABOVE_BOTTOM;
 				if (lift < 0 && low > centreY - 0.25) continue;
 				const y = lift < 0 ? low : centreY + SWEEP_LIFTS[lift] * this.halfHeight;
 				this.rayFrom.set(fromX + px, y, fromZ + pz);
 				this.rayTo.set(fromX + px + dirX * reach, y, fromZ + pz + dirZ * reach);
-				for (const hit of raycastAll(this.rayFrom, this.rayTo, { filterCallback: this.notSelf })) {
+				// Vehicles are left out: their colliders are only where their last physics step
+				// put them, and a ray starting inside one never reports it.
+				for (const hit of raycastAll(this.rayFrom, this.rayTo, { filterCallback: this.notSolidBody })) {
 					if (Math.abs(hit.normal.y) > DRIVABLE_SLOPE_UP) continue;
 					const travel = hit.hitFraction * reach;
 					if (travel < bestTravel) {
@@ -1249,65 +1600,285 @@ export class OrionVehicle extends Script {
 		car.z = fromZ + dirZ * allowed;
 		if (closing >= 0) return;
 
-		const other = best.entity.script?.get("orionVehicle") as OrionVehicle | undefined;
-		const point = best.point;
-		const otherPosition = other?.entity.getPosition();
-		// Both bodies move and turn; the impulse lands where they touch (see CrashImpulse). A
-		// wall is a body that does neither.
+		this.hitWall(car, nx, nz, best.point, offsetX, offsetZ, closing);
+	}
+
+	/**
+	 * Pushes the body back out of anything solid it has ended up in (bar other vehicles: see
+	 * resolveCarContacts). The sweep only follows the centre's travel and a ray starting inside a
+	 * wall never reports it, so a car turning or spinning against a building put its corner
+	 * through the wall and then sat there half inside. Here rays run from the body's centre out to
+	 * points round its outline: one that meets a wall on the way has that point through it, by as
+	 * far as the point lies past the surface, and the car is moved back out by the deepest.
+	 */
+	private pushOutOfWorld(car: CarPhysics) {
+		const raycastAll = this.raycastAll;
+		if (!raycastAll) return;
+		const centreY = this.rideY;
+		for (let pass = 0; pass < PUSH_OUT_PASSES; pass++) {
+			const sin = Math.sin(car.heading);
+			const cos = Math.cos(car.heading);
+			let deepest = 0;
+			let nx = 0;
+			let nz = 0;
+			let offsetX = 0;
+			let offsetZ = 0;
+			let point: Vec3 | null = null;
+			for (const [side, along] of OUTLINE_POINTS) {
+				const px = along * this.halfLength * sin + side * this.halfWidth * cos;
+				const pz = along * this.halfLength * cos - side * this.halfWidth * sin;
+				const reach = Math.hypot(px, pz) || 1;
+				// The same heights as the sweep (see resolveCollisions).
+				for (let lift = -1; lift < SWEEP_LIFTS.length; lift++) {
+					const low = centreY - this.halfHeight + SWEEP_LOW_ABOVE_BOTTOM;
+					if (lift < 0 && low > centreY - 0.25) continue;
+					const y = lift < 0 ? low : centreY + SWEEP_LIFTS[lift] * this.halfHeight;
+					this.rayFrom.set(car.x, y, car.z);
+					this.rayTo.set(car.x + px, y, car.z + pz);
+					for (const hit of raycastAll(this.rayFrom, this.rayTo, { filterCallback: this.notSolidBody })) {
+						if (Math.abs(hit.normal.y) > DRIVABLE_SLOPE_UP) continue;
+						const length = Math.hypot(hit.normal.x, hit.normal.z) || 1;
+						let hx = hit.normal.x / length;
+						let hz = hit.normal.z / length;
+						// Facing back towards the centre, whichever side of the face the ray met.
+						if (hx * px + hz * pz > 0) {
+							hx = -hx;
+							hz = -hz;
+						}
+						// How far the outline point lies past the surface, along its normal.
+						const depth = (hit.point.x - car.x - px) * hx + (hit.point.z - car.z - pz) * hz;
+						if (depth <= deepest || depth > reach) continue;
+						deepest = depth;
+						nx = hx;
+						nz = hz;
+						offsetX = px;
+						offsetZ = pz;
+						point = hit.point;
+					}
+				}
+			}
+			if (!point || deepest <= 0) return;
+			car.x += nx * (deepest + COLLISION_SKIN);
+			car.z += nz * (deepest + COLLISION_SKIN);
+			const closing = (car.velocityX + car.yawRate * offsetZ) * nx + (car.velocityZ - car.yawRate * offsetX) * nz;
+			if (closing < 0) this.hitWall(car, nx, nz, point, offsetX, offsetZ, closing);
+		}
+	}
+
+	/**
+	 * Hitting a wall at `point` (`offset` from the car's centre), its surface facing (nx, nz), at
+	 * `closing` m/s: the speed into it bounces back a little, the rest scrapes along, and an
+	 * off-centre hit spins the car.
+	 */
+	private hitWall(car: CarPhysics, nx: number, nz: number, point: Vec3, offsetX: number, offsetZ: number, closing: number) {
 		const result = crashImpulse(
 			{ mass: car.spec.mass, inertia: car.spec.inertia / IMPACT_SPIN, velocityX: car.velocityX, velocityZ: car.velocityZ, turnRate: car.yawRate, offsetX, offsetZ },
-			other && otherPosition
-				? {
-					mass: other.mass,
-					inertia: other.inertia / IMPACT_SPIN,
-					velocityX: other.velocityX,
-					velocityZ: other.velocityZ,
-					turnRate: other.turnRate / DEGREES,
-					offsetX: point.x - otherPosition.x,
-					offsetZ: point.z - otherPosition.z,
-				}
-				: WALL,
+			WALL,
 			nx,
 			nz,
 			RESTITUTION,
-			other ? CAR_FRICTION : WALL_FRICTION,
+			WALL_FRICTION,
 		);
 		car.velocityX = result.a.velocityX;
 		car.velocityZ = result.a.velocityZ;
 		car.yawRate = result.a.turnRate;
 		const change = result.deltaVA;
+		this.applyDamage(crashDamage(change, this.build) * this.crashResistance);
+		if (!this.newCollision(null, -closing)) return;
 		if (change > KNOCK_DELTA_V) car.knock(KNOCK_SECONDS);
 		this.impact = Math.max(this.impact, -closing);
-		this.crashSound(change);
-		// Both cars are hurt by their own change of velocity, so the lighter one comes off worse,
-		// and each by its own build: a bus or a lorry takes many more hits than a car.
-		this.applyDamage(crashDamage(change, this.build) * this.crashResistance);
+		this.crashSound(change, point.x, point.z);
 		// The blow shows on the body where it landed: pushed in along the obstacle's normal.
 		this.bodyCrash(point.x, point.y, point.z, nx, nz, change);
 		if (change > SPARK_DELTA_V) crashEffects(this.app).impact(point.x, point.y, point.z, -nx, 0.3, -nz, "metal");
-
-		if (other) {
-			const otherChange = result.deltaVB;
-			other.receiveImpact(result.b.velocityX - other.velocityX, result.b.velocityZ - other.velocityZ, result.b.turnRate - other.turnRate / DEGREES);
-			other.applyDamage(crashDamage(otherChange, other.build) * other.crashResistance);
-			other.bodyCrash(point.x, point.y, point.z, -nx, -nz, otherChange);
-			if (this.driver === "player") other.playerHarmedAt = performance.now() / 1000;
-		}
 	}
 
 	/**
-	 * The noise of hitting something, as loud as the hit was hard.
-	 *
-	 * Scraping a wall runs this every frame, so there is a floor on what counts as a hit and a
-	 * gap before the next one — otherwise a long scrape is a machine-gun of crunches.
+	 * Whether a contact closing at `closing` m/s is a collision worth its effects: hard enough to
+	 * be more than a push, and not the same contact carrying on (a scrape along a wall, two cars
+	 * leaning on each other) — so one crash makes one crunch, however many frames it lasts.
 	 */
-	private crashSound(change: number) {
+	private newCollision(other: OrionVehicle | null, closing: number): boolean {
+		const last = this.touching.get(other);
+		this.touching.set(other, this.contactClock);
+		if (other) other.touching.set(this, other.contactClock);
+		if (closing < CONTACT_PUSH_SPEED) return false;
+		return last === undefined || this.contactClock - last > CONTACT_MEMORY || closing >= REHIT_SPEED;
+	}
+
+	/** Where the body is in the plane (see VehicleContacts); false while it's out of the world. */
+	public footprint(out: Footprint): boolean {
+		if (this.stowed) return false;
+		if (this.manual && this.physics) {
+			out.x = this.physics.x;
+			out.z = this.physics.z;
+			out.sin = Math.sin(this.physics.heading);
+			out.cos = Math.cos(this.physics.heading);
+		} else if (this.agent) {
+			out.x = this.agent.x;
+			out.z = this.agent.z;
+			const length = Math.hypot(this.agent.headingX, this.agent.headingZ);
+			out.sin = length > 0 ? this.agent.headingX / length : 0;
+			out.cos = length > 0 ? this.agent.headingZ / length : 1;
+		} else {
+			return false;
+		}
+		out.halfLength = this.halfLength;
+		out.halfWidth = this.halfWidth;
+		return true;
+	}
+
+	/** Height of the body's centre (to tell a car on a deck from one on the road under it). */
+	public get bodyY(): number {
+		return this.manual ? this.rideY : this.rideHeight;
+	}
+
+	/** Whether two bodies are at heights where they can touch. */
+	private level(other: OrionVehicle): boolean {
+		return Math.abs(other.bodyY - this.bodyY) < other.halfHeight + this.halfHeight;
+	}
+
+	/**
+	 * Car against car, for a car on CarPhysics: every other vehicle's footprint is tested against
+	 * this one along the step just taken (in a few steps when it moved far, so a fast car can't
+	 * jump through another), and any overlap is pushed apart and answered with an impulse.
+	 */
+	private resolveCarContacts(car: CarPhysics, fromX: number, fromZ: number, fromHeading: number) {
+		const own = ownFootprint;
+		const other = otherFootprint;
+		const turn = wrapAngle(car.heading - fromHeading);
+		const travel = Math.hypot(car.x - fromX, car.z - fromZ) + Math.abs(turn) * this.halfLength;
+		const samples = Math.min(MAX_SWEEP_SAMPLES, Math.max(1, Math.ceil(travel / (this.halfWidth * SWEEP_SPACING))));
+		const ownRadius = Math.hypot(this.halfLength, this.halfWidth);
+		own.halfLength = this.halfLength;
+		own.halfWidth = this.halfWidth;
+		for (const candidate of drivableCars()) {
+			if (candidate === this || !candidate.footprint(other) || !this.level(candidate)) continue;
+			const reach = travel + ownRadius + Math.hypot(other.halfLength, other.halfWidth);
+			const endX = car.x;
+			const endZ = car.z;
+			const endHeading = car.heading;
+			if ((other.x - endX) ** 2 + (other.z - endZ) ** 2 > reach * reach) continue;
+			let contact: Contact | null = null;
+			for (let i = 1; i <= samples && !contact; i++) {
+				const back = 1 - i / samples;
+				const heading = endHeading - turn * back;
+				own.x = endX + (fromX - endX) * back;
+				own.z = endZ + (fromZ - endZ) * back;
+				own.sin = Math.sin(heading);
+				own.cos = Math.cos(heading);
+				contact = footprintContact(own, other);
+				// Touching part way along: the car gets no further than that.
+				if (contact && back > 0) {
+					car.x = own.x;
+					car.z = own.z;
+					car.heading = heading;
+				}
+			}
+			if (contact) this.collideWith(car, candidate, contact);
+		}
+	}
+
+	/** Parts this car (on CarPhysics) and another that overlaps it, and deals the crash to both. */
+	private collideWith(car: CarPhysics, other: OrionVehicle, contact: Contact) {
+		const { normalX: nx, normalZ: nz, depth, pointX, pointZ } = contact;
+		const otherCar = other.manual ? other.physics : null;
+		const otherVelocityX = other.velocityX;
+		const otherVelocityZ = other.velocityZ;
+		const otherX = otherCar ? otherCar.x : (other.agent?.x ?? pointX);
+		const otherZ = otherCar ? otherCar.z : (other.agent?.z ?? pointZ);
+		const offsetX = pointX - car.x;
+		const offsetZ = pointZ - car.z;
+		const otherOffsetX = pointX - otherX;
+		const otherOffsetZ = pointZ - otherZ;
+		const otherTurn = otherCar ? otherCar.yawRate : other.turnRate / DEGREES;
+		// Closing speed at the contact point (negative while they come together).
+		const closing = (car.velocityX + car.yawRate * offsetZ - (otherVelocityX + otherTurn * otherOffsetZ)) * nx
+			+ (car.velocityZ - car.yawRate * offsetX - (otherVelocityZ - otherTurn * otherOffsetX)) * nz;
+		// A car on its lane gives way to nothing short of a real knock: nudged, it holds its line
+		// like a wall and this car does all the moving. A showroom car never moves.
+		const movable = !other.forSale && (other.manual || -closing >= KNOCK_OFF_LANE_SPEED);
+		const [share, otherShare] = separationShares(car.spec.mass, other.mass, movable);
+		car.x += nx * depth * share;
+		car.z += nz * depth * share;
+		if (movable) other.shove(-nx * depth * otherShare, -nz * depth * otherShare);
+		if (closing >= 0) {
+			this.touching.set(other, this.contactClock);
+			return;
+		}
+
+		const result = crashImpulse(
+			{ mass: car.spec.mass, inertia: car.spec.inertia / IMPACT_SPIN, velocityX: car.velocityX, velocityZ: car.velocityZ, turnRate: car.yawRate, offsetX, offsetZ },
+			movable
+				? { mass: other.mass, inertia: other.inertia / IMPACT_SPIN, velocityX: otherVelocityX, velocityZ: otherVelocityZ, turnRate: otherTurn, offsetX: otherOffsetX, offsetZ: otherOffsetZ }
+				: { ...WALL, velocityX: otherVelocityX, velocityZ: otherVelocityZ },
+			nx,
+			nz,
+			RESTITUTION,
+			CAR_FRICTION,
+		);
+		car.velocityX = result.a.velocityX;
+		car.velocityZ = result.a.velocityZ;
+		car.yawRate = result.a.turnRate;
+		if (movable) other.takeContactImpulse(result.b.velocityX - otherVelocityX, result.b.velocityZ - otherVelocityZ, result.b.turnRate - otherTurn);
+
+		const change = result.deltaVA;
+		const otherChange = movable ? result.deltaVB : 0;
+		// Both cars are hurt by their own change of velocity, so the lighter one comes off worse,
+		// and each by its own build: a bus or a lorry takes many more hits than a car.
+		this.applyDamage(crashDamage(change, this.build) * this.crashResistance);
+		if (!other.forSale) other.applyDamage(crashDamage(otherChange, other.build) * other.crashResistance);
+		if (this.driver === "player" && -closing >= CONTACT_PUSH_SPEED) other.playerHarmedAt = performance.now() / 1000;
+		if (!this.newCollision(other, -closing)) return;
+		if (change > KNOCK_DELTA_V) car.knock(KNOCK_SECONDS);
+		this.impact = Math.max(this.impact, -closing);
+		other.receivedImpact = Math.max(other.receivedImpact, -closing);
+		// One crunch for the pair, as hard as the harder of the two blows: the gap before the next
+		// is shared, so the other car can't sound the same knock again from its side.
+		if (other.sinceCrashSound >= CRASH_SOUND_GAP) this.crashSound(Math.max(change, otherChange), pointX, pointZ);
+		other.sinceCrashSound = Math.min(other.sinceCrashSound, this.sinceCrashSound);
+		const pointY = Math.min(this.bodyY, other.bodyY);
+		this.bodyCrash(pointX, pointY, pointZ, nx, nz, change);
+		other.bodyCrash(pointX, pointY, pointZ, -nx, -nz, otherChange);
+		if (Math.max(change, otherChange) > SPARK_DELTA_V) crashEffects(this.app).impact(pointX, pointY, pointZ, -nx, 0.3, -nz, "metal");
+	}
+
+	/** Moved by a car pushing out of it (see collideWith). */
+	private shove(dx: number, dz: number) {
+		const car = this.beginManual();
+		if (this.driver === "ai") this.driver = "wrecked";
+		car.x += dx;
+		car.z += dz;
+		this.resting = false;
+		this.stillFor = 0;
+	}
+
+	/**
+	 * Struck by another car: the change of motion the impact dealt. Traffic loses its lane and
+	 * slides as a wreck; the player's car takes it too (a police ram shoves it), but stays theirs.
+	 */
+	private takeContactImpulse(deltaVelocityX: number, deltaVelocityZ: number, spin: number) {
+		const car = this.beginManual();
+		if (this.driver === "ai") this.driver = "wrecked";
+		car.velocityX += deltaVelocityX;
+		car.velocityZ += deltaVelocityZ;
+		car.yawRate += spin;
+		this.resting = false;
+		this.stillFor = 0;
+		if (Math.hypot(deltaVelocityX, deltaVelocityZ) > KNOCK_DELTA_V) car.knock(KNOCK_SECONDS);
+	}
+
+	/**
+	 * The noise of hitting something, as loud as the hit was hard. Called once per collision (see
+	 * newCollision), and with a gap before the next, so a pile-up isn't a machine-gun of crunches.
+	 */
+	private crashSound(change: number, x: number, z: number) {
 		if (this.sinceCrashSound < CRASH_SOUND_GAP) return;
-		const severity = Math.min(1, change / CRASH_FULL_VOLUME);
+		// Up to 1.5 for a write-off: the worst also breaks glass (see CombatAudio.playCrash).
+		const severity = Math.min(1.5, change / CRASH_FULL_VOLUME);
 		if (severity < CRASH_QUIETEST) return;
 		this.sinceCrashSound = 0;
-		const position = this.entity.getPosition();
-		combatAudio().play("crash", position.x, position.y, position.z, severity);
+		combatAudio().play("crash", x, this.bodyY, z, severity);
 	}
 
 	/** Anyone inside the body outline is run over. */
@@ -1424,6 +1995,8 @@ export class OrionVehicle extends Script {
 			this.agent.z = z;
 			this.agent.speed = 0;
 		}
+		this.clearTrafficAround(x, z, yaw / DEGREES);
+		this.touching.clear();
 		this.lastYaw = null;
 		this.missionRoute = route && route.length > 0 ? route : null;
 		this.missionRouteIndex = 0;
@@ -1684,7 +2257,10 @@ export class OrionVehicle extends Script {
 		claimedFires.set(fire, this);
 		this.fireTarget = fire;
 		this.fireDuty = "responding";
-		this.hoseSeconds = 0;
+		this.hoseAimed = false;
+		this.hoseBlocked = 0;
+		this.hoseCooling = 0;
+		this.fireStandoff = FIRE_STANDOFF;
 		this.dutySeconds = 0;
 		this.stowed = false;
 		this.repair();
@@ -1727,6 +2303,94 @@ export class OrionVehicle extends Script {
 	}
 
 	/**
+	 * The crew on the roof monitor. The jet is walked onto the fire (it starts short, in front of
+	 * the engine) and only counts once it's landing on it, from within the monitor's reach, with
+	 * nothing in the way; the fire then dies back for as long as the water stays on it (see
+	 * VehicleFire). Once the flames are out the crew keeps the water on a few seconds to cool the
+	 * shell, then packs up. A jet that can't get there (out of reach, a wall in the way) has the
+	 * engine move in closer.
+	 */
+	private hoseFire(dt: number, car: CarPhysics, fire: OrionVehicle) {
+		const sin = Math.sin(car.heading);
+		const cos = Math.cos(car.heading);
+		// The monitor on the roof, over the cab.
+		const nozzleX = car.x + sin * this.halfLength * 0.55;
+		const nozzleZ = car.z + cos * this.halfLength * 0.55;
+		const nozzleY = this.rideY + this.halfHeight + 0.4;
+		const target = fire.firePoint(this.firePoint3);
+		if (!this.hoseAimed) {
+			// The first of the water lands short, in front of the engine.
+			this.hoseAim.set(nozzleX + sin * 5, target.y - 0.5, nozzleZ + cos * 5);
+			this.hoseAimed = true;
+		}
+		// Walk the jet onto the fire.
+		const toX = target.x - this.hoseAim.x;
+		const toY = target.y - this.hoseAim.y;
+		const toZ = target.z - this.hoseAim.z;
+		const off = Math.hypot(toX, toY, toZ);
+		const step = Math.min(off, HOSE_AIM_SPEED * dt);
+		if (off > 1e-4) this.hoseAim.set(this.hoseAim.x + (toX / off) * step, this.hoseAim.y + (toY / off) * step, this.hoseAim.z + (toZ / off) * step);
+		const reach = Math.hypot(target.x - nozzleX, target.z - nozzleZ);
+		this.hoseSight -= dt;
+		if (this.hoseSight <= 0) {
+			this.hoseSight = HOSE_SIGHT_INTERVAL;
+			this.hoseClear = this.clearLine(nozzleX, nozzleY, nozzleZ, target.x, target.y + 0.3, target.z);
+		}
+		const onTarget = Math.hypot(this.hoseAim.x - target.x, this.hoseAim.z - target.z) < Math.max(FIRE_TARGET_RADIUS, fire.halfWidth);
+		const flow = reach <= HOSE_REACH && this.hoseClear && onTarget ? 1 : 0;
+		const effects = crashEffects(this.app);
+		const seen = distanceFromCamera(car.x, car.z) < EFFECT_DISTANCE * 1.5;
+		// Where the water really goes: onto the fire, or short of it while it's walked on, or
+		// against whatever is in the way.
+		// The jet can't land further than the monitor throws it.
+		let landX = this.hoseAim.x;
+		let landZ = this.hoseAim.z;
+		const throwX = landX - nozzleX;
+		const throwZ = landZ - nozzleZ;
+		const thrown = Math.hypot(throwX, throwZ);
+		if (thrown > HOSE_REACH) {
+			landX = nozzleX + (throwX / thrown) * HOSE_REACH;
+			landZ = nozzleZ + (throwZ / thrown) * HOSE_REACH;
+		}
+		if (seen) effects.waterJet(nozzleX, nozzleY, nozzleZ, landX, this.hoseAim.y, landZ, this.hoseTrail, dt, flow > 0 && fire.blaze.burning ? Math.max(0.25, fire.blaze.intensity) : 0);
+		this.wetPatchTimer -= dt;
+		if (this.wetPatchTimer <= 0 && seen) {
+			this.wetPatchTimer = WET_PATCH_INTERVAL;
+			const ground = fire.entity.getPosition().y - fire.halfHeight + 0.012;
+			decals(this.app).place("wet", null, landX + (Math.random() - 0.5) * 1.5, ground, landZ + (Math.random() - 0.5) * 1.5, 0, 1, 0, 2.5 + Math.random() * 2, { life: WET_PATCH_LIFE });
+		}
+		if (flow > 0) {
+			fire.douse(flow, dt);
+			this.hoseBlocked = 0;
+		} else if (onTarget || off < 0.5) {
+			// Aimed, but the water isn't getting there.
+			this.hoseBlocked += dt;
+		}
+		if (fire.blaze.out) this.hoseCooling += dt;
+		const done = fire.blaze.out ? this.hoseCooling >= COOLING_SECONDS : !fire.blaze.burning;
+		if (done) {
+			this.fireDuty = "leaving";
+			this.releaseFire();
+			this.routeX = -1;
+			return;
+		}
+		if (this.hoseBlocked > HOSE_BLOCKED_SECONDS) {
+			// Move in closer and try again.
+			this.hoseBlocked = 0;
+			this.hoseAimed = false;
+			this.fireDuty = "responding";
+			this.fireStandoff = Math.max(5, this.fireStandoff - 4);
+		}
+	}
+
+	/** Nothing solid (a wall, a building) on the straight line between two points; cars don't count. */
+	private clearLine(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): boolean {
+		const system = this.app.systems.rigidbody as unknown as { raycastFirst?: (start: Vec3, end: Vec3, options?: { filterCallback?: (entity: Entity) => boolean }) => unknown } | undefined;
+		if (!system?.raycastFirst) return true;
+		return !system.raycastFirst(this.rayFrom.set(x0, y0, z0), this.rayTo.set(x1, y1, z1), { filterCallback: this.notSolidBody });
+	}
+
+	/**
 	 * The engine's crew at work: by road to the fire, pulling up a hose-length short of it, a
 	 * jet of water from the roof monitor until it's out, then away.
 	 */
@@ -1740,7 +2404,7 @@ export class OrionVehicle extends Script {
 			return;
 		}
 		const fire = this.fireTarget;
-		if (this.fireDuty !== "leaving" && (!fire || !fire.onFire)) {
+		if (this.fireDuty !== "leaving" && (!fire || (!fire.onFire && !(this.fireDuty === "hosing" && fire.blaze.out)))) {
 			// Out (or gone) before the crew got there: nothing to do but leave.
 			this.fireDuty = "leaving";
 			this.releaseFire();
@@ -1773,22 +2437,7 @@ export class OrionVehicle extends Script {
 			controls.drive = 0;
 			controls.steer = 0;
 			controls.handbrake = true;
-			this.hoseSeconds += dt;
-			const sin = Math.sin(car.heading);
-			const cos = Math.cos(car.heading);
-			// The monitor on the roof, over the cab.
-			const nozzleX = car.x + sin * this.halfLength * 0.55;
-			const nozzleZ = car.z + cos * this.halfLength * 0.55;
-			const nozzleY = this.rideY + this.halfHeight + 0.4;
-			if (distanceFromCamera(car.x, car.z) < EFFECT_DISTANCE * 1.5) {
-				crashEffects(this.app).waterJet(nozzleX, nozzleY, nozzleZ, at.x, at.y, at.z, this.hoseTrail, dt);
-			}
-			if (this.hoseSeconds >= HOSE_SECONDS) {
-				fire.extinguish();
-				this.fireDuty = "leaving";
-				this.releaseFire();
-				this.routeX = -1;
-			}
+			this.hoseFire(dt, car, fire);
 			return;
 		}
 
@@ -1799,8 +2448,8 @@ export class OrionVehicle extends Script {
 		if (distance < FIRE_DIRECT_RANGE) {
 			const awayX = (car.x - at.x) / Math.max(distance, 0.01);
 			const awayZ = (car.z - at.z) / Math.max(distance, 0.01);
-			aimX = at.x + awayX * FIRE_STANDOFF;
-			aimZ = at.z + awayZ * FIRE_STANDOFF;
+			aimX = at.x + awayX * this.fireStandoff;
+			aimZ = at.z + awayZ * this.fireStandoff;
 			const toStop = Math.hypot(aimX - car.x, aimZ - car.z);
 			wanted = Math.min(FIRE_CRUISE, Math.sqrt(2 * PURSUIT_BRAKING * Math.max(0, toStop - 1)));
 			if (toStop < 2) wanted = 0;
@@ -2140,27 +2789,48 @@ export class OrionVehicle extends Script {
 		if (crossing < Infinity) limit = Math.min(limit, crossing <= 0.15 ? 0 : stopWithin(crossing));
 		let nearest = Infinity;
 		let blockedByCrossing = false;
-		let blockedByStalled = false;
-		const consider = (ox: number, oz: number, radius: number, gap: number) => {
+		let stalledAhead: TrafficAgent | null = null;
+		let stalledDistance = Infinity;
+		// Its extents along and across this car's path: a car side-on in the lane ahead is its
+		// width deep, not its length (as a circle of its half-length made it), and one in the next
+		// lane over is clear of this car's path.
+		const consider = (ox: number, oz: number, alongHalf: number, acrossHalf: number, gap: number, clearance = VEHICLE_CLEARANCE) => {
 			const relX = ox - x;
 			const relZ = oz - z;
 			const ahead = relX * hx + relZ * hz;
-			if (ahead <= 0 || ahead > lookAhead + radius) return false;
+			if (ahead <= 0 || ahead > lookAhead + alongHalf) return Infinity;
 			const lateral = Math.abs(relX * -hz + relZ * hx);
-			if (lateral > this.halfWidth + radius + 0.35) return false;
-			nearest = Math.min(nearest, ahead - this.halfLength - radius - gap);
-			return true;
+			if (lateral > this.halfWidth + acrossHalf + clearance) return Infinity;
+			const room = ahead - this.halfLength - alongHalf - gap;
+			nearest = Math.min(nearest, room);
+			return room;
+		};
+		const considerVehicle = (other: TrafficAgent) => {
+			const box = agentFootprint;
+			box.x = other.x;
+			box.z = other.z;
+			const length = Math.hypot(other.headingX, other.headingZ);
+			box.sin = length > 0 ? other.headingX / length : hx;
+			box.cos = length > 0 ? other.headingZ / length : hz;
+			box.halfLength = other.halfLength;
+			box.halfWidth = other.halfWidth;
+			return consider(other.x, other.z, extentAlong(box, hx, hz), extentAlong(box, -hz, hx), FOLLOW_GAP);
 		};
 
 		for (const other of trafficAgents()) {
 			if (other === this.agent) continue;
 			if (other.kind === "person") {
-				consider(other.x, other.z, PERSON_RADIUS, PERSON_GAP);
+				consider(other.x, other.z, PERSON_RADIUS, PERSON_RADIUS, PERSON_GAP, PERSON_CLEARANCE);
 				continue;
 			}
 			if (other.stalled) {
-				if (this.ignoreStalledSeconds > 0) continue;
-				if (consider(other.x, other.z, other.halfLength, FOLLOW_GAP)) blockedByStalled = true;
+				// Being passed by a lane change: out of the way, or about to be.
+				if (other === this.passing) continue;
+				const room = considerVehicle(other);
+				if (room < stalledDistance) {
+					stalledDistance = room;
+					stalledAhead = other;
+				}
 				continue;
 			}
 			const parallel = other.headingX * hx + other.headingZ * hz > 0.5;
@@ -2168,19 +2838,21 @@ export class OrionVehicle extends Script {
 			// Nobody assumes right of way over the player.
 			const yields = other.playerControlled || other.id < (this.agent?.id ?? 0);
 			if (!parallel && (!yields || this.ignoreCrossingSeconds > 0)) continue;
-			const hit = consider(other.x, other.z, other.halfLength, FOLLOW_GAP);
-			if (hit && !parallel) blockedByCrossing = true;
+			const room = considerVehicle(other);
+			if (room < Infinity && !parallel) blockedByCrossing = true;
 		}
 		const player = readPlayerPose();
-		consider(player.x, player.z, PERSON_RADIUS, PERSON_GAP);
+		consider(player.x, player.z, PERSON_RADIUS, PERSON_RADIUS, PERSON_GAP, PERSON_CLEARANCE);
 
 		if (nearest < Infinity) limit = Math.min(limit, nearest <= 0 ? 0 : stopWithin(nearest));
+		// Drifting across into the next lane: at a crawl until it's there.
+		if (this.laneShift !== 0) limit = Math.min(limit, LANE_CHANGE_SPEED);
 		this.blockedSeconds = blockedByCrossing && this.speed < 0.3 ? this.blockedSeconds + dt : 0;
 		this.ignoreCrossingSeconds = Math.max(0, this.ignoreCrossingSeconds - dt);
-		this.stalledBlockSeconds = blockedByStalled && this.speed < 0.3 ? this.stalledBlockSeconds + dt : 0;
-		this.ignoreStalledSeconds = Math.max(0, this.ignoreStalledSeconds - dt);
-		if (this.stalledBlockSeconds > STALLED_WAIT_SECONDS) {
-			this.ignoreStalledSeconds = STALLED_PASS_SECONDS;
+		const queued = stalledAhead !== null && stalledDistance < 1 && this.speed < 0.3;
+		this.stalledBlockSeconds = queued ? this.stalledBlockSeconds + dt : 0;
+		if (this.stalledBlockSeconds > STALLED_WAIT_SECONDS && stalledAhead && this.changeLane()) {
+			this.passing = stalledAhead;
 			this.stalledBlockSeconds = 0;
 		}
 		if (this.blockedSeconds > DEADLOCK_SECONDS) {
@@ -2211,11 +2883,12 @@ export class OrionVehicle extends Script {
 	private pose(): [number, number, number, number] {
 		if (this.phase === "leg") {
 			const t = this.distance / this.legLength;
+			const [lx, lz] = leftOf(this.dx, this.dz);
 			return [
-				this.p0[0] + (this.p1[0] - this.p0[0]) * t,
-				this.p0[1] + (this.p1[1] - this.p0[1]) * t,
-				this.dx,
-				this.dz,
+				this.p0[0] + (this.p1[0] - this.p0[0]) * t + lx * this.laneShift,
+				this.p0[1] + (this.p1[1] - this.p0[1]) * t + lz * this.laneShift,
+				// Angled a little towards the lane it's drifting into.
+				...normalised(this.dx + lx * this.laneDrift / Math.max(this.speed, 2), this.dz + lz * this.laneDrift / Math.max(this.speed, 2)),
 			];
 		}
 		const t = Math.min(1, this.distance / this.turnLength);
@@ -2252,7 +2925,16 @@ export class OrionVehicle extends Script {
 		this.phase = "leg";
 		this.distance = 0;
 		this.runningAmber = false;
+		this.laneShift = 0;
+		this.laneDrift = 0;
+		this.passing = null;
+		this.placeLeg();
+		this.chooseExit();
+	}
 
+	/** The current leg's ends, in the current lane. */
+	private placeLeg() {
+		const { xIndex, zIndex, dx, dz } = this;
 		const lane = this.laneOffset(xIndex, zIndex, dx);
 		const [lx, lz] = leftOf(dx, dz);
 		const ax = ROAD_GRID.xs[xIndex];
@@ -2264,7 +2946,140 @@ export class OrionVehicle extends Script {
 		this.p0 = [ax + dx * startBack + lx * lane, az + dz * startBack + lz * lane];
 		this.p1 = [bx - dx * endBack + lx * lane, bz - dz * endBack + lz * lane];
 		this.legLength = Math.max(0.1, Math.hypot(this.p1[0] - this.p0[0], this.p1[1] - this.p0[1]));
-		this.chooseExit();
+	}
+
+	/**
+	 * Moves over into the road's other lane (same direction), to get round a stalled car: only on
+	 * a road with two, with room left before the junction, and with the other lane clear beside
+	 * and ahead. The car drifts across (see easeLaneShift) rather than jumping.
+	 */
+	private changeLane(): boolean {
+		if (this.phase !== "leg" || this.legLength - this.distance < LANE_CHANGE_ROOM) return false;
+		if (laneOffsets(travelRoadWidth(this.xIndex, this.zIndex, this.dx)).length < 2) return false;
+		const from = this.laneOffset(this.xIndex, this.zIndex, this.dx);
+		const to = this.laneOffsets()[1 - Math.min(this.laneIndex, 1)];
+		const [x, z, hx, hz] = this.pose();
+		const [lx, lz] = leftOf(this.dx, this.dz);
+		// The stretch of the other lane it'll use: from beside the tail to well past the nose.
+		const box = ownFootprint;
+		const shift = to - from - this.laneShift;
+		box.x = x + lx * shift + hx * 4;
+		box.z = z + lz * shift + hz * 4;
+		box.sin = hx;
+		box.cos = hz;
+		box.halfLength = this.halfLength + 8;
+		box.halfWidth = this.halfWidth + 0.3;
+		const other = otherFootprint;
+		for (const car of drivableCars()) {
+			if (car === this || !car.footprint(other)) continue;
+			if (footprintContact(box, other)) return false;
+		}
+		this.laneIndex = 1 - Math.min(this.laneIndex, 1);
+		const before = this.distance;
+		this.placeLeg();
+		this.distance = before;
+		// Still where it was: the offset eases away as it drifts over.
+		this.laneShift = from + this.laneShift - to;
+		return true;
+	}
+
+	private laneOffsets(): readonly number[] {
+		return laneOffsets(travelRoadWidth(this.xIndex, this.zIndex, this.dx));
+	}
+
+	/** The drift across into a new lane, at a pace that rises with the car's speed. */
+	private easeLaneShift(dt: number) {
+		if (this.laneShift === 0) {
+			this.laneDrift = 0;
+			return;
+		}
+		const rate = 0.6 + 0.35 * this.speed;
+		const step = Math.min(Math.abs(this.laneShift), rate * dt);
+		// Something has come up alongside in the lane it's moving into: wait for it.
+		if (this.bodyBlocked(0, -Math.sign(this.laneShift) * step)) {
+			this.laneDrift = 0;
+			return;
+		}
+		this.laneDrift = -Math.sign(this.laneShift) * (dt > 0 ? step / dt : 0);
+		this.laneShift -= Math.sign(this.laneShift) * step;
+		if (Math.abs(this.laneShift) < 1e-3) {
+			this.laneShift = 0;
+			this.laneDrift = 0;
+			this.passing = null;
+		}
+	}
+
+	/**
+	 * Whether this lane-following car would run into anything solid by moving `distance` metres
+	 * along its path (backwards when negative), and `sideways` metres across it. The body is
+	 * tested where that move puts it, turned as the curve turns it, so a car swinging through a
+	 * turn can't sweep its flank into the car beside it. A move that would bring it into another
+	 * vehicle, or deeper into one it's already touching, is blocked; one that eases it out of a
+	 * contact is not.
+	 */
+	private bodyBlocked(distance: number, sideways = 0): boolean {
+		const now = ownFootprint;
+		const next = clearFootprint;
+		const [x, z, hx, hz] = this.pose();
+		const [aheadX, aheadZ, nextHx, nextHz] = this.poseAhead(distance);
+		// Sideways is towards the left of the leg (see leftOf), as the lane shift is.
+		const [lx, lz] = leftOf(this.dx, this.dz);
+		now.x = x;
+		now.z = z;
+		now.sin = hx;
+		now.cos = hz;
+		next.x = aheadX + lx * sideways;
+		next.z = aheadZ + lz * sideways;
+		next.sin = nextHx;
+		next.cos = nextHz;
+		now.halfLength = next.halfLength = this.halfLength;
+		now.halfWidth = next.halfWidth = this.halfWidth;
+		const other = otherFootprint;
+		for (const car of drivableCars()) {
+			if (car === this || !car.footprint(other) || !this.level(car)) continue;
+			const ahead = footprintContact(next, other, CONTACT_MARGIN);
+			if (!ahead) continue;
+			const touching = footprintContact(now, other, CONTACT_MARGIN);
+			if (!touching || ahead.depth > touching.depth + 1e-4) return true;
+		}
+		return false;
+	}
+
+	/**
+	 * The pose `distance` metres on along the path from where the car is (back, when negative),
+	 * without moving it: along this leg or turn, and straight on from its end beyond that.
+	 */
+	private poseAhead(distance: number): [number, number, number, number] {
+		const length = this.phase === "leg" ? this.legLength : this.turnLength;
+		const at = Math.max(0, Math.min(length, this.distance + distance));
+		const beyond = this.distance + distance - at;
+		const saved = this.distance;
+		this.distance = at;
+		const [x, z, hx, hz] = this.pose();
+		this.distance = saved;
+		return [x + hx * beyond, z + hz * beyond, hx, hz];
+	}
+
+	/** Backing up a couple of metres out of a stand-off, then holding so the other car can go. */
+	private backOff(dt: number) {
+		const step = Math.min(this.backoffLeft, BACKOFF_SPEED * dt, this.distance);
+		this.speed = 0;
+		this.targetSpeed = 0;
+		if (step <= 1e-3 || this.bodyBlocked(-step)) {
+			this.backoffLeft = 0;
+		} else {
+			this.distance -= step;
+			this.backoffLeft -= step;
+			this.applyPose();
+		}
+		if (this.backoffLeft <= 0) {
+			this.backoffLeft = 0;
+			this.holdSeconds = BACKOFF_HOLD_SECONDS;
+			this.ignoreCrossingSeconds = 0;
+		}
+		this.braking = true;
+		this.updateLights(dt, true);
+		this.trackTurnRate(dt);
 	}
 
 	/** Picks what to do at the junction ahead: straight on, or a left or right turn. */
@@ -2289,6 +3104,10 @@ export class OrionVehicle extends Script {
 	}
 
 	private beginTurn() {
+		// A lane change is only started with room to finish before the junction.
+		this.laneShift = 0;
+		this.laneDrift = 0;
+		this.passing = null;
 		const bx = this.xIndex + this.dx;
 		const bz = this.zIndex + this.dz;
 		const cx = ROAD_GRID.xs[bx];
@@ -2331,15 +3150,18 @@ export class OrionVehicle extends Script {
 			this.beginLeg(xIndex, zIndex, dx, dz);
 			const distance = this.random() * this.legLength * 0.8;
 			this.distance = distance;
-			const [x, z] = this.pose();
+			const [x, z, hx, hz] = this.pose();
 
 			const crowded = [...trafficAgents()].some((other) => (
 				other !== this.agent && other.kind === "vehicle" && Math.hypot(other.x - x, other.z - z) < 12
 			));
+			// Never on top of another car (or so close it can't pull away): a place like that is
+			// taken only if nowhere else is.
+			const blocked = this.spaceTaken(x, z, hx, hz, FOLLOW_GAP + 1);
 			const fromPlayer = Math.hypot(x - player.x, z - player.z);
 			const hidden = minDistance === 0 || !inCameraView(x, z, RESPAWN_HIDDEN_RANGE);
 			const farEnough = fromPlayer >= minDistance && fromPlayer <= RECYCLE_DISTANCE - 20;
-			const score = (hidden ? 4 : 0) + (farEnough ? 2 : 0) + (crowded ? 0 : 1) + Math.min(1, distanceFromCamera(x, z) / RECYCLE_DISTANCE);
+			const score = (blocked ? -10 : 0) + (hidden ? 4 : 0) + (farEnough ? 2 : 0) + (crowded ? 0 : 1) + Math.min(1, distanceFromCamera(x, z) / RECYCLE_DISTANCE);
 			if (!best || score > best.score) best = { xIndex, zIndex, dx, dz, distance, score };
 			if (hidden && farEnough && !crowded) break;
 		}
@@ -2348,6 +3170,11 @@ export class OrionVehicle extends Script {
 			this.distance = best.distance;
 		}
 		this.speed = this.maxSpeed * 0.5;
+		this.hardBlockedSeconds = 0;
+		this.stalledBlockSeconds = 0;
+		this.backoffLeft = 0;
+		this.holdSeconds = 0;
+		this.touching.clear();
 		const [x, z] = this.pose();
 		// Ride height above the road is fixed by the scene; only X/Z are placed here.
 		const y = this.rideHeight;
@@ -2355,6 +3182,45 @@ export class OrionVehicle extends Script {
 		this.entity.rigidbody?.teleport(x, y, z);
 		this.applyPose(true);
 		this.lastYaw = null;
+	}
+
+	/**
+	 * Whether a body of this car's size at (x, z) facing (hx, hz) would overlap, or come within
+	 * `margin` of, any vehicle in the world.
+	 */
+	private spaceTaken(x: number, z: number, hx: number, hz: number, margin: number): boolean {
+		const box = ownFootprint;
+		box.x = x;
+		box.z = z;
+		box.sin = hx;
+		box.cos = hz;
+		box.halfLength = this.halfLength;
+		box.halfWidth = this.halfWidth;
+		const other = otherFootprint;
+		for (const car of drivableCars()) {
+			if (car === this || !car.footprint(other)) continue;
+			if (footprintContact(box, other, margin)) return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Traffic in the way of a car being put down somewhere fixed (a mission's, a bay's) goes off to
+	 * another road, so the two don't start out inside each other.
+	 */
+	private clearTrafficAround(x: number, z: number, headingRadians: number) {
+		const box = clearFootprint;
+		box.x = x;
+		box.z = z;
+		box.sin = Math.sin(headingRadians);
+		box.cos = Math.cos(headingRadians);
+		box.halfLength = this.halfLength;
+		box.halfWidth = this.halfWidth;
+		const other = otherFootprint;
+		for (const car of drivableCars()) {
+			if (car === this || car.driver !== "ai" || car.manual || !car.footprint(other)) continue;
+			if (footprintContact(box, other, FOLLOW_GAP)) car.respawnNearPlayer(RESPAWN_MIN);
+		}
 	}
 
 	private trackTurnRate(dt: number) {
@@ -2426,6 +3292,11 @@ function curveLength(a: readonly number[], c: readonly number[], b: readonly num
 	return Math.max(0.1, length);
 }
 
+function normalised(x: number, z: number): [number, number] {
+	const length = Math.hypot(x, z) || 1;
+	return [x / length, z / length];
+}
+
 function nearestIndex(values: readonly number[], target: number): number {
 	let best = 0;
 	for (let i = 1; i < values.length; i++) {
@@ -2447,6 +3318,11 @@ function mulberry32(seed: number) {
 /** When the last police unit was sent out, so they come a few seconds apart. */
 let lastPursuitDispatch = -Infinity;
 
+/** Condition lost after a fire is put out that lights it again (a fresh crash, more rounds). */
+const REIGNITE_DAMAGE = 6;
+/** How fast a wreck fire uses up what's left to burn (share per second at full strength): ~45 s. */
+const WRECK_BURN_RATE = 0.085;
+
 // Fire service (cars with a fireSlot: see updateFireSlot).
 /** Seconds a fire has to have been burning before an engine is sent (a flare-up isn't a call-out). */
 const FIRE_CALL_DELAY = 2;
@@ -2460,8 +3336,21 @@ const FIRE_DIRECT_RANGE = 45;
 const FIRE_STANDOFF = 11;
 /** Stopped within this of the fire, the crew starts hosing. */
 const HOSE_RANGE = 16;
-/** Seconds of water it takes to put a car fire out. */
-const HOSE_SECONDS = 5;
+/** How far the roof monitor throws a useful jet (m). */
+const HOSE_REACH = 26;
+/** How fast the monitor's jet is walked onto its target (m/s at the landing point). */
+const HOSE_AIM_SPEED = 6;
+/** The jet counts as on the fire within this of its middle (m), at least. */
+const FIRE_TARGET_RADIUS = 1.3;
+/** Seconds of water kept on a put-out fire to cool it before the crew packs up. */
+const COOLING_SECONDS = 4;
+/** Seconds between checks that nothing stands between the monitor and the fire. */
+const HOSE_SIGHT_INTERVAL = 0.3;
+/** Seconds the crew will hose with no water getting there before it moves in closer. */
+const HOSE_BLOCKED_SECONDS = 3;
+/** A wet patch where the water lands, laid this often (s) and kept this long (s). */
+const WET_PATCH_INTERVAL = 1.4;
+const WET_PATCH_LIFE = 75;
 /** Top speed on a call (m/s), and the share of it when driving off afterwards. */
 const FIRE_CRUISE = 17;
 const FIRE_CRUISE_SHARE = 0.55;
@@ -2496,6 +3385,12 @@ function pickFire(engine: OrionVehicle): OrionVehicle | null {
 	return best;
 }
 
+
+/** Scratch footprints for contact tests (one car resolves at a time). */
+const ownFootprint: Footprint = { x: 0, z: 0, sin: 0, cos: 1, halfLength: 1, halfWidth: 1 };
+const otherFootprint: Footprint = { x: 0, z: 0, sin: 0, cos: 1, halfLength: 1, halfWidth: 1 };
+const agentFootprint: Footprint = { x: 0, z: 0, sin: 0, cos: 1, halfLength: 1, halfWidth: 1 };
+const clearFootprint: Footprint = { x: 0, z: 0, sin: 0, cos: 1, halfLength: 1, halfWidth: 1 };
 
 const tiltYaw = new Quat();
 const tiltPitch = new Quat();

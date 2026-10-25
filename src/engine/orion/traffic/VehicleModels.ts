@@ -70,6 +70,12 @@ export interface VehicleModelSpec {
 	/** The rear wing's node: raised at speed and tilted up as an air brake under hard braking. */
 	activeWing?: RegExp;
 	/**
+	 * A convertible's soft top (see FoldingRoof): built closed, folded by turning "roof-rear" about
+	 * its hinge on the deck and "roof-front" (its child) about their joint, then sinking the stack
+	 * under the deck; the side panes ("roof-pane-left/right") slide down into the doors.
+	 */
+	foldingRoof?: FoldingRoofSpec;
+	/**
 	 * True when the model is recognisably a real manufacturer's car. Hiding its badges is not
 	 * enough to ship it: the body shape is a registered design, so it has to be replaced with an
 	 * original before release. VehicleModels.test.ts keeps a list of the ones still in the tree,
@@ -83,6 +89,18 @@ export interface VehicleModelSpec {
 	 */
 	deferred?: boolean;
 	credit: { author: string; licence: "CC0" | "CC-BY-4.0" | "Purchased" | string; source: string };
+}
+
+/** How far each part of a folding roof moves from closed to stowed (see VehicleModelSpec.foldingRoof). */
+export interface FoldingRoofSpec {
+	/** Turn of the rear panel about its hinge, degrees about the car's X axis (negative folds it back). */
+	rearTurn: number;
+	/** Turn of the front panel about its joint with the rear one, relative to it. */
+	frontTurn: number;
+	/** How far the folded stack sinks under the deck, metres. */
+	stow: number;
+	/** How far the side windows drop into the doors, metres. */
+	paneDrop: number;
 }
 
 /** A door's hinge, for the driver's (left, +X) door; the other side is its mirror image. */
@@ -137,6 +155,62 @@ export const VEHICLE_MODELS: readonly VehicleModelSpec[] = [
 		length: 5.28,
 		seat: { forward: 0.3, lateral: 0.38, rootAboveRoad: 0.24, scale: 0.6 },
 		keepPaint: true,
+		credit: { ...ORION_ORIGINAL, source: "blender/build_car_2026.py" },
+	},
+	// The premium line, sold only at Kasper Motors (see PREMIUM_STYLES): each its own design, built in
+	// Blender (blender/build_car_2026.py, presets "gt", "flagship", "grandsuv", "roadster", "hyper")
+	// with an engine bay under the bonnet. Out of the world until the showroom or the garage shows one.
+	{
+		// GT coupe: long bonnet, two frameless doors, fastback, split lamps, egg-crate grille, V8.
+		file: "orion-gt-2026.glb",
+		styles: ["grandTourer"],
+		length: 4.95,
+		keepPaint: true,
+		seat: { forward: 0.0, lateral: 0.38, rootAboveRoad: 0.2, scale: 0.58 },
+		deferred: true,
+		credit: { ...ORION_ORIGINAL, source: "blender/build_car_2026.py" },
+	},
+	{
+		// Flagship saloon: two-tone with a chrome coach line, vertical-bar grille, cream cabin, V12.
+		file: "orion-flagship-2026.glb",
+		styles: ["flagship"],
+		length: 5.46,
+		keepPaint: true,
+		seat: { forward: 0.27, lateral: 0.38, rootAboveRoad: 0.24, scale: 0.6 },
+		deferred: true,
+		credit: { ...ORION_ORIGINAL, source: "blender/build_car_2026.py" },
+	},
+	{
+		// Grand SUV: coupe roofline, floating black roof, lattice grille, bronze turbine wheels, V8.
+		file: "orion-grandsuv-2026.glb",
+		styles: ["grandSuv"],
+		length: 4.95,
+		keepPaint: true,
+		seat: { forward: 0.24, lateral: 0.38, rootAboveRoad: 0.35, scale: 0.62 },
+		deferred: true,
+		credit: { ...ORION_ORIGINAL, source: "blender/build_car_2026.py" },
+	},
+	{
+		// Open-roof grand roadster: racing green over oxblood, a straight-six, and a soft top that
+		// folds away under the rear deck (O at the wheel).
+		file: "orion-roadster-2026.glb",
+		styles: ["roadster"],
+		length: 4.55,
+		keepPaint: true,
+		seat: { forward: -0.17, lateral: 0.38, rootAboveRoad: 0.1, scale: 0.56 },
+		foldingRoof: { rearTurn: -150, frontTurn: 170, stow: 0.3, paneDrop: 0.4 },
+		deferred: true,
+		credit: { ...ORION_ORIGINAL, source: "blender/build_car_2026.py" },
+	},
+	{
+		// Electric hypercar: cab-forward under a black canopy, high wings, glass tail over the rear
+		// drive unit and battery, aero wheels.
+		file: "orion-hyper-2026.glb",
+		styles: ["hypercar"],
+		length: 4.76,
+		keepPaint: true,
+		seat: { forward: 0.06, lateral: 0.38, rootAboveRoad: 0.04, scale: 0.55 },
+		deferred: true,
 		credit: { ...ORION_ORIGINAL, source: "blender/build_car_2026.py" },
 	},
 	{

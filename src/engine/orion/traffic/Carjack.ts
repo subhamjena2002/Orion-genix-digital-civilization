@@ -93,6 +93,12 @@ export function drivableCars(): ReadonlySet<OrionVehicle> {
 	return cars;
 }
 
+/** Whether the car the player's driving has a roof to work (a convertible): for the controls strip. */
+export function playerCarHasRoof(): boolean {
+	for (const car of cars) if (car.driver === "player") return car.roof !== null;
+	return false;
+}
+
 /** The car whose driver's door is closest to (x, z), within reach. */
 export function findCarNear(x: number, z: number, reach: number): OrionVehicle | null {
 	let best: OrionVehicle | null = null;
@@ -100,7 +106,8 @@ export function findCarNear(x: number, z: number, reach: number): OrionVehicle |
 	const door = new Vec3();
 	for (const car of cars) {
 		// A burnt-out shell has no engine left to steal; an idle police unit isn't in the world.
-		if (car.driver === "player" || car.burnedOut || !car.entity.enabled || !car.inWorld) continue;
+		// A car on show in the showroom is locked: it's bought, not taken.
+		if (car.driver === "player" || car.forSale || car.burnedOut || !car.entity.enabled || !car.inWorld) continue;
 		car.carjack.doorPoint(door);
 		const distance = Math.hypot(door.x - x, door.z - z);
 		if (distance < bestDistance) {
@@ -231,6 +238,11 @@ export class CarjackRig {
 
 	/** Shatters the driver's side window. */
 	public smashWindow() {
+		// The car's glass breaks it when it can, and knows when it's already been shot out, so a
+		// window is never broken twice.
+		const at = this.toWorld(this.side * this.car.halfWidth, -this.car.halfHeight + 0.95, this.seatForward() + 0.2, new Vec3());
+		const handled = this.car.smashWindowAt(at.x, at.y, at.z);
+		if (handled !== "none") return;
 		for (const instance of this.sideGlass()) {
 			this.brokenGlass.push({ instance, scale: instance.node.getLocalScale().clone() });
 			instance.visible = false;

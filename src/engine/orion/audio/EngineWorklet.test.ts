@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ENGINE_PROCESSOR_SOURCE, type EnginePulseVoicing } from "./EngineWorklet";
 import { ENGINE_VOICES, firingFrequency } from "./EngineVoices";
@@ -27,16 +27,33 @@ function createProcessor(): Processor {
 	return new (Processor as new () => Processor)();
 }
 
+/** Mulberry32: a small seeded PRNG, so the processor's roughness and jitter are the same every run. */
+function seededRandom(seed: number): () => number {
+	let state = seed >>> 0;
+	return () => {
+		state = (state + 0x6d2b79f5) >>> 0;
+		let t = state;
+		t = Math.imul(t ^ (t >>> 15), t | 1);
+		t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+}
+
 function render(voicing: EnginePulseVoicing, firing: number, load: number, seconds: number): Float32Array {
-	const processor = createProcessor();
-	processor.configure(voicing);
-	const out = new Float32Array(Math.floor(seconds * SAMPLE_RATE / 128) * 128);
-	for (let i = 0; i < out.length; i += 128) {
-		const block = new Float32Array(128);
-		processor.process([], [[block]], { firing: [firing], load: [load] });
-		out.set(block, i);
+	const random = vi.spyOn(Math, "random").mockImplementation(seededRandom(0x5eed));
+	try {
+		const processor = createProcessor();
+		processor.configure(voicing);
+		const out = new Float32Array(Math.floor(seconds * SAMPLE_RATE / 128) * 128);
+		for (let i = 0; i < out.length; i += 128) {
+			const block = new Float32Array(128);
+			processor.process([], [[block]], { firing: [firing], load: [load] });
+			out.set(block, i);
+		}
+		return out;
+	} finally {
+		random.mockRestore();
 	}
-	return out;
 }
 
 function rms(samples: Float32Array): number {

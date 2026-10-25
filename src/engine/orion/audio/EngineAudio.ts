@@ -37,6 +37,13 @@ const RECORDED_ENGINE: Readonly<Record<VehicleStyle, { family: string; shift: nu
 	militaryWagon: { family: "car", shift: 0.8, level: 1.1 },
 	auto: { family: "car", shift: 1.45, level: 0.8 },
 	luxury: { family: "sport", shift: 1, level: 1.15 },
+	// The premium line: the V8s and the six on the sports recording, the V12 deeper and quieter,
+	// the electric hypercar high and soft (the recording as a motor's whine).
+	grandTourer: { family: "sport", shift: 0.9, level: 1.1 },
+	flagship: { family: "car", shift: 0.85, level: 0.85 },
+	grandSuv: { family: "sport", shift: 0.8, level: 1.0 },
+	roadster: { family: "sport", shift: 1.05, level: 1.1 },
+	hypercar: { family: "sport", shift: 1.6, level: 0.7 },
 	van: { family: "diesel", shift: 1.35, level: 0.85 },
 	ambulance: { family: "diesel", shift: 1.3, level: 0.9 },
 	serviceTruck: { family: "diesel", shift: 1.25, level: 0.9 },
@@ -194,8 +201,10 @@ class EngineAudio {
 	private chooseCars(): OrionVehicle[] {
 		const scored: { car: OrionVehicle; distance: number }[] = [];
 		for (const car of drivableCars()) {
-			// A burnt-out shell has no engine left to run.
-			if (car.burnedOut || !car.entity.enabled) continue;
+			// Only engines that are running: an empty parked car (the station's patrol cars, the
+			// hospital's ambulances, one the player got out of) is silent. They used to idle for good,
+			// a steady drone from cars with nobody in them that took half the voices near the station.
+			if (!car.engineRunning || !car.entity.enabled) continue;
 			const position = car.entity.getPosition();
 			const placed = audioBus().place(position.x, position.y, position.z, this.place);
 			if (placed.distance > AUDIBLE_DISTANCE) continue;

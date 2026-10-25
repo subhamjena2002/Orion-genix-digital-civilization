@@ -1,7 +1,10 @@
-import { BLEND_NONE, BLEND_NORMAL, Color, Entity, Mat4, Mesh, PRIMITIVE_TRIANGLES, Quat, SEMANTIC_NORMAL, SEMANTIC_POSITION, StandardMaterial, Vec3, type AppBase, type GraphNode, type MeshInstance, type RenderComponent } from "playcanvas";
+import { BLEND_NORMAL, Color, Entity, Mat4, Mesh, PRIMITIVE_TRIANGLES, Quat, SEMANTIC_NORMAL, SEMANTIC_POSITION, StandardMaterial, Vec3, type AppBase, type GraphNode, type MeshInstance, type RenderComponent } from "playcanvas";
 
+import { decals, type DecalHandle, type DecalKind } from "../effects/Decals";
 import { applyDent, applySag, refreshNormals } from "./BodyDeform";
+import { CarGlass, type GlassHit, type PaneResult } from "./CarGlass";
 import type { CarjackRig } from "./Carjack";
+import { forgetTriangles } from "./MeshRaycast";
 import { BUILDS, dentFor, glassAfter, wear, type GlassState, type VehicleBuild } from "./VehicleDamage";
 
 /**
@@ -68,8 +71,11 @@ interface Deformable {
 let crazedGlass: StandardMaterial | null = null;
 let chipMaterial: StandardMaterial | null = null;
 
+/** Bullet holes and soot kept on one car; the oldest goes as the next is made. */
+const MAX_MARKS = 28;
+
 /** Crazed safety glass: frosted white, nearly opaque, still a little glossy. */
-function crackedGlassMaterial(): StandardMaterial {
+export function crackedGlassMaterial(): StandardMaterial {
 	if (crazedGlass) return crazedGlass;
 	crazedGlass = new StandardMaterial();
 	crazedGlass.name = "crazed-glass";
@@ -91,11 +97,6 @@ function debrisMaterial(): StandardMaterial {
 	chipMaterial.gloss = 0.5;
 	chipMaterial.update();
 	return chipMaterial;
-}
-
-function isGlass(instance: MeshInstance): boolean {
-	const material = instance.material as StandardMaterial | null;
-	return Boolean(material && material.blendType !== BLEND_NONE && /glass|window|windshield|windscreen/i.test(material.name ?? ""));
 }
 
 function cloneMesh(app: AppBase, source: Mesh): { mesh: Mesh; positions: Float32Array; normals: Float32Array; indices: number[] } | null {
@@ -135,9 +136,13 @@ export interface CrashHit {
 
 export class BodyDamage {
 	private deformables: Deformable[] | null = null;
-	private glassInstances: MeshInstance[] = [];
-	private glassOriginal = new Map<MeshInstance, { material: StandardMaterial | null; scale: Vec3 | null }>();
+	/** The windows, pane by pane (see CarGlass). */
+	public readonly glassPanes: CarGlass;
+	/** How far crashes have got with the glass as a whole (crazed, then out). */
 	private glass: GlassState = "intact";
+	/** Bullet holes and soot on the body. */
+	private readonly marks: DecalHandle[] = [];
+	private sootLevel = 0;
 	private parts: LoosePart[] = [];
 	private sinceHit = Infinity;
 	private wearLevel = 0;
@@ -160,15 +165,76 @@ export class BodyDamage {
 		private readonly build: VehicleBuild,
 		private readonly paint: () => readonly StandardMaterial[],
 		private readonly carjack: () => CarjackRig | null,
-		private readonly batchGroupId: number | null,
+		batchGroupId: number | null,
+		/** Holds the car's marks: moves with the body, hidden with it at a distance. */
+		private readonly decalOwner: Entity,
+		groundY: () => number,
+		velocity: () => { x: number; z: number },
 	) {
-		this.findGlass(model);
+		this.glassPanes = new CarGlass(app, model, decalOwner, groundY, velocity, crackedGlassMaterial, batchGroupId);
 		this.findParts(model);
 	}
 
 	/** Anything to put right. */
 	public get damaged(): boolean {
-		return this.deformables !== null || this.glass !== "intact" || this.wearLevel > 0 || this.parts.some((part) => part.hang !== 0);
+		return this.deformables !== null || this.glass !== "intact" || this.glassPanes.damaged || this.wearLevel > 0 || this.sootLevel > 0
+			|| this.marks.length > 0 || this.parts.some((part) => part.hang !== 0);
+	}
+
+	/** The nearest unbroken pane along a unit world ray (see CarGlass.raycast). */
+	public raycastGlass(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxDistance: number, out: GlassHit): boolean {
+		return this.glassPanes.raycast(ox, oy, oz, dx, dy, dz, maxDistance, out);
+	}
+
+	/** A round into a pane (see CarGlass.shoot). */
+	public shootGlass(pane: number, x: number, y: number, z: number, nx: number, ny: number, nz: number, dx: number, dy: number, dz: number, damage: number): PaneResult {
+		return this.glassPanes.shoot(pane, x, y, z, nx, ny, nz, dx, dy, dz, damage);
+	}
+
+	/** A mark on the body where a round struck: a hole through the paint, a scuff on a tyre. */
+	public mark(kind: DecalKind, x: number, y: number, z: number, nx: number, ny: number, nz: number, size: number): void {
+		const layer = decals(this.app);
+		if (this.marks.length >= MAX_MARKS) layer.release(this.marks.shift()!);
+		this.marks.push(layer.place(kind, this.decalOwner, x, y, z, nx, ny, nz, size));
+	}
+
+	/**
+	 * Fire damage that stays after the flames: the paint blistered dark and dull, with soot laid
+	 * over the surfaces the fire licked (`spots`: points on the body and their normals). `level`
+	 * 0..1 only ever goes up.
+	 */
+	public soot(level: number, spots: readonly { x: number; y: number; z: number; nx: number; ny: number; nz: number; size: number }[]): void {
+		if (level <= this.sootLevel + 0.02) return;
+		this.sootLevel = level;
+		for (const material of this.paint()) {
+			let base = this.paintBase.get(material);
+			if (!base) {
+				base = { diffuse: material.diffuse.clone(), gloss: material.gloss, clearCoat: material.clearCoat };
+				this.paintBase.set(material, base);
+			}
+			const worn = Math.max(this.wearLevel, level);
+			const darken = 1 - level * 0.72;
+			// Scorched paint goes brown-black before it goes black.
+			material.diffuse = new Color(
+				base.diffuse.r * darken * 0.95 + 0.03 * level,
+				base.diffuse.g * darken * 0.85 + 0.02 * level,
+				base.diffuse.b * darken * 0.75 + 0.015 * level,
+			);
+			material.clearCoat = base.clearCoat * Math.max(0, 1 - worn * 1.2);
+			material.gloss = base.gloss * (1 - level * 0.7);
+			material.update();
+		}
+		const layer = decals(this.app);
+		for (const spot of spots) {
+			if (this.marks.length >= MAX_MARKS) layer.release(this.marks.shift()!);
+			this.marks.push(layer.place("soot", this.decalOwner, spot.x, spot.y, spot.z, spot.nx, spot.ny, spot.nz, spot.size, { opacity: 0.55 + level * 0.4 }));
+		}
+	}
+
+	/** Every window out (the car going up, a blast). */
+	public shatterGlass(x: number, y: number, z: number): void {
+		this.glassPanes.shatterAll(x, y, z);
+		this.glass = "shattered";
 	}
 
 	/** Takes a crash. */
@@ -218,14 +284,12 @@ export class BodyDamage {
 			}
 			this.deformables = null;
 		}
-		for (const [instance, original] of this.glassOriginal) {
-			instance.material = original.material ?? instance.material;
-			instance.visible = true;
-			if (original.scale) instance.node.setLocalScale(original.scale);
-		}
-		this.glassOriginal.clear();
-		if (this.glass !== "intact" && this.batchGroupId !== null) this.app.batcher?.markGroupDirty(this.batchGroupId);
+		this.glassPanes.reset();
 		this.glass = "intact";
+		const layer = decals(this.app);
+		for (const mark of this.marks) layer.release(mark);
+		this.marks.length = 0;
+		this.sootLevel = 0;
 		for (const part of this.parts) {
 			part.angle = 0;
 			part.velocity = 0;
@@ -340,44 +404,19 @@ export class BodyDamage {
 			entry.mesh.setPositions(entry.positions);
 			entry.mesh.setNormals(entry.normals);
 			entry.mesh.update(PRIMITIVE_TRIANGLES);
+			// Rounds now strike the dented panel where it is.
+			forgetTriangles(entry.mesh);
 		}
 	}
 
 	// ---- Glass ---------------------------------------------------------------------------------
 
-	private findGlass(model: Entity): void {
-		const found = new Set<MeshInstance>();
-		for (const render of model.findComponents("render") as RenderComponent[]) {
-			for (const instance of render.meshInstances) if (isGlass(instance)) found.add(instance);
-		}
-		this.glassInstances = [...found];
-	}
-
+	/** Crashes craze the glass, and then knock it out (see VehicleDamage.glassAfter). */
 	private crackGlass(hit: CrashHit): void {
 		const next = glassAfter(this.glass, hit.deltaV, hit.lost, this.build);
 		if (next === this.glass) return;
-		const batched = this.glassInstances.some((instance) => instance.node !== this.body);
-		if (next === "cracked") {
-			const crazed = crackedGlassMaterial();
-			for (const instance of this.glassInstances) {
-				if (!this.glassOriginal.has(instance)) this.glassOriginal.set(instance, { material: instance.material as StandardMaterial | null, scale: null });
-				instance.material = crazed;
-			}
-			// A little glass comes away as it crazes.
-			this.carjack()?.spray(this.point.set(hit.x, hit.y + 0.3, hit.z), -hit.dirX, -hit.dirZ, 6, crazed, 0.05);
-		} else {
-			for (const instance of this.glassInstances) {
-				const original = this.glassOriginal.get(instance) ?? { material: instance.material as StandardMaterial | null, scale: null };
-				original.scale ??= instance.node.getLocalScale().clone();
-				this.glassOriginal.set(instance, original);
-				instance.visible = false;
-				// Batched panes are bones in the batch: zero their scale so they vanish from it too.
-				if (instance.node !== this.body) instance.node.setLocalScale(0, 0, 0);
-			}
-			this.carjack()?.spray(this.point.set(hit.x, hit.y + 0.4, hit.z), -hit.dirX, -hit.dirZ, 22, crackedGlassMaterial(), 0.06);
-		}
 		this.glass = next;
-		if (batched && this.batchGroupId !== null) this.app.batcher?.markGroupDirty(this.batchGroupId);
+		this.glassPanes.crash(next === "shattered" ? "shattered" : "cracked", hit.x, hit.y + 0.4, hit.z, hit.dirX, hit.dirZ);
 	}
 
 	// ---- Paint ---------------------------------------------------------------------------------

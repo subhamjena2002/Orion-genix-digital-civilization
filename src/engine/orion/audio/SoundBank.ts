@@ -1,5 +1,6 @@
 import { audioBus, AUDIBLE_DISTANCE, type Channel, type Placement } from "./AudioBus";
 import { SOUND_FILES } from "./SoundManifest";
+import { synthesizeSounds } from "./SynthSounds";
 
 /**
  * Recorded sounds: fetched and decoded once, then played as many times as needed.
@@ -16,6 +17,8 @@ import { SOUND_FILES } from "./SoundManifest";
 const BASE = "/audio/";
 
 const buffers = new Map<string, AudioBuffer>();
+/** Sounds rendered in code rather than recorded (see SynthSounds), by id. */
+const synthesized = new Map<string, AudioBuffer>();
 const requested = new Set<string>();
 const lastTake = new Map<string, number>();
 
@@ -28,7 +31,7 @@ const VOICE_LIMITS: Readonly<Record<string, number>> = {
 	"pistol-close": 3, "rifle-close": 4, "shotgun-close": 3,
 	"pistol-far": 3, "rifle-far": 3, "shotgun-far": 3, "gun-distant": 3,
 	"hit-wall": 4, "hit-ground": 4, "hit-glass": 2, "hit-flesh": 3, impact: 4,
-	casing: 3, whizz: 2, crack: 2, punch: 3,
+	casing: 3, whizz: 2, crack: 2, punch: 3, "tyre-hiss": 3,
 	explosion: 4, "explosion-far": 3, "crash-heavy": 3, "crash-light": 4, glass: 3,
 };
 const DEFAULT_VOICES = 6;
@@ -46,6 +49,7 @@ const active = new Map<string, ActiveVoice[]>();
 /** Starts loading every recorded sound; cheap to call again. */
 export function preloadSounds(context: BaseAudioContext): void {
 	for (const sound of preloadOrder(Object.keys(SOUND_FILES))) for (const file of SOUND_FILES[sound]) load(context, file);
+	if (synthesized.size === 0) for (const [id, buffer] of synthesizeSounds(context)) synthesized.set(id, buffer);
 }
 
 /** Heard from the first second of play: engines, the street, footsteps, the player's own hands. */
@@ -74,6 +78,8 @@ function load(context: BaseAudioContext, file: string): void {
 
 /** A decoded take of `sound`, avoiding the one played last; null until any has loaded. */
 export function takeOf(sound: string): AudioBuffer | null {
+	const rendered = synthesized.get(sound);
+	if (rendered) return rendered;
 	const files = SOUND_FILES[sound];
 	if (!files) return null;
 	const loaded = files.map((file) => buffers.get(file)).filter((buffer): buffer is AudioBuffer => Boolean(buffer));
@@ -87,6 +93,7 @@ export function takeOf(sound: string): AudioBuffer | null {
 
 /** Whether every take of `sound` has arrived. */
 export function soundReady(sound: string): boolean {
+	if (synthesized.has(sound)) return true;
 	const files = SOUND_FILES[sound];
 	return Boolean(files && files.length > 0 && files.every((file) => buffers.has(file)));
 }

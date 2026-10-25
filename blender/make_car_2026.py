@@ -3,7 +3,8 @@
     PRESET, TEMPLATE, NAME = "taxi", "orion-taxi", "taxi2026"
     exec(open(r"C:\\oriongenix\\blender\\make_car_2026.py").read())
 
-Saves blender/<TEMPLATE>-2026.blend and renders blender/renders/<NAME>_<view>.png.
+Saves blender/<BLEND>.blend (default <TEMPLATE>-2026; set BLEND for a new car on an existing
+template, e.g. BLEND = "orion-gt-2026") and renders blender/renders/<NAME>_<view>.png.
 """
 import bpy, os
 
@@ -14,7 +15,7 @@ with bpy.context.temp_override(window=win, screen=win.screen):
         bpy.ops.wm.save_mainfile()
     bpy.ops.wm.read_homefile(use_empty=True)
     bpy.ops.import_scene.gltf(filepath=os.path.join(ROOT, "public", "models", "vehicles", TEMPLATE + ".glb"))
-    bpy.ops.wm.save_as_mainfile(filepath=os.path.join(ROOT, "blender", TEMPLATE + "-2026.blend"))
+    bpy.ops.wm.save_as_mainfile(filepath=os.path.join(ROOT, "blender", globals().get("BLEND", TEMPLATE + "-2026") + ".blend"))
     exec(open(os.path.join(ROOT, "blender", "build_car_2026.py")).read())
     exec(open(os.path.join(ROOT, "blender", "present_sedan_2026.py")).read())
     # Bigger vehicles: pull the studio cameras back and up in proportion.

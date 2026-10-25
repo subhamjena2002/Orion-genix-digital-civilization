@@ -1,5 +1,8 @@
 import { Color, Entity, LIGHTFALLOFF_LINEAR, StandardMaterial, Vec3, type AppBase } from "playcanvas";
 
+import { fireAudio } from "../audio/FireAudio";
+import { decals } from "../effects/Decals";
+import { glassShards } from "../effects/GlassShards";
 import { EmissionAccumulator, PARTICLE_KIND, ParticleField, type Wind } from "../effects/ParticleField";
 import { ParticleRenderer } from "../effects/ParticleRenderer";
 import { activeQuality } from "../rendering/QualityGovernor";
@@ -40,6 +43,36 @@ const SHAKE_RADIUS = 45;
 const SHAKE_SECONDS = 0.9;
 const FIRE_LIGHT_COLOUR = new Color(1, 0.52, 0.18);
 
+/**
+ * What a round struck, for how it kicks up: sparks off metal, a puff of grit off concrete and
+ * plaster, dark dust off tarmac, a glitter of glass, a black scuff off rubber, splinters off wood.
+ */
+export type ImpactSurface = "hard" | "metal" | "flesh" | "glass" | "concrete" | "plaster" | "asphalt" | "rubber" | "wood" | "dirt";
+
+interface ImpactLook {
+	sparks: number;
+	sparkSpeed: number;
+	dust: number;
+	dustSize: number;
+	/** Smoke tone: 0 pale .. 1 black. */
+	tone: number;
+	/** Chips thrown (as cooled sparks: dark, falling). */
+	chips: number;
+}
+
+const IMPACT_LOOKS: Readonly<Record<ImpactSurface, ImpactLook>> = {
+	hard: { sparks: 3, sparkSpeed: 5, dust: 1, dustSize: 0.09, tone: 0.3, chips: 2 },
+	metal: { sparks: 7, sparkSpeed: 9, dust: 1, dustSize: 0.06, tone: 0.35, chips: 0 },
+	flesh: { sparks: 0, sparkSpeed: 0, dust: 1, dustSize: 0.06, tone: 0.85, chips: 0 },
+	glass: { sparks: 0, sparkSpeed: 0, dust: 1, dustSize: 0.05, tone: 0.05, chips: 0 },
+	concrete: { sparks: 2, sparkSpeed: 4, dust: 2, dustSize: 0.11, tone: 0.18, chips: 4 },
+	plaster: { sparks: 0, sparkSpeed: 0, dust: 2, dustSize: 0.13, tone: 0.1, chips: 4 },
+	asphalt: { sparks: 2, sparkSpeed: 4, dust: 1, dustSize: 0.1, tone: 0.45, chips: 3 },
+	rubber: { sparks: 0, sparkSpeed: 0, dust: 1, dustSize: 0.05, tone: 0.9, chips: 0 },
+	wood: { sparks: 0, sparkSpeed: 0, dust: 1, dustSize: 0.08, tone: 0.3, chips: 5 },
+	dirt: { sparks: 0, sparkSpeed: 0, dust: 2, dustSize: 0.14, tone: 0.4, chips: 3 },
+};
+
 /** One damaged car's emitter, updated in place each frame (no per-frame allocation). */
 export interface DamageSource {
 	x: number;
@@ -53,8 +86,10 @@ export interface DamageSource {
 	/** Road surface under the car. */
 	groundY: number;
 	stage: DamageStage;
-	/** 0..1 within the stage: how thick the smoke is. */
+	/** 0..1 within the stage: how thick the smoke is, or how strong the fire. */
 	severity: number;
+	/** 0..1: water landing on it right now (a fire being put out boils off into steam). */
+	water?: number;
 }
 
 interface Emitters {
@@ -140,7 +175,11 @@ class CrashEffectLayer {
 
 	/** Materials to draw once at load, so nothing compiles a shader mid-crash. */
 	public get materials(): { type: string; material: StandardMaterial }[] {
-		return [{ type: "box", material: this.debrisMaterial }];
+		return [
+			{ type: "box", material: this.debrisMaterial },
+			{ type: "box", material: glassShards(this.app).prewarmMaterial },
+			...decals(this.app).prewarmMaterials.map((material) => ({ type: "plane", material })),
+		];
 	}
 
 	/**
@@ -186,42 +225,58 @@ class CrashEffectLayer {
 				// A car that has gone up burns along its whole length; one still running burns
 				// from the engine bay.
 				const spread = wreck ? 0.85 : 0.35;
-				// A wreck's fire dies down as it burns out.
-				const strength = wreck ? 0.35 + source.severity * 0.65 : 1;
+				// How big the fire is (see VehicleFire): it builds as it catches, falls back under
+				// water, and a wreck's dies down as it burns out.
+				const strength = Math.max(0.05, source.severity);
+				const water = source.water ?? 0;
 				const flames = emitters.flame.take((wreck ? 58 : 42) * strength * share, dt);
-				for (let i = 0; i < flames; i++) this.spawnFlame(source, spread, wreck ? between(0.5, 0.9) : between(0.42, 0.72));
-				const puffs = emitters.smoke.take((wreck ? 13 : 10) * share, dt);
+				const scale = 0.55 + 0.45 * strength;
+				for (let i = 0; i < flames; i++) this.spawnFlame(source, spread * (0.6 + 0.4 * strength), (wreck ? between(0.5, 0.9) : between(0.42, 0.72)) * scale);
+				// Black smoke from the fire, turning grey and then white as water boils off in it.
+				const puffs = emitters.smoke.take((wreck ? 13 : 10) * (0.35 + 0.65 * strength) * share, dt);
 				for (let i = 0; i < puffs; i++) {
 					this.spawnSmoke(source, spread, {
-						tone: between(0.82, 0.95),
-						size: between(0.45, 0.7),
+						tone: between(0.82, 0.95) * (1 - 0.65 * water),
+						size: between(0.45, 0.7) * (0.7 + 0.3 * strength),
 						growth: 4.6,
 						life: between(4.2, 6.5),
 						rise: between(1.5, 2.3),
 						intensity: 0.85,
-						glow: 1,
+						glow: 1 - water * 0.7,
 					});
 				}
-				const embers = emitters.ember.take(7 * share, dt);
-				for (let i = 0; i < embers; i++) this.spawnEmber(source, spread);
-				this.addFire(source.x, source.y, source.z, wreck ? 1.25 * strength : 1);
+				if (water > 0) {
+					// Steam: water flashing off the hot metal and the flames, billowing up white.
+					const steam = emitters.ember.take(18 * water * (0.3 + strength) * share, dt);
+					for (let i = 0; i < steam; i++) {
+						this.spawnSmoke(source, spread, {
+							tone: 0, size: between(0.35, 0.6), growth: 5, life: between(1.8, 3), rise: between(1.4, 2.6), intensity: 0.5, glow: 0,
+						});
+					}
+				} else {
+					const embers = emitters.ember.take(7 * strength * share, dt);
+					for (let i = 0; i < embers; i++) this.spawnEmber(source, spread);
+				}
+				this.addFire(source.x, source.y, source.z, (wreck ? 1.25 : 1) * strength);
+				fireAudio().reportFire(source.x, source.y, source.z, strength);
 				break;
 			}
 			case "smouldering": {
-				const puffs = emitters.smoke.take((1.5 + source.severity * 3) * share, dt);
+				// Out: no flames, only smoke thinning as the shell cools — pale with steam where
+				// it was put out with water, never black again.
+				const residue = source.severity;
+				const puffs = emitters.smoke.take((1 + residue * 5) * share, dt);
 				for (let i = 0; i < puffs; i++) {
-					this.spawnSmoke(source, 0.7, {
-						tone: 0.5,
-						size: between(0.3, 0.5),
+					this.spawnSmoke(source, 0.6, {
+						tone: 0.18 + 0.25 * (1 - residue),
+						size: between(0.28, 0.48),
 						growth: 4.5,
-						life: between(3.5, 5.5),
-						rise: between(0.7, 1.2),
-						intensity: 0.25 + source.severity * 0.35,
+						life: between(3.2, 5.2),
+						rise: between(0.6, 1.1),
+						intensity: 0.15 + residue * 0.4,
 						glow: 0,
 					});
 				}
-				const licks = emitters.flame.take(2.5 * source.severity * share, dt);
-				for (let i = 0; i < licks; i++) this.spawnFlame(source, 0.7, between(0.18, 0.3));
 				break;
 			}
 		}
@@ -347,11 +402,11 @@ class CrashEffectLayer {
 	 * A round striking something: sparks and a dust puff off hard surfaces (brighter off metal),
 	 * a dark puff off a person. (nx, ny, nz) points back out of the surface.
 	 */
-	public impact(x: number, y: number, z: number, nx: number, ny: number, nz: number, surface: "hard" | "metal" | "flesh") {
+	public impact(x: number, y: number, z: number, nx: number, ny: number, nz: number, surface: ImpactSurface) {
 		const field = this.field;
-		const sparks = surface === "metal" ? 7 : surface === "hard" ? 3 : 0;
-		for (let i = 0; i < sparks; i++) {
-			const speed = between(2, surface === "metal" ? 9 : 5);
+		const look = IMPACT_LOOKS[surface];
+		for (let i = 0; i < look.sparks; i++) {
+			const speed = between(2, look.sparkSpeed);
 			field.spawn({
 				kind: PARTICLE_KIND.spark, x, y, z,
 				vx: (nx + between(-0.7, 0.7)) * speed, vy: (ny + between(-0.2, 0.9)) * speed, vz: (nz + between(-0.7, 0.7)) * speed,
@@ -359,13 +414,26 @@ class CrashEffectLayer {
 				gravity: GRAVITY, drag: 1.5, floor: y - 3,
 			});
 		}
-		field.spawn({
-			kind: PARTICLE_KIND.smoke, x: x + nx * 0.05, y: y + ny * 0.05, z: z + nz * 0.05,
-			vx: nx * 0.8, vy: 0.3 + ny * 0.8, vz: nz * 0.8,
-			size: surface === "flesh" ? 0.06 : 0.09, growth: 4, life: between(0.5, 0.9),
-			intensity: surface === "flesh" ? 0.5 : 0.4, tone: surface === "flesh" ? 0.85 : 0.3,
-			drag: 3, rotation: Math.random() * 6.28, spin: between(-1, 1),
-		});
+		// Chips and grit: cold, dark specks thrown out and falling.
+		for (let i = 0; i < look.chips; i++) {
+			const speed = between(1.5, 4);
+			field.spawn({
+				kind: PARTICLE_KIND.smoke, x, y, z,
+				vx: (nx + between(-0.6, 0.6)) * speed, vy: (ny + between(0, 0.8)) * speed, vz: (nz + between(-0.6, 0.6)) * speed,
+				size: between(0.008, 0.016), growth: 1, life: between(0.4, 0.8), intensity: 0.9, tone: look.tone + 0.3,
+				gravity: GRAVITY, drag: 0.6, floor: y - 3,
+			});
+		}
+		for (let i = 0; i < look.dust; i++) {
+			field.spawn({
+				kind: PARTICLE_KIND.smoke, x: x + nx * 0.05, y: y + ny * 0.05, z: z + nz * 0.05,
+				vx: nx * between(0.5, 1.1), vy: 0.25 + ny * 0.8, vz: nz * between(0.5, 1.1),
+				size: look.dustSize * between(0.8, 1.2), growth: 4, life: between(0.5, 1.1),
+				intensity: surface === "flesh" ? 0.5 : 0.4, tone: look.tone,
+				drag: 3, rotation: Math.random() * 6.28, spin: between(-1, 1),
+			});
+		}
+		if (surface === "glass") glassShards(this.app).burst({ x, y, z, dirX: nx, dirY: ny, dirZ: nz, spread: 0.03, count: 3, floor: y - 1.2, style: "cubes" });
 	}
 
 	/** A tracer: a hot streak flying from the muzzle towards where the round went. */
@@ -399,7 +467,20 @@ class CrashEffectLayer {
 	 * A fire hose, for one frame: water thrown in an arc from the nozzle to land on the target,
 	 * breaking into spray on the way, and steam boiling up where it hits the fire.
 	 */
-	public waterJet(x: number, y: number, z: number, targetX: number, targetY: number, targetZ: number, trail: EmissionAccumulator, dt: number) {
+	public waterJet(x: number, y: number, z: number, targetX: number, targetY: number, targetZ: number, trail: EmissionAccumulator, dt: number, steam = 0) {
+		fireAudio().reportJet(targetX, targetY, targetZ, steam);
+		// Splash where it lands: water thrown back up off the car and the road, falling again.
+		const splashes = Math.floor(dt * 60 + Math.random());
+		for (let i = 0; i < splashes; i++) {
+			const angle = Math.random() * Math.PI * 2;
+			const speed = between(1, 3.2);
+			this.field.spawn({
+				kind: PARTICLE_KIND.smoke, x: targetX + between(-0.4, 0.4), y: targetY, z: targetZ + between(-0.4, 0.4),
+				vx: Math.cos(angle) * speed, vy: between(1.5, 3.5), vz: Math.sin(angle) * speed,
+				size: between(0.04, 0.08), growth: 2.5, life: between(0.4, 0.8), intensity: 0.75, tone: 0,
+				gravity: GRAVITY, drag: 0.8, floor: targetY - 0.8, rotation: Math.random() * 6.28,
+			});
+		}
 		const dx = targetX - x;
 		const dz = targetZ - z;
 		const reach = Math.hypot(dx, dz) || 1;
@@ -421,8 +502,8 @@ class CrashEffectLayer {
 				rotation: Math.random() * 6.28,
 			});
 		}
-		// Steam where it lands: pale, billowing, rising.
-		if (Math.random() < dt * 22) {
+		// Steam where it lands on fire: pale, billowing, rising — more the hotter it is.
+		if (steam > 0 && Math.random() < dt * 30 * steam) {
 			this.field.spawn({
 				kind: PARTICLE_KIND.smoke, x: targetX + between(-0.8, 0.8), y: targetY + 0.4, z: targetZ + between(-0.8, 0.8),
 				vx: between(-0.3, 0.3), vy: between(0.8, 1.6), vz: between(-0.3, 0.3),
@@ -452,6 +533,9 @@ class CrashEffectLayer {
 		this.field.step(dt, WIND);
 		this.updateDebris(dt);
 		this.updateLights(dt, cameraX, cameraY, cameraZ);
+		decals(this.app).update(dt);
+		glassShards(this.app).update(dt);
+		fireAudio().update();
 		for (let i = this.blasts.length - 1; i >= 0; i--) {
 			this.blasts[i].age += dt;
 			if (this.blasts[i].age >= SHAKE_SECONDS) this.blasts.splice(i, 1);

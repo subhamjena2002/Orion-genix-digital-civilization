@@ -56,6 +56,7 @@ export class OrionTrain extends Script {
 		directionX: 0,
 		directionZ: 1,
 		impulse: STRIKE_IMPULSE,
+		detail: null,
 	};
 	private readonly samples: { x: number; z: number }[] = [];
 	private readonly turn = new Quat();

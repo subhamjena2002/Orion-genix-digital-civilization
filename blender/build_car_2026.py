@@ -155,6 +155,28 @@ CLADDING = False  # crossover: unpainted black round the wheel arches and along 
 LIVERY = None  # "taxi" or "police": the civic paint schemes on the sedan body
 VLAMP = None  # vertical light blades at the front corners: (row from, row to, band from, band to)
 PIVOTS = {}  # object -> new world location, for a different wheelbase
+# Premium bodies (2026-10-25): a two-door is DOOR_R past the tail (no rear doors); OPEN_TOP drops the roof.
+OPEN_TOP = False  # roadster: no roof or side glass, the windscreen in a black frame over an open cockpit
+REAR_SEATS = True  # two-seaters have none
+VBARS = None  # (count, half-width): vertical chrome bars across the intake instead of horizontal blades
+TWO_TONE = None  # side-wall q below which the paint is the second colour ("paint_band"); chrome coach line on the seam
+ROLL_HOOPS = False  # roadster: painted fairings behind the seats with chrome hoops
+REAR_WING = None  # (y, z, span): a fixed wing on two stalks over the tail (hypercar)
+# Faces, tails and wheels of their own, so no two cars share the city fleet's light-bar face.
+LAMP_SPLIT = None  # x: front lamps only outboard of this (two separate headlamps); inboard is LAMP_CENTRE_MAT
+LAMP_SPLIT_R = None  # the same for the tail lamps
+LAMP_CENTRE_MAT, TAIL_CENTRE_MAT = "carpaint", "carpaint"
+INTAKE_X = None  # the intake only inboard of this x: a grille of its own shape rather than the full width
+SPOKE_TWIST = 0.0  # radians from hub to rim: curved (turbine) spokes; SPOKE_CROSS crosses them into a mesh
+SPOKE_CROSS = False
+AERO_DISC = None  # material of a flat aero cover behind the spokes (EV wheels)
+RIM = None  # (rgb, metallic, roughness) for the wheels instead of the fleet's satin grey
+INTERIOR_COLOUR = None  # leather colour instead of the fleet's dark brown
+ENGINE = None  # "v12", "v8", "i6" or "ev": an engine bay under the bonnet (build_engine_bay)
+ENGINE_ACCENT = "engine_red"  # cam covers / inverter lid
+ENGINE_REAR = False  # hypercar: a rear drive unit and battery under the glass tail
+EVEN_RIMS = True  # panel-gap rims at even thickness (off for the premium line: it spiked there)
+FOLD_ROOF = None  # convertible: dict(joint=y) — a two-panel soft top and door panes the game folds
 
 PRESET = globals().get("PRESET", "sedan")
 PRESETS = {}
@@ -458,7 +480,7 @@ def classify_body(ym, h):
             return ("body", "trim_black")
         return ("body", "carpaint")
     q0 = Q[h] if h < NQ - 1 else 2.0  # shoulder bands below the belt aren't side-wall bands
-    door_rows = DOOR_F[0] <= ym <= DOOR_R[1] + GAP
+    door_rows = DOOR_F[0] <= ym <= (DOOR_R[1] if DOOR_R[0] < Y_REAR else DOOR_F[1]) + GAP
     if h >= 4 and in_gap(ym, [DOOR_F[0], DOOR_F[1], DOOR_R[1]]):
         return None
     if h == 4 and door_rows:
@@ -570,6 +592,13 @@ def build_rear_pane():
 
 def classify_gh(ym, jb):
     f0 = GJ[jb]
+    if OPEN_TOP and jb > 0:
+        # Only the windscreen and its frame: behind its top edge the cockpit is open.
+        if ym > Y_HEADER:
+            return None
+        if f0 < .62:
+            return ("body", "trim_gloss")
+        return ("windscreen-glass", "glass")
     if jb == 0:  # the slim bright strip along the window line
         if DOOR_F[0] < ym < DOOR_F[1]:
             return ("door", "chrome")
@@ -670,8 +699,15 @@ def build_skin():
             if cls is None:
                 continue
             if cls[0] == "region":
-                regions[cls[1]].append((quad, side, h, ym))
-                continue
+                xc = abs(sum(P[a][b].x for a, b in quad) / 4)
+                split = {"lampF": LAMP_SPLIT, "lampR": LAMP_SPLIT_R}.get(cls[1])
+                if split is not None and xc < split:
+                    cls = ("body", LAMP_CENTRE_MAT if cls[1] == "lampF" else TAIL_CENTRE_MAT)
+                elif cls[1] == "intake" and INTAKE_X is not None and xc > INTAKE_X:
+                    cls = ("body", "carpaint")
+                else:
+                    regions[cls[1]].append((quad, side, h, ym))
+                    continue
             mat = cls[1]
             if CLADDING and mat == "carpaint" and h < NQ - 1 and cls[0] in ("body", "door", "rear-door"):
                 if Q[h] < .16 or (Q[h] < .30 and arch_ness(ym) > 0.2):
@@ -679,6 +715,8 @@ def build_skin():
             if LIVERY == "police" and cls[0] in ("door", "rear-door") and mat == "carpaint":
                 mat = "paint_white"
             if BOX and BAND and mat == "carpaint" and h < NQ - 1 and BAND[0] <= Q[h] < BAND[1]:
+                mat = "paint_band"
+            if TWO_TONE and mat == "carpaint" and h < NQ - 1 and Q[h] < TWO_TONE:
                 mat = "paint_band"
             if PAINT2 and mat == "carpaint" and ym > PAINT2[0]:
                 mat = PAINT2[1]
@@ -709,6 +747,13 @@ def build_greenhouse(rows):
             key = lambda a, b: (a, b if a not in (0, last) or b <= len(GJ) - 1 else 2 * (len(GJ) - 1) - b)
             mb.face([mb.vert((tag,) + key(a, b), G[a][b]) for a, b in [(i, c), (i + 1, c), (i + 1, c + 1), (i, c + 1)]],
                     cls[1])
+    if OPEN_TOP:
+        # The windscreen's top rail, gloss black, across the header.
+        line = [gh_point(Y_HEADER, GJ[j]) for j in range(len(GJ)) if GJ[j] >= .50]
+        line = [Vector((-p.x, p.y, p.z)) for p in reversed(line[1:])] + line
+        line = [p + Vector((0, -0.01, 0.012)) for p in line]
+        ribbon(OUT["body"], line, 0.03, 0.05, "trim_gloss", "header")
+        return grows, G
     # Headliner: the roof and rails, offset inward and facing down into the cabin.
     NG = normals(G)
     cab = OUT["cabin"]
@@ -809,12 +854,28 @@ def build_intake_plate(P, N, regions):
     recess(trim, P, N, [r[0] for r in intake], 0.06, "trim_black", "trim_black", "in")
     # Horizontal blades across the opening, following its curve, set back behind the bumper face.
     rows = [y for y in make_rows() if y < INTAKE_Y]
+    if VBARS:
+        # Vertical bars, each standing where the opening's surface reaches its x, set back a little.
+        count, gw = VBARS
+        q0, q1 = INTAKE_Q
+        for k in range(count):
+            x = -gw + 2 * gw * k / (count - 1)
+            best = min((abs(abs(body_point(y, "q", 0.5 * (q0 + q1)).x) - abs(x)), y) for y in frange(Y_FRONT, INTAKE_Y, 0.002))[1]
+            a, b = body_point(best, "q", q0 + 0.02), body_point(best, "q", q1 - 0.02)
+            n = surface_normal(best, 0.5 * (q0 + q1), 1)
+            c = (a + b) * 0.5 - n * 0.022
+            c.x = x
+            rbox(trim, (0.014, 0.03, (b.z - a.z)), BLADE_MAT, Matrix.Translation(c), radius=0.004, segments=1)
     for k, zq in enumerate(BLADES):
         line = []
         for yr in rows:
             p = body_point(yr, "q", zq)
             n = surface_normal(yr, zq, 1)
             line.append(p - n * 0.028)
+        if INTAKE_X is not None:
+            line = [p for p in line if abs(p.x) < INTAKE_X - 0.02]
+            if len(line) < 2:
+                continue
         line = [Vector((-p.x, p.y, p.z)) for p in reversed(line[1:])] + line
         ribbon(trim, line, 0.009, 0.014, BLADE_MAT, f"blade{k}")
 
@@ -1003,7 +1064,11 @@ def build_wheel_local():
     groups, half = SPOKES
     for k in range(groups):
         for off in ((-half, half) if half > 0 else (0.0,)):
-            spoke(mb, 2 * PI * k / groups + off)
+            spoke(mb, 2 * PI * k / groups + off, SPOKE_TWIST)
+            if SPOKE_CROSS:
+                spoke(mb, 2 * PI * k / groups + off, -SPOKE_TWIST)
+    if AERO_DISC:
+        lathe(mb, [(0.080, 0.098), (0.084, 0.150), (0.086, 0.205), (0.090, 0.234), (0.084, 0.237)], 64, AERO_DISC, I)
     # Brake disc with its hat.
     disc = [(-0.036, 0.097), (-0.036, 0.190), (-0.008, 0.190), (-0.008, 0.100), (0.012, 0.086), (0.020, 0.080),
             (0.020, 0.030)]
@@ -1011,13 +1076,14 @@ def build_wheel_local():
     return mb
 
 
-def spoke(mb, phi):
+def spoke(mb, phi0, twist=0.0):
     stations = [0.070, 0.098, 0.130, 0.162, 0.194, 0.222, 0.244]
-    rad = Vector((0, math.sin(phi), math.cos(phi)))
-    tan = Vector((0, math.cos(phi), -math.sin(phi)))
     ring = []
     for r in stations:
         u = (r - 0.07) / 0.174
+        phi = phi0 + twist * u
+        rad = Vector((0, math.sin(phi), math.cos(phi)))
+        tan = Vector((0, math.cos(phi), -math.sin(phi)))
         w = 0.040 - 0.012 * u
         front = 0.098 - 0.010 * math.sin(PI * min(u, 1)) + 0.010 * u * u
         depth = 0.026 - 0.010 * u
@@ -1190,7 +1256,8 @@ def build_interior(rows, P, N):
 
     first = len(cab.v)
     # Floor and firewall.
-    rbox(cab, (1.52, 2.55, 0.03), "interior_dark", Matrix.Translation((0, 0.25, 0.30)), radius=0.0)
+    rbox(cab, (1.52, 2.55 if REAR_SEATS else 1.55, 0.03), "interior_dark",
+         Matrix.Translation((0, 0.25 if REAR_SEATS else -0.25, 0.30 - min(0.0, INT_DZ))), radius=0.0)
     rbox(cab, (1.50, 0.04, 0.42), "interior_dark", Matrix.Translation((0, -1.05, 0.52)), radius=0.0)
     # Dashboard: long slim upper, lower knee panel, wide floating screen, driver display.
     rbox(cab, (1.52, 0.34, 0.12), "interior", frame(Vector((0, -0.86, 0.88)), Vector((1, 0, 0)), Vector((0, 1, -0.25))),
@@ -1220,17 +1287,43 @@ def build_interior(rows, P, N):
     for x in (0.38, -0.38):
         seat(cab, x, 0.02, 0.44)
     # Rear bench: cushion, back and two headrests.
+    rear_from = len(cab.v)
     rbox(cab, (1.30, 0.50, 0.13), "interior", frame(Vector((0, 0.90, 0.42)), Vector((1, 0, 0)), Vector((0, 1, 0.12))),
          radius=0.05, segments=3)
     rbox(cab, (1.30, 0.12, 0.52), "interior", frame(Vector((0, 1.20, 0.72)), Vector((1, 0, 0)), Vector((0, 1, -0.45))),
          radius=0.05, segments=3)
     for x in (0.38, -0.38):
         rbox(cab, (0.24, 0.07, 0.15), "interior", Matrix.Translation((x, 1.32, 1.04)), radius=0.03, segments=2)
+    if not REAR_SEATS:
+        # Two-seaters: the bench goes; a parcel shelf closes the cabin behind the seats.
+        del cab.v[rear_from:]
+        keep = [k for k, f in enumerate(cab.f) if max(f) < rear_from]
+        cab.f, cab.fm, cab.sm = [cab.f[k] for k in keep], [cab.fm[k] for k in keep], [cab.sm[k] for k in keep]
+        rbox(cab, (1.40, 0.30, 0.30), "interior_dark", Matrix.Translation((0, 0.52, 0.50)), radius=0.03, segments=2)
     dy = INT_DY if INT_DY is not None else Y_A + 1.12
     for k in range(first, len(cab.v)):
         x, y, z = cab.v[k]
         y2 = y + (INT_REAR_DY if y > 0.55 else 0.0) + (INT_DASH_DY if y < -0.62 else 0.0)
         cab.v[k] = (x, y2 + dy, z + INT_DZ)
+    if OPEN_TOP:
+        # The cockpit's edge: a leather cap from the outer belt over to the door cards inside.
+        for side in (1, -1):
+            for i in range(len(rows) - 1):
+                ya, yb = rows[i], rows[i + 1]
+                ym = 0.5 * (ya + yb)
+                if not (Y_A + 0.02 < ym < Y_C - 0.02):
+                    continue
+                if in_gap(ym, [DOOR_F[0], DOOR_F[1]]):
+                    continue
+                # On the door, in its window part (a child of the door, so it swings with it, and
+                # without the panel-gap modifier, which spikes on this fold); elsewhere in the cabin.
+                mb = OUT[side_name("window", side)] if DOOR_F[0] + GAP < ym < DOOR_F[1] else OUT["cabin"]
+                pa, pb = body_point(ya, "th", 0.50), body_point(yb, "th", 0.50)
+                quad = []
+                for p, inset in ((pa, 0.0), (pa, 0.075), (pb, 0.075), (pb, 0.0)):
+                    quad.append(Vector((side * (p.x - inset), p.y, p.z + 0.004 - inset * 0.05)))
+                ids = [mb.vert(None, v) for v in quad]
+                mb.face(ids if side < 0 else ids[::-1], "interior")
 
 
 def seat(cab, x, y, z):
@@ -1311,6 +1404,10 @@ def setup_materials():
             rgb = PAINT  # the preset's colour (MATS was filled in before the preset applied)
         if name == "paint_band":
             rgb = BAND_COLOUR
+        if name == "rim" and RIM:
+            rgb, metal, rough = RIM
+        if name == "interior" and INTERIOR_COLOUR:
+            rgb = INTERIOR_COLOUR
         if name == "paint_body" and PAINT2_COLOUR:
             rgb = PAINT2_COLOUR
         m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
@@ -1403,7 +1500,8 @@ def add_panel_rims(mats):
         mod.offset = -1.0
         mod.use_rim = True
         mod.use_rim_only = True
-        mod.use_even_offset = True
+        # Even thickness spikes on the premium bodies' sharper folds (a cockpit edge, a haunch).
+        mod.use_even_offset = EVEN_RIMS
         mod.material_offset_rim = len(ob.data.materials)
 
 
@@ -1754,9 +1852,64 @@ def build_livery():
             rbox(trim, (0.78, 0.05, 0.05), "trim_black", Matrix.Translation((0, nose.y - 0.14, z)), radius=0.015)
 
 
+def build_premium_details():
+    """Coach line on a two-tone body, a roadster's hoops, a hypercar's wing."""
+    if TWO_TONE:
+        # A thin chrome line along the colour seam, cut per panel so it opens with the doors.
+        step = 0.06
+        for side in (1, -1):
+            y = WHEELS[0][0] + ARCH_R + 0.05
+            while y < WHEELS[1][0] - ARCH_R - 0.05:
+                yc = y + step / 2
+                if not any(s0 - 0.004 <= yc <= s0 + GAP + 0.03 for s0 in (DOOR_F[0], DOOR_F[1], DOOR_R[1])):
+                    part = ("door" if DOOR_F[0] < yc < DOOR_F[1] else
+                            "rear-door" if DOOR_R[0] < yc < DOOR_R[1] else "body")
+                    mb = OUT[side_name(part, side) if part != "body" else "body"]
+                    p = surface_at(yc, TWO_TONE, side, 0.002)
+                    n = surface_normal(yc, TWO_TONE, side)
+                    rbox(mb, (0.006, step + 0.002, 0.012), "chrome", frame(p, n, Vector((0, 1, 0))), radius=0.0)
+                y += step
+    if ROLL_HOOPS:
+        body = OUT["body"]
+        for x in (0.38, -0.38):
+            y0 = Y_C - 0.02
+            deck = spline(ZT, y0 + 0.4)
+            # A teardrop fairing from the hoop back along the deck.
+            verts, faces = [], []
+            n_ring, n_len = 14, 12
+            for i in range(n_len + 1):
+                t = i / n_len
+                r_w = 0.17 * (1 - t ** 1.6)
+                r_h = 0.22 * (1 - t) ** 0.8
+                yy = y0 + t * 1.05
+                zb = spline(ZT, yy) - 0.02
+                for k in range(n_ring + 1):
+                    a = PI * k / n_ring
+                    verts.append(Vector((x + r_w * math.cos(a), yy, zb + max(r_h, 0.004) * math.sin(a))))
+            for i in range(n_len):
+                for k in range(n_ring):
+                    a0, a1 = i * (n_ring + 1) + k, (i + 1) * (n_ring + 1) + k
+                    faces.append([a0, a0 + 1, a1 + 1, a1])
+            body.raw(verts, faces, "carpaint", True)
+            hoop = frame(Vector((x, y0 + 0.02, deck + 0.02)), Vector((0, 1, 0)), Vector((1, 0, 0)))
+            torus(body, hoop @ Matrix.Rotation(PI / 2, 4, "X"), 0.17, 0.018, "chrome", seg=24, tseg=8)
+    if REAR_WING:
+        wy, wz, span = REAR_WING
+        trunk = OUT["trunk"]
+        for x in (-span * 0.3, span * 0.3):
+            base = Vector((x, wy - 0.05, spline(ZT, wy - 0.05)))
+            rbox(trunk, (0.02, 0.16, wz - base.z), "trim_gloss", Matrix.Translation(base + Vector((0, 0.02, (wz - base.z) / 2))),
+                 radius=0.005, segments=1)
+        blade = frame(Vector((0, wy, wz)), Vector((1, 0, 0)), Vector((0, 1, 0.12)))
+        rbox(trunk, (span, 0.30, 0.035), "trim_gloss", blade, radius=0.012, segments=2)
+        for x in (-span / 2, span / 2):
+            rbox(trunk, (0.012, 0.34, 0.12), "trim_gloss", Matrix.Translation((x, wy + 0.01, wz + 0.02)), radius=0.004, segments=1)
+
+
 def main():
     apply_preset(PRESET)
     move_pivots()
+    ensure_roof_objects()
     OUT.clear()
     rows, P, N, regions = build_skin()
     build_greenhouse(rows)
@@ -1771,6 +1924,9 @@ def main():
     build_roof_rails()
     build_rear_pane()
     build_livery()
+    build_premium_details()
+    build_engine_bay()
+    build_folding_roof()
     for extra in EXTRAS:
         globals()[extra]()
     build_interior(rows, P, N)
@@ -2164,6 +2320,411 @@ PRESETS["tow"].update(TRUCK_COMMON, INTAKE_Y=-9.0, LAMP_F_Y=-9.0,
     FENDERS=(0.68, 1.16, 0.04), EXHAUST=(1.05, -0.40, 2.95),
     CAB_DETAILS=dict(steps=[-1.20], step_z=[0.45, 0.70], markers=(-1.15, 2.65, 1.3)),
     EXTRAS=("build_tow_gear", "build_cab_details"))
+
+# ---------------------------------------------------------------------------------------------
+# PREMIUM LINE (2026-10-25): five buy-only cars for the Kasper Motors showroom, on the sedan and
+# SUV templates. Original designs: grand-tourer, flagship, grand-SUV, roadster and hypercar
+# proportions from current premium cars, no maker's shapes, grilles or marks.
+# ---------------------------------------------------------------------------------------------
+def sedan_pivots(front, rear, r, x=0.81, door=-0.45, hood=-1.85, trunk=2.2, mirror=-0.79, mirror_z=1.048, rear_door=0.69):
+    return {
+        "wheel-front-left": (x, front, r), "wheel-front-right": (-x, front, r),
+        "wheel-rear-left": (x, rear, r), "wheel-rear-right": (-x, rear, r),
+        "brake-caliper-front-left": (x - 0.017, front, r), "brake-caliper-front-right": (-x + 0.017, front, r),
+        "brake-caliper-rear-left": (x - 0.017, rear, r), "brake-caliper-rear-right": (-x + 0.017, rear, r),
+        "door-left": (0.895, door, 0.666), "door-right": (-0.895, door, 0.666),
+        "rear-door-left": (0.898, rear_door, 0.681), "rear-door-right": (-0.898, rear_door, 0.681),
+        "hood": (0.0, hood, 0.86), "trunk": (0.0, trunk, 1.0),
+        "mirror-left": (0.943, mirror, mirror_z), "mirror-right": (-0.943, mirror, mirror_z),
+    }
+
+
+def stretch(pts, k, dz=0.0):
+    return [(y * k, z + dz) for y, z in pts]
+
+
+# ---- Engines --------------------------------------------------------------------------------
+# A closed bay under the bonnet (tray, body-colour inner wings, bulkhead, radiator, strut tops) and
+# the engine in it: "v12", "v8", "i6", or "ev" (a drive unit, inverter and orange cables). The
+# hypercar also shows its rear drive unit and battery under the glass tail (ENGINE_REAR).
+def T(x, y, z):
+    return Matrix.Translation((x, y, z))
+
+
+def skin_z(y, x):
+    """Height of the body's top surface at (y, x), from the shoulder over to the deck."""
+    best = None
+    for k in range(41):
+        p = body_point(y, "th", k / 40)
+        if best is None or abs(p.x - x) < abs(best.x - x):
+            best = p
+    return best.z
+
+
+def bay_shell(mb, y0, y1, xi, floor, top):
+    rbox(mb, (2 * xi, y1 - y0, 0.02), "underbody", T(0, 0.5 * (y0 + y1), floor), radius=0.0)
+    for side in (1, -1):
+        ys = frange(y0, y1, 0.05) + [y1]
+        verts, faces = [], []
+        for y in ys:
+            # Kept under the skin: on a low car the wings fall away from the bonnet's middle.
+            t = min(top(y), skin_z(y, xi) - 0.02) - 0.012
+            t2 = min(t, skin_z(y, xi + 0.18) - 0.035)
+            verts += [Vector((side * xi, y, floor)), Vector((side * xi, y, t)), Vector((side * (xi + 0.18), y, t2))]
+        for k in range(len(ys) - 1):
+            for m in range(2):
+                f = [k * 3 + m, (k + 1) * 3 + m, (k + 1) * 3 + m + 1, k * 3 + m + 1]
+                faces.append(f if side > 0 else f[::-1])
+        mb.raw(verts, faces, "carpaint", False)
+    rbox(mb, (2 * xi, 0.03, top(y1) - floor), "trim_black", T(0, y1, 0.5 * (top(y1) + floor)), radius=0.0)
+
+
+def engine_parts(mb, kind, yc, floor, xi, accent, top):
+    if kind == "ev":
+        motor = frame(Vector((-0.27, yc, floor + 0.15)), Vector((1, 0, 0)), Vector((0, 0, 1)))
+        cylinder(mb, motor, 0.13, 0.54, "engine_alloy", seg=24)
+        for x in (-0.30, 0.30):
+            cylinder(mb, frame(Vector((x, yc, floor + 0.15)), Vector((1, 0, 0)), Vector((0, 0, 1))), 0.07, 0.04, "rim", seg=16)
+        rbox(mb, (0.46, 0.24, 0.10), accent, T(0, yc + 0.24, floor + 0.32), radius=0.02)
+        rbox(mb, (0.30, 0.16, 0.012), "engine_alloy", T(0, yc + 0.24, floor + 0.376), radius=0.004)
+        for x in (-0.14, 0.0, 0.14):
+            a, b = Vector((x, yc + 0.12, floor + 0.30)), Vector((x * 1.4, yc - 0.02, floor + 0.20))
+            cylinder(mb, frame(a, b - a, Vector((1, 0, 0))), 0.014, (b - a).length, "hv_orange", seg=8)
+        return
+    v = kind in ("v8", "v12")
+    L = {"v12": 0.78, "v8": 0.58, "i6": 0.72}[kind]
+    n = {"v12": 6, "v8": 4, "i6": 6}[kind]
+    zb = floor + 0.20
+    rbox(mb, (0.40 if v else 0.26, L, 0.24), "engine_alloy", T(0, yc, zb), radius=0.03)
+    rbox(mb, (0.44 if v else 0.30, L * 0.9, 0.06), "engine_alloy", T(0, yc, floor + 0.07), radius=0.02)
+    banks = ((1, 0.62), (-1, -0.62)) if v else ((0, 0.0),)
+    for s, ang in banks:
+        c = Vector((s * 0.15, yc, zb + 0.17))
+        m = Matrix.Translation(c) @ Matrix.Rotation(ang, 4, "Y")
+        rbox(mb, (0.15, L * 0.96, 0.07), accent, m, radius=0.025, segments=2)
+        for k in range(n):
+            y = yc - L * 0.42 + k * (L * 0.84) / (n - 1)
+            rbox(mb, (0.03, 0.03, 0.02), "trim_gloss", m @ Matrix.Translation((0, y - yc, 0.04)), radius=0.006)
+        # Exhaust headers down the outside of each bank.
+        for k in range(n):
+            y = yc - L * 0.40 + k * (L * 0.80) / (n - 1)
+            sx = s if v else -1
+            a = Vector((sx * (0.21 if v else 0.15), y, zb + 0.06))
+            b = Vector((sx * min(xi - 0.03, 0.34), y + 0.04, floor + 0.06))
+            cylinder(mb, frame(a, b - a, Vector((0, 1, 0))), 0.020, (b - a).length, "brake_disc", seg=8)
+    # Intake: a plenum between the banks (or along the six) with chrome trumpets under a carbon lid.
+    px = 0.0 if v else 0.12
+    rbox(mb, (0.16, L * 0.8, 0.07), "engine_alloy", T(px, yc, zb + 0.24), radius=0.02)
+    for k in range(n):
+        y = yc - L * 0.36 + k * (L * 0.72) / (n - 1)
+        for s in ((1, -1) if v else (1,)):
+            cylinder(mb, frame(Vector((px + s * 0.045, y, zb + 0.27)), Vector((0, 0, 1)), Vector((1, 0, 0))), 0.022, 0.05,
+                     "chrome", seg=10, caps=False)
+    lid_top = min(zb + 0.33, top(yc) - 0.05)
+    rbox(mb, (0.24 if v else 0.20, L * 0.55, 0.03), "engine_cover", T(px, yc + L * 0.1, lid_top), radius=0.012)
+    cylinder(mb, frame(Vector((-0.10 if v else -0.06, yc - L * 0.38, zb + 0.24)), Vector((0, 0, 1)), Vector((1, 0, 0))),
+             0.022, 0.02, "oil_cap", seg=12)
+
+
+def build_engine_bay():
+    if not ENGINE:
+        return
+    mb = OUT["body"]
+    fy, wz = WHEELS[0]
+    y0, y1 = HOOD[0] + 0.14, HOOD[1] + 0.02
+    xi = WHEEL_X - 0.25
+    floor = wz - 0.12
+    top = lambda y: spline(ZT, y) - 0.035
+    bay_shell(mb, y0, y1, xi, floor, top)
+    # Radiator across the front, strut tops over the wheels, coolant bottle and battery.
+    rbox(mb, (2 * xi - 0.06, 0.05, min(0.36, top(y0 + 0.05) - floor - 0.04)), "trim_black",
+         T(0, y0 + 0.05, floor + 0.20), radius=0.01)
+    for side in (1, -1):
+        cylinder(mb, frame(Vector((side * (xi + 0.06), fy, min(top(fy), skin_z(fy, xi + 0.1)) - 0.10)), Vector((0, 0, 1)), Vector((1, 0, 0))), 0.07, 0.06,
+                 "rim", seg=16)
+    cylinder(mb, frame(Vector((xi - 0.10, y0 + 0.24, floor + 0.12)), Vector((0, 0, 1)), Vector((1, 0, 0))), 0.06, 0.16,
+             "plate_blank", seg=12)
+    rbox(mb, (0.18, 0.24, 0.16), "trim_black", T(-(xi - 0.13), y1 - 0.18, floor + 0.10), radius=0.01)
+    L = {"v12": 0.78, "v8": 0.58, "i6": 0.72, "ev": 0.5}[ENGINE]
+    yc = clamp(fy + 0.15, y0 + 0.18 + L / 2, y1 - 0.08 - L / 2)
+    engine_parts(mb, ENGINE, yc, floor, xi, ENGINE_ACCENT, top)
+    if ENGINE_REAR:
+        # Under the glass tail: a tray, the rear drive unit on the axle and battery modules ahead of it.
+        ry, rz = WHEELS[1]
+        ya, yb = Y_RG + 0.35, min(Y_C + 0.25, Y_REAR - 0.3)
+        rfloor = rz - 0.10
+        rtop = lambda y: spline(ZT, y) - 0.03
+        bay_shell(mb, ya, yb, xi, rfloor, rtop)
+        rbox(mb, (2 * xi, 0.03, rtop(ya) - rfloor), "trim_black", T(0, ya, 0.5 * (rtop(ya) + rfloor)), radius=0.0)
+        engine_parts(mb, "ev", ry, rfloor, xi, ENGINE_ACCENT, rtop)
+        for k, y in enumerate(frange(ya + 0.12, ry - 0.30, 0.17)):
+            rbox(mb, (0.62, 0.15, 0.14), "engine_cover", T(0, y, rfloor + 0.10), radius=0.015)
+            rbox(mb, (0.64, 0.02, 0.02), "hv_orange", T(0, y + 0.07, rfloor + 0.18), radius=0.004)
+
+
+MATS.update({
+    "engine_alloy": ((0.50, 0.51, 0.53), 1.0, 0.40, {}),
+    "engine_cover": ((0.025, 0.025, 0.028), 0.0, 0.25, {"coat": 0.8, "coat_rough": 0.05}),
+    "engine_red": ((0.42, 0.025, 0.02), 0.0, 0.55, {}),
+    "hv_orange": ((0.90, 0.33, 0.03), 0.0, 0.50, {}),
+    "oil_cap": ((0.92, 0.74, 0.05), 0.0, 0.40, {}),
+})
+
+
+# ---- Folding roof ---------------------------------------------------------------------------
+# A convertible's soft top in two panels that Z-fold back onto the rear deck, plus side windows
+# that rise out of the doors. Each is its own node with its hinge as its pivot, built closed;
+# the game folds them (OrionVehicleModel, VehicleModelSpec.foldingRoof): "roof-rear" turns about
+# its hinge on the deck, "roof-front" (its child) about the joint between them, and the panes
+# ("roof-pane-left/right", children of the doors) slide down into the doors.
+ROOF_COLS = [0.0, .08, .16, .24, .32, .40, .48, .55, .62, .70, .80, .90, 1.0]
+
+
+def roof_point(yr, f, inset=0.0):
+    p = gh_point(yr, f)
+    return Vector((p.x * (1.012 - inset), p.y, p.z + 0.012 - inset * 1.2))
+
+
+def roof_pivots():
+    joint = FOLD_ROOF["joint"]
+    rear = Vector((0.0, Y_C - 0.02, spline(ZT, Y_C)))
+    front = Vector((0.0, joint, roof_point(joint, 1.0).z))
+    pane_y = 0.5 * (Y_A + 0.10 + DOOR_F[1] - 0.03)
+    panes = {side: Vector((side * roof_point(pane_y, 0.25).x, pane_y, roof_point(pane_y, 0.25).z)) for side in (1, -1)}
+    return rear, front, panes
+
+
+def ensure_roof_objects():
+    """The roof's nodes don't exist in the template: made here, parented and pivoted."""
+    if not FOLD_ROOF:
+        return
+    root = next(o for o in bpy.data.objects if o.parent is None and o.type == "EMPTY" and o.name.startswith("orion"))
+    rear, front, panes = roof_pivots()
+    made = [("roof-rear", root, rear), ("roof-front", "roof-rear", front)]
+    made += [(side_name("roof-pane", side), side_name("door", side), panes[side]) for side in (1, -1)]
+    for name, parent, at in made:
+        parent = bpy.data.objects[parent] if isinstance(parent, str) else parent
+        ob = bpy.data.objects.get(name)
+        if ob is None:
+            ob = bpy.data.objects.new(name, bpy.data.meshes.new(name + "_init"))
+            root.users_collection[0].objects.link(ob)
+        ob.parent = parent
+        ob.matrix_parent_inverse = Matrix.Identity(4)
+        ob.matrix_world = Matrix.Translation(at)
+    bpy.context.view_layer.update()
+
+
+def roof_panel(mb, ys, fmin, glass):
+    """A lofted panel over rows ys, both sides, with a headliner under it."""
+    cols = ROOF_COLS + [-f for f in reversed(ROOF_COLS[:-1])]  # left belt over the top to the right belt
+
+    def at(yr, c, inset=0.0):
+        f = cols[c]
+        p = roof_point(yr, abs(f), inset)
+        return p if f >= 0 and c < len(ROOF_COLS) else Vector((-p.x, p.y, p.z))
+
+    for i in range(len(ys) - 1):
+        ym = 0.5 * (ys[i] + ys[i + 1])
+        for c in range(len(cols) - 1):
+            if min(abs(cols[c]), abs(cols[c + 1])) < fmin(ym) - 1e-6:
+                continue
+            quad = [(i, c), (i + 1, c), (i + 1, c + 1), (i, c + 1)]
+            f = min(abs(cols[c]), abs(cols[c + 1]))
+            mat = "glass" if glass(ym, f) else "soft_top"
+            outer = [mb.vert(("ro", a, b) if mat != "glass" else ("rg", a, b), at(ys[a], b)) for a, b in quad]
+            mb.face(outer[::-1] if c >= len(ROOF_COLS) - 1 else outer, mat)
+            if mat != "glass":
+                inner = [mb.vert(("ri", a, b), at(ys[a], b, 0.03)) for a, b in quad]
+                mb.face(inner if c >= len(ROOF_COLS) - 1 else inner[::-1], "headliner")
+
+
+def build_folding_roof():
+    if not FOLD_ROOF:
+        return
+    joint = FOLD_ROOF["joint"]
+    lerp = lambda a, b, n: [a + (b - a) * k / n for k in range(n + 1)]
+    front_rows = lerp(Y_HEADER + 0.004, joint - 0.003, 14)
+    rear_rows = lerp(joint + 0.003, Y_C - 0.02, 16)
+    roof_panel(OUT["roof-front"], front_rows, lambda ym: 0.48, lambda ym, f: False)
+    roof_panel(OUT["roof-rear"], rear_rows, lambda ym: 0.0 if ym > DOOR_F[1] - 0.01 else 0.48,
+               lambda ym, f: f >= 0.70 and joint + 0.12 < ym < Y_C - 0.16)
+    # A bow along the front edge, where it latches to the windscreen's header.
+    line = [roof_point(Y_HEADER + 0.01, f) for f in ROOF_COLS if f >= 0.48]
+    line = [Vector((-p.x, p.y, p.z)) for p in reversed(line[1:])] + line
+    ribbon(OUT["roof-front"], [p + Vector((0, 0, 0.006)) for p in line], 0.022, 0.05, "trim_gloss", "bow")
+    # Side windows: frameless glass in each door, under the roof's edge.
+    ys = lerp(Y_A + 0.12, DOOR_F[1] - 0.03, 12)
+    fs = [0.02, 0.12, 0.24, 0.36, 0.465]
+    for side in (1, -1):
+        mb = OUT[side_name("roof-pane", side)]
+        for i in range(len(ys) - 1):
+            for j in range(len(fs) - 1):
+                pts = [roof_point(ys[a], fs[b], 0.004) for a, b in ((i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1))]
+                pts = [Vector((side * p.x, p.y, p.z)) for p in pts]
+                ids = [mb.vert(None, p) for p in pts]
+                mb.face(ids if side > 0 else ids[::-1], "glass")
+
+
+MATS["soft_top"] = ((0.028, 0.03, 0.036), 0.0, 0.88, {})
+
+
+# GT coupe: long bonnet, cabin set well back, two long frameless doors, fastback over muscular rear
+# haunches. Two slim swept headlamps (no light bar), a wide egg-crate grille in chrome, separate tail
+# lamps on a gloss-black panel, crossed-spoke mesh wheels in graphite, tan leather, a red-topped V8.
+PRESETS["gt"] = dict(
+    Y_FRONT=-2.52, Y_REAR=2.43, Y_MID=-0.05, W=0.955, FENDER_BULGE=0.040,
+    P_FRONT=3.4, P_REAR=3.0, Y_FS=-1.55, Y_RS=1.45,
+    WHEELS=[(-1.56, 0.36), (1.42, 0.36)], WHEEL_X=0.83, ARCH_R=0.405, TYRE_SCALE=(1.043, 1.04),
+    N_UP=5.0, N_GH=3.4,
+    ZT=[(-2.55, 0.64), (-2.50, 0.67), (-2.4, 0.71), (-2.1, 0.775), (-1.6, 0.83), (-1.0, 0.875), (-0.70, 0.89),
+        (0.5, 0.90), (1.2, 0.93), (1.7, 0.95), (2.25, 0.955), (2.38, 0.94), (2.45, 0.90)],
+    ZS=[(-2.55, 0.60), (-2.4, 0.67), (-1.9, 0.73), (-1.0, 0.755), (0.1, 0.765), (0.9, 0.80), (1.45, 0.835),
+        (2.1, 0.83), (2.45, 0.80)],
+    ZB=[(-2.55, 0.27), (-2.46, 0.21), (-2.2, 0.20), (-1.0, 0.21), (1.0, 0.215), (2.0, 0.25), (2.3, 0.29), (2.45, 0.34)],
+    ZR=[(-0.70, 0.895), (-0.52, 1.03), (-0.32, 1.17), (-0.12, 1.265), (0.10, 1.305), (0.32, 1.30), (0.55, 1.255),
+        (0.85, 1.16), (1.15, 1.06), (1.45, 0.975), (1.62, 0.95)],
+    Y_A=-0.70, Y_C=1.62, Y_HEADER=-0.20, Y_RG=0.42,
+    HOOD=(-2.40, -0.74), TRUNK=(1.66, 2.36), DOOR_F=(-0.76, 0.46), DOOR_R=(9.0, 9.5),
+    DLO=[(0.44, "window", "glass"), (0.95, "side-glass", "glass"), (9.0, "body", "carpaint")],
+    ROOF_MAT="carpaint", RAIL_MAT="carpaint", CHROME_DLO=True,
+    LAMP_F_Y=-2.30, LAMP_R_Y=2.20, LAMP_SPLIT=0.50, LAMP_SPLIT_R=0.40, TAIL_CENTRE_MAT="trim_gloss",
+    INTAKE_Y=-2.36, INTAKE_Q=(.10, .62), INTAKE_X=0.50, BLADES=(0.18, 0.26, 0.34, 0.42, 0.50),
+    VBARS=(13, 0.45), BLADE_MAT="chrome",
+    CURTAIN=(-2.40, -2.32), ROCKER=(-1.15, 1.0), CHIN_Y=-2.2, DIFF_Y=2.20,
+    SPOKES=(10, 0.0), SPOKE_TWIST=0.32, SPOKE_CROSS=True, RIM=((0.10, 0.10, 0.11), 1.0, 0.22),
+    REAR_SEATS=False, INT_DY=0.24, INT_DZ=-0.04, PAINT=(0.26, 0.016, 0.03), INTERIOR_COLOUR=(0.32, 0.16, 0.07),
+    ENGINE="v8", ENGINE_ACCENT="engine_red",
+    PIVOTS=sedan_pivots(-1.56, 1.42, 0.36, x=0.83, door=-0.15, hood=-1.9, trunk=2.05, mirror=-0.44, mirror_z=0.94),
+)
+
+# Flagship saloon: long, formal and upright: a tall grille of vertical chrome bars between two
+# separate lamps, two-tone (midnight over silver) parted by a chrome coach line, a broad body-colour
+# rear pillar, separate tail lamps joined by a chrome bar, polished 12-spoke wheels, cream leather,
+# a V12 under chrome cam covers.
+_S, _K = PRESETS["saloon"], 1.035
+PRESETS["flagship"] = dict(_S,
+    Y_FRONT=-2.62 * _K, Y_REAR=2.66 * _K, Y_MID=0.05, W=0.96, FENDER_BULGE=0.018,
+    Y_FS=-1.58 * _K, Y_RS=1.70 * _K, P_FRONT=4.4, P_REAR=3.8,
+    WHEELS=[(-1.60, 0.37), (1.71, 0.37)], WHEEL_X=0.82, ARCH_R=0.415, TYRE_SCALE=(1.072, 1.04),
+    N_UP=4.2, N_GH=3.6,
+    ZT=stretch(_S["ZT"], _K, 0.02), ZS=stretch(_S["ZS"], _K, 0.02), ZB=stretch(_S["ZB"], _K),
+    ZR=stretch(_S["ZR"], _K, 0.04),
+    Y_A=-1.05 * _K, Y_C=1.75 * _K, Y_HEADER=-0.22 * _K, Y_RG=1.02 * _K,
+    HOOD=(-2.50 * _K, -1.10 * _K), TRUNK=(1.78 * _K, 2.58 * _K), DOOR_F=(-1.02 * _K, 0.12 * _K),
+    DOOR_R=(0.126 * _K + 0.006, 1.25 * _K),
+    DLO=[(0.09 * _K, "window", "glass"), (0.16 * _K, "B", "trim_gloss"), (1.18 * _K, "rear-window", "glass"),
+         (1.24 * _K, "rear-door", "trim_gloss"), (1.36 * _K, "side-glass", "glass"), (9.0, "body", "carpaint")],
+    ROOF_MAT="carpaint", RAIL_MAT="carpaint",
+    LAMP_F_Y=-2.42 * _K, LAMP_R_Y=2.32 * _K, LAMP_SPLIT=0.46, LAMP_SPLIT_R=0.34, TAIL_CENTRE_MAT="chrome",
+    INTAKE_Y=-2.62 * _K + 0.07, INTAKE_Q=(.24, .80), BLADES=(),
+    VBARS=(13, 0.36), BLADE_MAT="chrome", CURTAIN=(9.0, 9.0),
+    ROCKER=(-1.13 * _K, 1.20 * _K), CHIN_Y=-2.2 * _K, DIFF_Y=2.38 * _K,
+    TWO_TONE=0.45, BAND_COLOUR=(0.36, 0.37, 0.39), PAINT=(0.010, 0.018, 0.055),
+    SPOKES=(12, 0.0), SPOKE_TWIST=0.12, RIM=((0.80, 0.81, 0.83), 1.0, 0.10),
+    INT_REAR_DY=0.28, INTERIOR_COLOUR=(0.55, 0.47, 0.36),
+    ENGINE="v12", ENGINE_ACCENT="chrome",
+    PIVOTS=sedan_pivots(-1.60, 1.71, 0.37, x=0.82, door=-0.47, hood=-1.91, trunk=2.28, mirror=-0.82, rear_door=0.71),
+)
+
+# Grand SUV (on orion-suv): lower and longer than the city SUV, a coupe roof sloping to a fast
+# tailgate, a floating gloss-black roof, two slim headlamps over a dark lattice grille, separate
+# tail lamps on a black panel, 22-inch turbine wheels in dark bronze, champagne paint, a V8.
+PRESETS["grandsuv"] = dict(
+    Y_FRONT=-2.50, Y_REAR=2.45, Y_MID=0.0, W=0.975, FENDER_BULGE=0.034,
+    P_FRONT=4.6, P_REAR=5.0, Y_FS=-1.62, Y_RS=1.80,
+    WHEELS=[(-1.52, 0.40), (1.50, 0.40)], WHEEL_X=0.85, ARCH_R=0.45, TYRE_SCALE=(1.16, 1.10),
+    N_UP=4.6, N_GH=3.4,
+    ZT=[(-2.55, 1.02), (-2.48, 1.06), (-2.3, 1.11), (-2.0, 1.14), (-1.5, 1.16), (-1.10, 1.18), (0.0, 1.23),
+        (1.0, 1.25), (2.0, 1.26), (2.40, 1.24), (2.48, 1.20)],
+    ZS=[(-2.55, 0.96), (-2.3, 1.02), (-1.9, 1.06), (-1.10, 1.09), (0.0, 1.12), (1.0, 1.15), (1.6, 1.17), (2.2, 1.16),
+        (2.48, 1.12)],
+    ZB=[(-2.55, 0.42), (-2.45, 0.36), (-2.1, 0.33), (-1.0, 0.34), (1.0, 0.35), (2.0, 0.38), (2.3, 0.42), (2.48, 0.48)],
+    ZR=[(-1.10, 1.19), (-0.92, 1.38), (-0.72, 1.55), (-0.50, 1.66), (-0.20, 1.715), (0.40, 1.725), (1.00, 1.71),
+        (1.60, 1.675), (2.05, 1.61), (2.30, 1.54), (2.45, 1.48)],
+    Y_A=-1.10, Y_C=2.7, Y_HEADER=-0.48, Y_RG=2.02,
+    HOOD=(-2.38, -1.14), TRUNK=(9.0, 9.5), DOOR_F=(-0.986, 0.104), DOOR_R=(0.110, 1.070),
+    Q=[0, .04, .10, .16, .175, .185, .23, .30, .38, .48, .50, .51, .58, .68, .78, .85, .87, .895, .92, .94, .97, 1.0],
+    TAILGATE=(2.395, .50), REAR_GLASS_NODE="trunk",
+    DLO=[(0.075, "window", "glass"), (0.14, "B", "trim_gloss"), (1.00, "rear-window", "glass"),
+         (1.07, "rear-door", "trim_gloss"), (1.90, "side-glass", "glass"), (9.0, "body", "trim_gloss")],
+    ROOF_MAT="trim_gloss", RAIL_MAT="trim_gloss", CHROME_DLO=True, TAIL_FLUSH=True,
+    LAMP_F_Y=-2.26, LAMP_R_Y=2.22, LAMP_SPLIT=0.50, LAMP_SPLIT_R=0.52, TAIL_CENTRE_MAT="trim_gloss",
+    INTAKE_Y=-2.44, INTAKE_Q=(.16, .84), INTAKE_X=0.62,
+    BLADES=(0.24, 0.32, 0.40, 0.48, 0.56, 0.64, 0.72, 0.80), VBARS=(19, 0.58), BLADE_MAT="trim_gloss",
+    CURTAIN=(9.0, 9.0), ROCKER=(-1.12, 1.02), CHIN_Y=-2.1, DIFF_Y=2.2,
+    SPOKES=(6, 0.09), SPOKE_TWIST=0.5, RIM=((0.16, 0.12, 0.08), 1.0, 0.28),
+    INT_DZ=0.12, PAINT=(0.30, 0.22, 0.13), INTERIOR_COLOUR=(0.20, 0.12, 0.07),
+    ENGINE="v8", ENGINE_ACCENT="engine_cover",
+    PIVOTS={
+        "wheel-front-left": (0.85, -1.52, 0.40), "wheel-front-right": (-0.85, -1.52, 0.40),
+        "wheel-rear-left": (0.85, 1.50, 0.40), "wheel-rear-right": (-0.85, 1.50, 0.40),
+        "brake-caliper-front-left": (0.82, -1.52, 0.40), "brake-caliper-front-right": (-0.82, -1.52, 0.40),
+        "brake-caliper-rear-left": (0.82, 1.50, 0.40), "brake-caliper-rear-right": (-0.82, 1.50, 0.40),
+        "hood": (0.0, -1.80, 1.14), "trunk": (0.0, 2.25, 1.45),
+    },
+)
+
+# Open-roof grand roadster: the luxury convertible. Long bonnet, short tail, an open leather cockpit
+# behind a raked windscreen. Small corner lamps, an oval chrome
+# mesh grille, two tail lamps, polished five-spoke wheels, racing green over oxblood, a straight-six
+# under body-colour cam covers. Its soft top folds away under the rear deck (FOLD_ROOF).
+PRESETS["roadster"] = dict(
+    Y_FRONT=-2.30, Y_REAR=2.25, Y_MID=-0.05, W=0.95, FENDER_BULGE=0.050,
+    P_FRONT=3.0, P_REAR=3.2, Y_FS=-1.40, Y_RS=1.30,
+    WHEELS=[(-1.38, 0.355), (1.24, 0.355)], WHEEL_X=0.82, ARCH_R=0.40, TYRE_SCALE=(1.03, 1.06),
+    N_UP=4.5, N_GH=3.0,
+    ZT=[(-2.33, 0.60), (-2.28, 0.63), (-2.15, 0.68), (-1.8, 0.75), (-1.2, 0.80), (-0.6, 0.83), (-0.45, 0.835),
+        (0.5, 0.84), (1.2, 0.86), (1.9, 0.87), (2.15, 0.86), (2.25, 0.82)],
+    ZS=[(-2.33, 0.57), (-2.15, 0.64), (-1.6, 0.71), (-0.8, 0.72), (0.2, 0.73), (0.9, 0.78), (1.3, 0.80), (2.0, 0.79),
+        (2.25, 0.75)],
+    ZB=[(-2.33, 0.26), (-2.25, 0.20), (-2.0, 0.19), (-1.0, 0.20), (1.0, 0.205), (1.8, 0.24), (2.1, 0.28), (2.25, 0.33)],
+    ZR=[(-0.45, 0.83), (-0.32, 0.98), (-0.18, 1.10), (-0.04, 1.18), (0.25, 1.21), (0.60, 1.19), (0.85, 1.12),
+        (1.00, 1.00), (1.10, 0.88)],
+    Y_A=-0.45, Y_C=1.10, Y_HEADER=-0.04, Y_RG=1.05,
+    HOOD=(-2.18, -0.49), TRUNK=(9.0, 9.5), DOOR_F=(-0.52, 0.60), DOOR_R=(9.0, 9.5),
+    DLO=[(9.0, "body", "carpaint")], OPEN_TOP=True, FOLD_ROOF=dict(joint=0.42),
+    LAMP_F_Y=-2.08, LAMP_R_Y=2.04, LAMP_SPLIT=0.56, LAMP_SPLIT_R=0.46,
+    INTAKE_Y=-2.21, INTAKE_Q=(.10, .62), INTAKE_X=0.40,
+    BLADES=(0.20, 0.26, 0.32, 0.38, 0.44, 0.50, 0.56), VBARS=(13, 0.37), BLADE_MAT="chrome",
+    CURTAIN=(9.0, 9.0), ROCKER=(-0.95, 0.85), CHIN_Y=-2.05, DIFF_Y=2.02,
+    SPOKES=(5, 0.0), RIM=((0.82, 0.82, 0.84), 1.0, 0.10),
+    REAR_SEATS=False, INT_DY=0.42, INT_DZ=-0.16, PAINT=(0.012, 0.11, 0.06), INTERIOR_COLOUR=(0.15, 0.028, 0.018),
+    ENGINE="i6", ENGINE_ACCENT="carpaint",
+    PIVOTS=sedan_pivots(-1.38, 1.24, 0.355, x=0.82, door=0.04, hood=-1.80, trunk=1.9, mirror=-0.19, mirror_z=0.86),
+)
+
+# Electric hypercar: very low and wide, cab pushed forward under a black glass canopy, a long glass
+# tail over the rear drive unit and battery, a ducktail. A closed nose with blade lamps at the
+# corners, a full-width tail light, aero turbine wheels; pearl white over black, midnight-blue cabin.
+PRESETS["hyper"] = dict(
+    Y_FRONT=-2.40, Y_REAR=2.36, Y_MID=-0.1, W=1.0, FENDER_BULGE=0.065,
+    P_FRONT=2.8, P_REAR=3.4, Y_FS=-1.45, Y_RS=1.50,
+    WHEELS=[(-1.45, 0.355), (1.42, 0.36)], WHEEL_X=0.86, ARCH_R=0.40, TYRE_SCALE=(1.04, 1.12),
+    N_UP=4.0, N_GH=2.4,
+    ZT=[(-2.43, 0.44), (-2.38, 0.48), (-2.25, 0.55), (-1.9, 0.68), (-1.45, 0.77), (-0.95, 0.78),
+        (0.5, 0.80), (1.42, 0.89), (2.0, 0.89), (2.28, 0.88), (2.36, 0.84)],
+    # The wings stand over the wheels, the bonnet dips between them.
+    ZS=[(-2.43, 0.45), (-2.25, 0.57), (-1.9, 0.77), (-1.45, 0.87), (-1.0, 0.81), (-0.3, 0.69), (0.5, 0.72),
+        (1.0, 0.85), (1.42, 0.91), (1.9, 0.87), (2.36, 0.77)],
+    ZB=[(-2.43, 0.20), (-2.35, 0.15), (-2.0, 0.13), (-1.0, 0.14), (1.0, 0.145), (2.0, 0.18), (2.25, 0.22), (2.36, 0.28)],
+    ZR=[(-0.95, 0.74), (-0.75, 0.88), (-0.52, 1.01), (-0.28, 1.10), (-0.05, 1.135), (0.25, 1.12), (0.65, 1.04),
+        (1.05, 0.95), (1.45, 0.87), (1.75, 0.835)],
+    Y_A=-0.95, Y_C=1.75, Y_HEADER=-0.30, Y_RG=0.30,
+    HOOD=(-2.28, -0.98), TRUNK=(1.80, 2.30), DOOR_F=(-1.02, 0.40), DOOR_R=(9.0, 9.5),
+    DLO=[(0.36, "window", "glass"), (0.95, "side-glass", "glass"), (9.0, "body", "trim_gloss")],
+    ROOF_MAT="trim_gloss", RAIL_MAT="trim_gloss",
+    LAMP_F_Y=-2.16, LAMP_R_Y=2.12, LAMP_SPLIT=0.62,
+    INTAKE_Y=-2.34, INTAKE_Q=(.04, .26), INTAKE_X=0.55, BLADES=(0.15,), BLADE_MAT="trim_gloss",
+    CURTAIN=(-2.30, -2.20), ROCKER=(-1.05, 0.95), CHIN_Y=-2.1, DIFF_Y=1.95,
+    SPOKES=(5, 0.0), SPOKE_TWIST=0.6, AERO_DISC="trim_gloss", RIM=((0.05, 0.05, 0.055), 1.0, 0.2),
+    REAR_SEATS=False, INT_DY=0.20, INT_DZ=-0.22,
+    PAINT=(0.80, 0.81, 0.82), INTERIOR_COLOUR=(0.03, 0.06, 0.14),
+    ENGINE="ev", ENGINE_REAR=True, ENGINE_ACCENT="engine_cover",
+    PIVOTS=sedan_pivots(-1.45, 1.42, 0.36, x=0.86, door=-0.30, hood=-1.75, trunk=2.05, mirror=-0.69, mirror_z=0.80),
+)
+
+for _name in ("gt", "flagship", "grandsuv", "roadster", "hyper"):
+    PRESETS[_name]["EVEN_RIMS"] = False
 
 REPORT = main()
 print("triangles per object:", REPORT, "total:", sum(REPORT.values()))

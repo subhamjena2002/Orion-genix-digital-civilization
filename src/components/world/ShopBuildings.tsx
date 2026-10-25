@@ -22,8 +22,8 @@ import { WeaponModels } from "@/engine/orion/combat/WeaponModels";
 import { readPlayerPose } from "@/engine/orion/player/PlayerPose";
 import { KASPER_SHOWROOM } from "@/engine/orion/shops/ShopCatalog";
 import {
+	KASPER_HALL,
 	KASPER_LOT_BAYS,
-	KASPER_LOT_PLACES,
 	KASPER_LOT_SITE,
 	ORION_ARMS_CASE,
 	ORION_ARMS_ROOM,
@@ -39,7 +39,7 @@ import { LAND_Y } from "@/engine/orion/world/Mountains";
 import { cullBatchGroup } from "./useDistanceCull";
 import { ParkedVehicle } from "./Vehicles";
 
-/** The car lot's asphalt (its top is the site's ground): solid, so the cars on it stand on it. */
+/** The showroom plot's paving (its top is the site's ground): solid, so the player walks on it. */
 const LOT_THICKNESS = KASPER_LOT_SITE.ground - LAND_Y;
 /** How much light a room's surfaces give off of their own: under a roof, with no lamp, they'd read black. */
 const ROOM_FILL = 0.32;
@@ -88,8 +88,8 @@ type Size = readonly [number, number, number];
  *   glass case of pistols, a pegboard wall of rifles, shotguns and a launcher behind, ammunition
  *   on the shelves and a vest on its stand. The clerk stands behind the counter (components/world/
  *   Shops puts him there).
- * - **Kasper Motors' lot**, beside Benny's: asphalt, a pylon sign, the cars for sale parked with
- *   their prices in front of them, and the sales kiosk at the corner.
+ * - **Kasper Motors' showroom**, beside Benny's: a glass pavilion with the premium cars on lit
+ *   plinths inside, the reception desk facing the door (see buildKasperLot).
  *
  * The rooms' surfaces neither cast nor take shadows and glow a little of their own colour, so the
  * store reads lit inside rather than black under its roof.
@@ -104,9 +104,9 @@ export const ShopBuildings = memo(function ShopBuildings() {
 });
 
 /**
- * The cars for sale, parked in their bays. Apart from the places' entities, so nothing those do
- * re-renders them: a re-render puts a car's entity back to how it was first given, turning a
- * parked car away from its bay.
+ * The cars for sale, on their plinths, locked (`forSale`): they're bought, not taken. Apart from
+ * the places' entities, so nothing those do re-renders them: a re-render puts a car's entity back
+ * to how it was first given, turning a parked car away from its bay.
  */
 const ShowroomCars = memo(function ShowroomCars() {
 	return (
@@ -119,7 +119,8 @@ const ShowroomCars = memo(function ShowroomCars() {
 					<ParkedVehicle
 						key={item.id}
 						vehicle={{ id: `showroom-${item.id}`, style: item.vehicle.style, colour: item.vehicle.colour, seed: 5303 + index * 31, speedFactor: 1 }}
-						home={{ x, z, yaw: yawToWorld(KASPER_LOT_SITE, bay.yaw), ground: KASPER_LOT_SITE.ground }}
+						home={{ x, z, yaw: yawToWorld(KASPER_LOT_SITE, bay.yaw), ground: KASPER_LOT_SITE.ground + bay.plinth }}
+						forSale
 					/>
 				);
 			})}
@@ -268,6 +269,15 @@ function cylinder(parent: PlayCanvasEntity, name: string, centre: Point3, size: 
 	entity.setLocalPosition(centre[0], centre[1], centre[2]);
 	entity.setLocalScale(size[0], size[1], size[2]);
 	entity.addComponent("render", { type: "cylinder", material, castShadows: outside, receiveShadows: outside });
+	return entity;
+}
+
+function sphere(parent: PlayCanvasEntity, name: string, centre: Point3, diameter: number, material: StandardMaterial, outside = false): PlayCanvasEntity {
+	const entity = new PlayCanvasEntity(name);
+	parent.addChild(entity);
+	entity.setLocalPosition(centre[0], centre[1], centre[2]);
+	entity.setLocalScale(diameter, diameter, diameter);
+	entity.addComponent("render", { type: "sphere", material, castShadows: outside, receiveShadows: outside });
 	return entity;
 }
 
@@ -497,118 +507,192 @@ function buildOrionArms(app: AppBase, root: PlayCanvasEntity, finish: MakeFinish
 	return { entity, displays, models };
 }
 
-// ---- Kasper Motors' lot ------------------------------------------------------------------------
+// ---- Kasper Motors' showroom -------------------------------------------------------------------
 
+/** Gold lettering on black: the showroom's signs. */
+function drawSign(context: CanvasRenderingContext2D, width: number, height: number, vertical: boolean) {
+	context.fillStyle = "#0c0c0e";
+	context.fillRect(0, 0, width, height);
+	const gold = context.createLinearGradient(0, 0, 0, height);
+	gold.addColorStop(0, "#f3dc9a");
+	gold.addColorStop(0.5, "#c9a24f");
+	gold.addColorStop(1, "#f0d590");
+	context.fillStyle = gold;
+	context.textAlign = "center";
+	context.textBaseline = "middle";
+	if (vertical) {
+		context.font = "600 132px Georgia, 'Times New Roman', serif";
+		[..."KASPER"].forEach((letter, index) => context.fillText(letter, width / 2, 150 + index * 140));
+		context.fillRect(width * 0.2, height - 60, width * 0.6, 4);
+		return;
+	}
+	context.font = "600 150px Georgia, 'Times New Roman', serif";
+	context.fillText("K A S P E R   M O T O R S", width / 2, height * 0.42);
+	context.fillRect(width * 0.18, height * 0.66, width * 0.64, 3);
+	context.font = "500 54px Georgia, 'Times New Roman', serif";
+	context.fillText("THE PRESTIGE COLLECTION", width / 2, height * 0.82);
+}
+
+/**
+ * The Prestige showroom: a glass pavilion behind a stone forecourt under a bronze-edged canopy, its
+ * name lit in gold over the door and on a totem at the corner. Inside: a polished black marble
+ * floor, the five cars on white plinths with light under them, a walnut feature wall with the name
+ * on it at the back, lines of light across the ceiling, and the reception desk facing the door.
+ *
+ * The roof casts no shadow: the hall is meant to read sunlit through its glass, not dim. Its
+ * surfaces are all boxes and cylinders in the shops' one static batch.
+ */
 function buildKasperLot(root: PlayCanvasEntity, finish: MakeFinish, texture: MakeTexture): PlayCanvasEntity {
 	const site = KASPER_LOT_SITE;
-	const entity = siteRoot(root, "kasper-lot", site, LAND_Y);
-	const asphalt = finish("lot-asphalt", "#303337", { gloss: 0.18 });
-	const kerb = finish("lot-kerb", "#c9c5bb", { gloss: 0.1 });
-	const mat = finish("lot-mat", "#6e1a1a", { gloss: 0.1 });
-	const white = finish("lot-white", "#f1f1ee", { gloss: 0.3 });
-	const navy = finish("lot-navy", "#1f3a6b", { gloss: 0.4 });
-	const orange = finish("lot-orange", "#f2a516", { gloss: 0.4 });
-	const steel = finish("lot-steel", "#9aa0a8", { gloss: 0.6, metalness: 0.7 });
-	const glass = finish("lot-glass", "#8fa6b2", { gloss: 0.92, opacity: 0.25 });
+	const hall = KASPER_HALL;
+	const entity = siteRoot(root, "kasper-showroom", site, LAND_Y);
+	const floorY = LOT_THICKNESS;
+	const top = floorY + hall.height;
 	const outside: Part = { outside: true };
 
-	const signMap = texture(1024, 384, (context) => {
-		context.fillStyle = "#1f3a6b";
-		context.fillRect(0, 0, 1024, 384);
-		context.fillStyle = "#f2a516";
-		context.fillRect(0, 300, 1024, 24);
-		context.fillStyle = "#ffffff";
-		context.textAlign = "center";
-		context.textBaseline = "middle";
-		context.font = "900 120px Arial, sans-serif";
-		context.fillText("KASPER", 512, 110);
-		context.font = "900 92px Arial, sans-serif";
-		context.fillText("MOTORS", 512, 225);
-		context.font = "bold 30px Arial, sans-serif";
-		context.fillStyle = "#1f3a6b";
-		context.fillRect(0, 324, 1024, 60);
-		context.fillStyle = "#f2a516";
-		context.fillText("QUALITY CARS · DRIVE AWAY TODAY", 512, 355);
-	});
-	const sign = finish("lot-sign", "#ffffff", { gloss: 0.3, map: signMap, sign: 0.85 });
-	const salesMap = texture(512, 128, (context) => {
-		context.fillStyle = "#f2a516";
-		context.fillRect(0, 0, 512, 128);
-		context.fillStyle = "#1f3a6b";
-		context.textAlign = "center";
-		context.textBaseline = "middle";
-		context.font = "900 72px Arial, sans-serif";
-		context.fillText("SALES", 256, 66);
-	});
-	const sales = finish("lot-sales", "#ffffff", { gloss: 0.3, map: salesMap, sign: 0.7 });
+	const marbleMap = texture(512, 512, (context) => {
+		// Two 1.2 m tiles a repeat: black marble with faint veins and fine light joints.
+		context.fillStyle = "#1b1c1f";
+		context.fillRect(0, 0, 512, 512);
+		context.strokeStyle = "rgba(200, 200, 210, 0.10)";
+		context.lineWidth = 2;
+		for (let vein = 0; vein < 9; vein++) {
+			context.beginPath();
+			let x = (vein * 61) % 512;
+			let y = 0;
+			context.moveTo(x, y);
+			while (y < 512) {
+				x += Math.sin(y * 0.03 + vein) * 14;
+				y += 24;
+				context.lineTo(x, y);
+			}
+			context.stroke();
+		}
+		context.fillStyle = "rgba(210, 205, 195, 0.35)";
+		context.fillRect(0, 0, 512, 2);
+		context.fillRect(0, 255, 512, 2);
+		context.fillRect(0, 0, 2, 512);
+		context.fillRect(255, 0, 2, 512);
+	}, true);
+	const pavingMap = texture(256, 256, (context) => {
+		context.fillStyle = "#d8d2c4";
+		context.fillRect(0, 0, 256, 256);
+		context.fillStyle = "#b9b2a3";
+		context.fillRect(0, 0, 256, 3);
+		context.fillRect(0, 0, 3, 256);
+		context.fillRect(0, 127, 256, 2);
+		context.fillRect(127, 0, 2, 256);
+	}, true);
+	const slatMap = texture(256, 64, (context) => {
+		context.fillStyle = "#4a2c1a";
+		context.fillRect(0, 0, 256, 64);
+		context.fillStyle = "#2a170d";
+		for (let x = 0; x < 256; x += 32) context.fillRect(x, 0, 4, 64);
+	}, true);
+	const signMap = texture(2048, 512, (context) => drawSign(context, 2048, 512, false));
+	const totemMap = texture(256, 1024, (context) => drawSign(context, 256, 1024, true));
 
-	// The lot: asphalt with a kerb round it, solid so the cars stand on it.
-	box(entity, "asphalt", [0, LOT_THICKNESS / 2, 0], [site.width, LOT_THICKNESS, site.depth], asphalt, { outside: true, solid: true });
-	box(entity, "kerb-back", [0, 0.1, -site.depth / 2 + 0.1], [site.width, 0.16, 0.2], kerb, outside);
-	for (const side of [-1, 1]) box(entity, `kerb-${side}`, [side * (site.width / 2 - 0.1), 0.1, 0], [0.2, 0.16, site.depth], kerb, outside);
+	const floor = finish("show-floor", "#ffffff", { gloss: 0.93, map: marbleMap, tiling: [(2 * hall.side) / 2.4, (hall.front - hall.back) / 2.4] });
+	const paving = finish("show-paving", "#ffffff", { gloss: 0.45, map: pavingMap, tiling: [site.width / 2.4, (site.depth / 2 - hall.front) / 2.4] });
+	const stone = finish("show-stone", "#e7dfd0", { gloss: 0.35 });
+	const ceiling = finish("show-ceiling", "#f3f1ec", { gloss: 0.2, fill: 0.45 });
+	const walnut = finish("show-walnut", "#ffffff", { gloss: 0.55, map: slatMap, tiling: [9, 1], fill: 0.35 });
+	const black = finish("show-black", "#121214", { gloss: 0.8, metalness: 0.5 });
+	const bronze = finish("show-bronze", "#8a6a3e", { gloss: 0.75, metalness: 0.85 });
+	const glass = finish("show-glass", "#6f8792", { gloss: 0.96, opacity: 0.1 });
+	const light = finish("show-light", "#fff4dc", { fill: 1.6 });
+	const glow = finish("show-glow", "#d8ecff", { fill: 1.4 });
+	const plinthTop = finish("show-plinth", "#f4f4f2", { gloss: 0.9, fill: 0.12 });
+	const deskTop = finish("show-desk-top", "#efece6", { gloss: 0.85, fill: 0.2 });
+	const leaf = finish("show-leaf", "#2f5326", { gloss: 0.25 });
+	const sign = finish("show-sign", "#ffffff", { gloss: 0.4, map: signMap, sign: 0.9 });
+	const totemSign = finish("show-totem", "#ffffff", { gloss: 0.4, map: totemMap, sign: 0.9 });
 
-	// The cars: a red mat under each, the name and price on a board in front.
+	const width = 2 * (hall.side + hall.wall);
+	const backZ = hall.back - hall.wall / 2;
+	const depth = hall.front - hall.back;
+	const midZ = (hall.front + hall.back) / 2;
+
+	// The plot: stone paving, solid, the hall's marble laid on it.
+	box(entity, "paving", [0, LOT_THICKNESS / 2, 0], [site.width, LOT_THICKNESS, site.depth], paving, { outside: true, solid: true });
+	box(entity, "marble", [0, floorY + 0.005, midZ], [2 * hall.side, 0.01, depth], floor);
+
+	// Walls: stone at the sides, the back carrying the walnut feature wall inside.
+	box(entity, "wall-back", [0, floorY + hall.height / 2, backZ], [width, hall.height, hall.wall], stone, { outside: true, solid: true });
+	for (const side of [-1, 1]) {
+		box(entity, `wall-${side}`, [side * (hall.side + hall.wall / 2), floorY + hall.height / 2, midZ - hall.wall / 2], [hall.wall, hall.height, depth + hall.wall], stone, { outside: true, solid: true });
+	}
+	box(entity, "feature-wall", [0, floorY + 2.4, hall.back + 0.04], [9.4, 4.4, 0.06], walnut);
+	box(entity, "feature-sign", [0, floorY + 3.1, hall.back + 0.08], [4.6, 1.15, 0.03], sign);
+	for (const side of [-1, 1]) box(entity, `feature-light-${side}`, [side * 4.75, floorY + 2.4, hall.back + 0.08], [0.06, 4.4, 0.04], light);
+
+	// The glass front: panes either side of the open doorway, a pane over it, black mullions.
+	const paneWidth = hall.side - hall.door.halfWidth;
+	for (const side of [-1, 1]) {
+		box(entity, `glass-${side}`, [side * (hall.door.halfWidth + paneWidth / 2), floorY + hall.height / 2, hall.front], [paneWidth, hall.height, 0.04], glass, { solid: true });
+	}
+	box(entity, "glass-transom", [0, floorY + (hall.door.height + hall.height) / 2, hall.front], [2 * hall.door.halfWidth, hall.height - hall.door.height, 0.04], glass);
+	for (const x of [-hall.side, -4.85, -3.1, -hall.door.halfWidth, hall.door.halfWidth, 3.1, 4.85, hall.side]) {
+		box(entity, `mullion-${x}`, [x, floorY + hall.height / 2, hall.front], [0.08, hall.height, 0.12], black, outside);
+	}
+	box(entity, "transom", [0, floorY + hall.door.height, hall.front], [2 * hall.door.halfWidth, 0.1, 0.12], black, outside);
+
+	// The roof and the canopy over the forecourt (no shadow: see above), edged in bronze, the name on the front.
+	const canopyFront = site.depth / 2 - 0.6;
+	const roofDepth = canopyFront - backZ + hall.wall / 2;
+	const roofZ = (canopyFront + backZ - hall.wall / 2) / 2;
+	box(entity, "roof", [0, top + 0.18, roofZ], [width + 0.2, 0.36, roofDepth], ceiling);
+	box(entity, "fascia-front", [0, top + 0.18, canopyFront + 0.03], [width + 0.26, 0.5, 0.06], bronze, outside);
+	for (const side of [-1, 1]) box(entity, `fascia-${side}`, [side * (width / 2 + 0.13), top + 0.18, roofZ], [0.06, 0.5, roofDepth + 0.06], bronze, outside);
+	box(entity, "sign", [0, top + 0.95, canopyFront - 0.25], [7.2, 1.0, 0.08], sign, outside);
+	box(entity, "sign-base", [0, top + 0.42, canopyFront - 0.25], [7.4, 0.08, 0.3], black, outside);
+	// Lines of light across the ceiling, and a light over the doorway.
+	for (const z of [-5.2, -2.6, 0, 2.6]) box(entity, `ceiling-light-${z}`, [0, top - 0.02, z], [2 * hall.side - 0.6, 0.04, 0.16], light);
+	box(entity, "canopy-light", [0, top - 0.02, (hall.front + canopyFront) / 2], [2 * hall.door.halfWidth + 1.4, 0.04, 0.2], light);
+
+	// The cars' plinths: white, lit underneath; the big round one for the car at the back.
 	for (const item of KASPER_SHOWROOM.items) {
 		const bay = KASPER_LOT_BAYS[item.id];
 		if (item.kind !== "vehicle" || !bay) continue;
-		const holder = new PlayCanvasEntity(`bay-${item.id}`);
+		const holder = new PlayCanvasEntity(`plinth-${item.id}`);
 		entity.addChild(holder);
-		holder.setLocalPosition(bay.x, LOT_THICKNESS, bay.z);
+		holder.setLocalPosition(bay.x, floorY, bay.z);
 		holder.setLocalEulerAngles(0, bay.yaw, 0);
-		box(holder, "mat", [0, 0.004, 0], [2.6, 0.006, 5.4], mat, outside);
-		const priceMap = texture(512, 256, (context) => {
-			context.fillStyle = "#ffffff";
-			context.fillRect(0, 0, 512, 256);
-			context.fillStyle = "#1f3a6b";
-			context.fillRect(0, 0, 512, 70);
-			context.fillStyle = "#ffffff";
-			context.textAlign = "center";
-			context.textBaseline = "middle";
-			context.font = "bold 34px Arial, sans-serif";
-			context.fillText(item.vehicle.name ?? "", 256, 36);
-			context.fillStyle = "#c4261c";
-			context.font = "900 92px Arial, sans-serif";
-			context.fillText(`$${item.price.toLocaleString("en-US")}`, 256, 158);
-			context.fillStyle = "#1f3a6b";
-			context.font = "bold 22px Arial, sans-serif";
-			context.fillText("KASPER MOTORS", 256, 228);
-		});
-		const price = finish(`lot-price-${item.id}`, "#ffffff", { gloss: 0.3, map: priceMap, sign: 0.35 });
-		box(holder, "price-post", [1.0, 0.45, 3.1], [0.05, 0.9, 0.05], steel, outside);
-		box(holder, "price-board", [1.0, 1.0, 3.12], [0.9, 0.45, 0.03], price, outside);
+		const height = bay.plinth;
+		if (item.id === "halcyon") {
+			cylinder(holder, "plinth", [0, height / 2 + 0.02, 0], [5.0, height - 0.02, 5.0], plinthTop);
+			cylinder(holder, "plinth-glow", [0, 0.012, 0], [4.86, 0.024, 4.86], glow);
+			cylinder(holder, "plinth-ring", [0, height + 0.001, 0], [5.04, 0.004, 5.04], bronze);
+		} else {
+			box(holder, "plinth", [0, height / 2 + 0.02, 0], [2.6, height - 0.02, 5.7], plinthTop);
+			box(holder, "plinth-glow", [0, 0.012, 0], [2.5, 0.024, 5.6], glow);
+		}
+		// A spot of light in the ceiling over it.
+		cylinder(holder, "downlight", [0, hall.height - 0.03, 0], [0.5, 0.03, 0.5], light);
 	}
 
-	// The pylon sign at the road corner, facing the arterial.
-	box(entity, "pylon", [-site.width / 2 + 0.6, 2.4, site.depth / 2 - 0.5], [0.3, 4.8, 0.3], navy, { outside: true, solid: true });
-	box(entity, "pylon-sign", [-site.width / 2 + 0.6, 4.9, site.depth / 2 - 0.5 + 0.18], [3.2, 1.2, 0.08], sign, outside);
-	box(entity, "pylon-cap", [-site.width / 2 + 0.6, 5.55, site.depth / 2 - 0.5], [3.3, 0.1, 0.3], orange, outside);
-	// Flags along the back.
-	for (const [index, x] of [-5.4, -1.8, 1.8].entries()) {
-		cylinder(entity, `flag-pole-${index}`, [x, 2.5, -site.depth / 2 + 0.4], [0.07, 5, 0.07], steel, true);
-		box(entity, `flag-${index}`, [x + 0.45, 4.55, -site.depth / 2 + 0.4], [0.9, 0.6, 0.02], index === 1 ? orange : navy, outside);
+	// The reception desk: walnut under a marble top, a bronze line along its front, a screen.
+	const desk = hall.desk;
+	box(entity, "desk", [desk.x, floorY + (desk.height - 0.05) / 2, desk.z], [desk.width, desk.height - 0.05, desk.depth], walnut, { solid: true });
+	box(entity, "desk-top", [desk.x, floorY + desk.height - 0.025, desk.z], [desk.width + 0.2, 0.05, desk.depth + 0.16], deskTop);
+	box(entity, "desk-line", [desk.x, floorY + desk.height - 0.2, desk.z + desk.depth / 2 + 0.005], [desk.width, 0.03, 0.01], bronze);
+	box(entity, "desk-screen", [desk.x - 0.5, floorY + desk.height + 0.2, desk.z - 0.12], [0.55, 0.34, 0.03], black);
+
+	// Clipped bay balls in black pots: a pair either side of the door outside, one in each back corner.
+	for (const side of [-1, 1]) {
+		for (const [x, z, part] of [[side * (hall.door.halfWidth + 1.0), hall.front + 0.9, outside], [side * (hall.side - 0.6), hall.back + 0.6, {}]] as const) {
+			cylinder(entity, `pot-${side}-${z}`, [x, floorY + 0.35, z], [0.75, 0.7, 0.75], black, part === outside);
+			cylinder(entity, `stem-${side}-${z}`, [x, floorY + 0.95, z], [0.06, 0.5, 0.06], walnut, part === outside);
+			sphere(entity, `bay-ball-${side}-${z}`, [x, floorY + 1.45, z], 0.85, leaf, part === outside);
+		}
 	}
 
-	// The sales kiosk: white walls, glass on the lot side, a desk at the window, the sign on top.
-	const kiosk = KASPER_LOT_PLACES.kiosk;
-	const k = new PlayCanvasEntity("kiosk");
-	entity.addChild(k);
-	k.setLocalPosition(kiosk.x, LOT_THICKNESS, kiosk.z);
-	const kx = kiosk.width / 2;
-	const kz = kiosk.depth / 2;
-	box(k, "kiosk-back", [kx - 0.06, kiosk.height / 2, 0], [0.12, kiosk.height, kiosk.depth], white, outside);
-	for (const side of [-1, 1]) box(k, `kiosk-side-${side}`, [0, kiosk.height / 2, side * (kz - 0.06)], [kiosk.width, kiosk.height, 0.12], white, outside);
-	box(k, "kiosk-sill", [-kx + 0.06, 0.5, 0], [0.12, 1.0, kiosk.depth], white, outside);
-	box(k, "kiosk-glass", [-kx + 0.06, 1.0 + (kiosk.height - 1.3) / 2, 0], [0.04, kiosk.height - 1.3, kiosk.depth - 0.24], glass, outside);
-	box(k, "kiosk-head", [-kx + 0.06, kiosk.height - 0.15, 0], [0.12, 0.3, kiosk.depth], navy, outside);
-	box(k, "kiosk-desk", [-kx + 0.4, 0.95, 0], [0.5, 0.06, kiosk.depth - 0.4], navy);
-	box(k, "kiosk-roof", [0, kiosk.height + 0.06, 0], [kiosk.width + 0.5, 0.12, kiosk.depth + 0.5], navy, outside);
-	box(k, "kiosk-sign", [-kx - 0.26, kiosk.height + 0.4, 0], [0.04, 0.5, 2.0], sales, outside);
-	box(k, "kiosk-stripe", [0, kiosk.height - 0.02, 0], [kiosk.width + 0.52, 0.06, kiosk.depth + 0.52], orange, outside);
-	const kioskCollider = new PlayCanvasEntity("kiosk-collider");
-	k.addChild(kioskCollider);
-	kioskCollider.setLocalPosition(0, kiosk.height / 2, 0);
-	kioskCollider.addComponent("collision", { type: "box", halfExtents: new Vec3(kx, kiosk.height / 2, kz) });
-	kioskCollider.addComponent("rigidbody", { type: "static" });
+	// The totem at the forecourt's corner by the pavement, lit gold on black both ways.
+	const totemX = -site.width / 2 + 0.7;
+	const totemZ = site.depth / 2 - 0.7;
+	box(entity, "totem", [totemX, floorY + 2.2, totemZ], [0.95, 4.4, 0.32], black, { outside: true, solid: true });
+	for (const face of [-1, 1]) box(entity, `totem-sign-${face}`, [totemX, floorY + 2.4, totemZ + face * 0.17], [0.8, 3.4, 0.02], totemSign, outside);
+	box(entity, "totem-cap", [totemX, floorY + 4.44, totemZ], [1.0, 0.08, 0.36], bronze, outside);
 
 	return entity;
 }

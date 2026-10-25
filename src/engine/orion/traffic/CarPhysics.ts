@@ -1,3 +1,4 @@
+import { NO_TYRE_EFFECT, type TyreHandling } from "./TyreDamage";
 import type { VehicleStyle } from "./Vehicles";
 
 /**
@@ -100,6 +101,13 @@ interface StyleTuning {
 
 const TUNING: Readonly<Record<VehicleStyle, StyleTuning>> = {
 	luxury: { mass: 1600, power: 480_000, topSpeed: 88, grip: 1.25, drag: 0.34, cgHeight: 0.42, frontWeight: 0.43, frontDrive: 0.4 },
+	// The premium line: quicker than anything in traffic but the Vesper, the hypercar quicker still.
+	grandTourer: { mass: 1750, power: 430_000, topSpeed: 84, grip: 1.18, drag: 0.32, cgHeight: 0.46, frontWeight: 0.5, frontDrive: 0 },
+	flagship: { mass: 2400, power: 420_000, topSpeed: 72, grip: 1.05, drag: 0.31, cgHeight: 0.55, frontWeight: 0.52, frontDrive: 0.45 },
+	grandSuv: { mass: 2350, power: 400_000, topSpeed: 70, grip: 1.0, drag: 0.42, cgHeight: 0.66, frontWeight: 0.53, frontDrive: 0.5 },
+	roadster: { mass: 1500, power: 380_000, topSpeed: 80, grip: 1.2, drag: 0.36, cgHeight: 0.44, frontWeight: 0.5, frontDrive: 0 },
+	// Electric: four motors, all-wheel drive, a battery low in the floor.
+	hypercar: { mass: 1900, power: 750_000, topSpeed: 100, grip: 1.35, drag: 0.3, cgHeight: 0.38, frontWeight: 0.45, frontDrive: 0.5 },
 	sedan: { mass: 1450, power: 130_000, topSpeed: 58, grip: 1.0, drag: 0.4, cgHeight: 0.55, frontWeight: 0.56, frontDrive: 1 },
 	// Long and heavy but strong: all-wheel drive, a slippery body, a high top speed.
 	executive: { mass: 2250, power: 290_000, topSpeed: 64, grip: 1.0, drag: 0.34, cgHeight: 0.55, frontWeight: 0.52, frontDrive: 0.45 },
@@ -181,6 +189,12 @@ export class CarPhysics {
 	 * nobody at the wheel has nothing to hold it to.
 	 */
 	public stabilityControl = true;
+	/**
+	 * What the tyres can do: all neutral on four good tyres, changed by flats (see
+	 * TyreDamage.tyreHandling). Less grip and cornering on a flat axle, the drag of a flat, a pull
+	 * to its side and, on a flat front, a shimmy that grows with speed.
+	 */
+	public tyres: Readonly<TyreHandling> = NO_TYRE_EFFECT;
 
 	// Read-outs for visuals, sound and the HUD.
 	public forwardSpeed = 0;
@@ -193,6 +207,8 @@ export class CarPhysics {
 	public reversing = false;
 
 	private escHoldoff = 0;
+	/** Phase of a flat front tyre's shimmy (radians). */
+	private shimmyPhase = 0;
 	private readonly frontLength: number;
 	private readonly rearLength: number;
 
@@ -271,8 +287,9 @@ export class CarPhysics {
 		const transfer = (spec.mass * this.longitudinalAcceleration * spec.cgHeight) / spec.wheelbase;
 		const loadFront = Math.max(weight * 0.15, weight * spec.frontWeight - transfer);
 		const loadRear = Math.max(weight * 0.15, weight * (1 - spec.frontWeight) + transfer);
-		const frontGrip = spec.grip * loadFront;
-		const rearGrip = spec.grip * REAR_GRIP_BIAS * loadRear * (controls.handbrake ? spec.handbrakeGrip : 1);
+		const tyres = this.tyres;
+		const frontGrip = spec.grip * loadFront * tyres.frontGrip;
+		const rearGrip = spec.grip * REAR_GRIP_BIAS * loadRear * (controls.handbrake ? spec.handbrakeGrip : 1) * tyres.rearGrip;
 
 		// Slip angles. The front is measured in the steered wheel's own frame.
 		const steerSin = Math.sin(this.steer);
@@ -303,9 +320,9 @@ export class CarPhysics {
 
 		// Each axle's traction and cornering share one friction circle.
 		const frontLateralLimit = frontGrip * CORNERING_GRIP * ellipse(driveFront, frontGrip);
-		const frontForce = clamp(-spec.corneringFront * CORNERING_GRIP * slipFront, frontLateralLimit);
+		const frontForce = clamp(-spec.corneringFront * tyres.frontCornering * CORNERING_GRIP * slipFront, frontLateralLimit);
 		const rearLateralLimit = rearGrip * CORNERING_GRIP * ellipse(driveRear, rearGrip);
-		const rearDemand = -spec.corneringRear * CORNERING_GRIP * (controls.handbrake ? 0.5 : 1) * slipRear;
+		const rearDemand = -spec.corneringRear * tyres.rearCornering * CORNERING_GRIP * (controls.handbrake ? 0.5 : 1) * slipRear;
 		const rearForce = clamp(rearDemand, rearLateralLimit);
 		this.rearSlide = Math.abs(rearDemand) > rearLateralLimit
 			? Math.min(1.5, Math.abs(rearLat) / 4)
@@ -319,6 +336,15 @@ export class CarPhysics {
 		let forceLong = frontAlong + driveRear - spec.drag * vLong * velocity - spec.rolling * vLong;
 		const forceLat = frontAcross + rearForce - spec.drag * 0.5 * vLat * velocity;
 		let torque = this.frontLength * frontAcross - this.rearLength * rearForce;
+		if (tyres.pull !== 0 || tyres.shimmy !== 0) {
+			// A flat drags its side back (felt through the steering on a front), and a flat front
+			// wobbles the car about more and more as the speed rises.
+			const rolling = Math.min(1, speed / 8);
+			torque += tyres.pull * weight * this.frontLength * rolling * Math.sign(vLong || 1);
+			this.shimmyPhase += dt * (5 + speed * 0.3) * Math.PI * 2;
+			if (this.shimmyPhase > Math.PI * 2) this.shimmyPhase -= Math.PI * 2;
+			torque += Math.sin(this.shimmyPhase) * tyres.shimmy * weight * this.frontLength * Math.min(1, (speed / 30) ** 2);
+		}
 		if (escExcess > 0) {
 			// Brake-based yaw correction: pull the yaw rate back towards what the steering asks for.
 			const wanted = (vLong * Math.tan(this.steer)) / spec.wheelbase;
@@ -327,8 +353,10 @@ export class CarPhysics {
 
 		// Brakes (and the handbrake on the rear), limited by grip, applied as a clamp so they
 		// stop the car rather than pushing it backwards.
-		let brakeForce = brake * Math.min(spec.brakeForce, spec.grip * weight);
+		let brakeForce = brake * Math.min(spec.brakeForce, spec.grip * weight * tyres.brakeGrip);
 		if (throttle === 0) brakeForce += spec.mass * ENGINE_BRAKING;
+		// A flat tyre drags like a binding brake, throttle or not.
+		brakeForce += weight * tyres.drag;
 		if (controls.handbrake) brakeForce += spec.grip * loadRear * 0.7;
 		let newLong = vLong + (forceLong / spec.mass) * dt;
 		const brakeDelta = (brakeForce / spec.mass) * dt;

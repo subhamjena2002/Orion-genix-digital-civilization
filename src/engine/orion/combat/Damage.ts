@@ -20,6 +20,48 @@ export interface DamageEvent {
 	directionZ: number;
 	/** Knockback speed, in m/s, applied along the direction by bodies that react physically. */
 	impulse: number;
+	/**
+	 * Which part of the target a round struck, when the shooter worked it out (see HitDetail);
+	 * null for anything that hits the whole target (a blast, a crash, a punch).
+	 */
+	detail: HitDetail | null;
+}
+
+/** The part of a vehicle a round hit. */
+export type HitPart = "body" | "glass" | "tyre" | "rim" | "lamp";
+
+/**
+ * Exactly what a round struck, from the target's own geometry: the part, which one (a pane, a
+ * wheel), and the surface there, so the damage lands on the right thing and the mark sits on the
+ * surface rather than on a bounding box.
+ */
+export interface HitDetail {
+	part: HitPart;
+	/** Pane number for glass, wheel number for a tyre or rim; -1 otherwise. */
+	index: number;
+	/** Surface normal at the hit, facing back towards the shooter. */
+	nx: number;
+	ny: number;
+	nz: number;
+	/** Cosine between the round's path and the surface: 1 square on, 0 grazing. */
+	incidence: number;
+	/** A tyre hit on its sidewall rather than its tread. */
+	sidewall: boolean;
+}
+
+export function makeHitDetail(): HitDetail {
+	return { part: "body", index: -1, nx: 0, ny: 1, nz: 0, incidence: 1, sidewall: false };
+}
+
+export function copyHitDetail(from: Readonly<HitDetail>, to: HitDetail): HitDetail {
+	to.part = from.part;
+	to.index = from.index;
+	to.nx = from.nx;
+	to.ny = from.ny;
+	to.nz = from.nz;
+	to.incidence = from.incidence;
+	to.sidewall = from.sidewall;
+	return to;
 }
 
 /** Enough about an attacker for a victim to react to. */
@@ -53,6 +95,22 @@ export interface Damageable {
 	headingZ: number;
 	readonly alive: boolean;
 	takeDamage(event: DamageEvent): void;
+	/**
+	 * For a target with real geometry inside its box (a car): given a ray that enters the box at
+	 * `entry`, the distance to what it actually strikes within `limit` — filling in `detail` — or
+	 * -1 if it passes through (over the bonnet, through a broken window and out).
+	 */
+	refineHit?(ray: Readonly<RayLike>, entry: number, limit: number, detail: HitDetail): number;
+}
+
+/** A unit ray (see HitTests.Ray), repeated here to keep this module free of imports. */
+export interface RayLike {
+	ox: number;
+	oy: number;
+	oz: number;
+	dx: number;
+	dy: number;
+	dz: number;
 }
 
 /** Damage multipliers by what's being hit — a pistol round barely scratches a car. */
@@ -64,6 +122,15 @@ const RESISTANCE: Readonly<Record<DamageableKind, Partial<Record<DamageType, num
 
 export function damageFor(kind: DamageableKind, event: Readonly<DamageEvent>): number {
 	return event.amount * (RESISTANCE[kind][event.type] ?? 1);
+}
+
+/**
+ * The weapon's own damage before `kind` scaled it (see damageFor): what a part that takes hits
+ * its own way — a car's glass, a tyre — is given to work from.
+ */
+export function unscaledDamage(kind: DamageableKind, event: Readonly<DamageEvent>): number {
+	const share = RESISTANCE[kind][event.type] ?? 1;
+	return share > 0 ? event.amount / share : 0;
 }
 
 /** Health with death as a one-way door. */
@@ -112,5 +179,5 @@ export function nextCombatId(): number {
 
 /** A reusable event: the combat code fills one in place instead of allocating per hit. */
 export function makeDamageEvent(): DamageEvent {
-	return { amount: 0, type: "melee", source: null, x: 0, y: 0, z: 0, directionX: 0, directionZ: 1, impulse: 0 };
+	return { amount: 0, type: "melee", source: null, x: 0, y: 0, z: 0, directionX: 0, directionZ: 1, impulse: 0, detail: null };
 }

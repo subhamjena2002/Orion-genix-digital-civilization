@@ -156,6 +156,11 @@ const AUTO_SINGLE: EngineVoice = {
 
 export const ENGINE_VOICES: Readonly<Record<VehicleStyle, EngineVoice>> = {
 	luxury: V12,
+	grandTourer: V12,
+	flagship: V12,
+	grandSuv: V12,
+	roadster: V12,
+	hypercar: V12,
 	truck: DIESEL_SIX,
 	militaryWagon: UTILITY_FOUR,
 	suv: UTILITY_FOUR,

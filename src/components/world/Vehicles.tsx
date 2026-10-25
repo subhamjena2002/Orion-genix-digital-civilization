@@ -188,17 +188,19 @@ export interface VehicleHome {
 /**
  * A car parked at a fixed spot with nobody in it (the police station's patrol cars). It's a
  * full car — the player can get in and drive it off — and goes back to its bay once it's been
- * left somewhere out of sight.
+ * left somewhere out of sight. One `forSale` is on show in the showroom: locked, and bought
+ * rather than taken.
  */
-export function ParkedVehicle({ vehicle, home }: Readonly<{ vehicle: VehicleSpawn; home: VehicleHome }>) {
+export function ParkedVehicle({ vehicle, home, forSale = false }: Readonly<{ vehicle: VehicleSpawn; home: VehicleHome; forSale?: boolean }>) {
 	const materials = useVehicleMaterials();
-	return <VehicleVisual vehicle={vehicle} materials={materials} home={home} />;
+	return <VehicleVisual vehicle={vehicle} materials={materials} home={home} forSale={forSale} />;
 }
 
-function VehicleVisual({ vehicle, materials, home, pursuitSlot = -1, fireSlot = -1, missionSlot = -1, driverless = false }: Readonly<{
+function VehicleVisual({ vehicle, materials, home, forSale = false, pursuitSlot = -1, fireSlot = -1, missionSlot = -1, driverless = false }: Readonly<{
 	vehicle: VehicleSpawn;
 	materials: VehicleMaterials;
 	home?: VehicleHome;
+	forSale?: boolean;
 	pursuitSlot?: number;
 	fireSlot?: number;
 	missionSlot?: number;
@@ -234,6 +236,7 @@ function VehicleVisual({ vehicle, materials, home, pursuitSlot = -1, fireSlot = 
 				homeZ={home?.z ?? 0}
 				homeYaw={home?.yaw ?? 0}
 				homeGround={home?.ground ?? 0}
+				forSale={forSale}
 				pursuitSlot={pursuitSlot}
 				fireSlot={fireSlot}
 				missionSlot={missionSlot}

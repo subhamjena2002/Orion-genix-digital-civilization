@@ -5,6 +5,7 @@ import { useSyncExternalStore } from "react";
 import { usePlayerPose } from "@/components/world/usePlayerPose";
 import { JET_NAME } from "@/engine/orion/aircraft/JetModel";
 import { counterInReach, onShopChange } from "@/engine/orion/shops/Shops";
+import { playerCarHasRoof } from "@/engine/orion/traffic/Carjack";
 import { useFlightHud } from "./FlightHud";
 
 const KMH_PER_MS = 3.6;
@@ -80,6 +81,13 @@ export function DrivingHud({ touch }: Readonly<{ touch: boolean }>) {
 							<Separator />
 							<HintKey keys={["Space"]} label="Handbrake" />
 							<Separator />
+							{/* Re-read each time the strip refreshes (usePlayerPose): a convertible's roof key. */}
+							{playerCarHasRoof() ? (
+								<>
+									<HintKey keys={["O"]} label="Roof" />
+									<Separator />
+								</>
+							) : null}
 							<HintKey keys={["F"]} label="Exit" />
 						</>
 					) : (

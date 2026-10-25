@@ -10,7 +10,11 @@ import { LANDMARK_BLIPS } from "../navigation/Navigation";
 import { pavedHeightAt } from "../roads/RoadNetwork";
 import { ORION_BUILDING_MAP } from "../buildings/Buildings";
 import { KASPER_SHOWROOM, ORION_ARMS, SHOPS, type ShopItem } from "./ShopCatalog";
-import { KASPER_LOT_BAYS, KASPER_LOT_PLACES, ORION_ARMS_DISPLAYS, ORION_ARMS_WALL, toWorld, type ShopSite } from "./ShopLayouts";
+import { ALL_MISSIONS } from "../missions/MissionCatalog";
+import { missionSpawns } from "../missions/MissionDirector";
+import { VEHICLE_MODELS } from "../traffic/VehicleModels";
+import { ORION_VEHICLES, PREMIUM_STYLES } from "../traffic/Vehicles";
+import { KASPER_HALL, KASPER_LOT_BAYS, KASPER_LOT_PLACES, ORION_ARMS_DISPLAYS, ORION_ARMS_WALL, toWorld, type ShopSite } from "./ShopLayouts";
 import { buy, checkItem, priceOf } from "./Shops";
 
 /** The player's rounds and armour, as their combat would hand them to a shop. */
@@ -88,12 +92,13 @@ describe("buying", () => {
 
 	it("delivers a car to the garage, not twice, and not into a full garage", () => {
 		addCash(100_000);
-		const hatch = item(KASPER_SHOWROOM, "hatch-red");
-		expect(buy(hatch).ok).toBe(true);
-		expect(readProgress().garage.map((car) => car.id)).toContain("bought-hatch-red");
-		expect(checkItem(hatch)).toEqual({ buyable: false, reason: "In your garage" });
+		const suv = item(KASPER_SHOWROOM, "ascendant");
+		expect(buy(suv).ok).toBe(true);
+		expect(readProgress().garage.map((car) => car.id)).toContain("bought-ascendant");
+		expect(checkItem(suv)).toEqual({ buyable: false, reason: "In your garage" });
 		for (let bay = readProgress().garage.length; bay < SAFEHOUSE.bays.length; bay++) addToGarage({ id: `filler-${bay}`, style: "sedan", colour: "#000000" });
-		expect(checkItem(item(KASPER_SHOWROOM, "vesper-silver"))).toEqual({ buyable: false, reason: "Garage full" });
+		addCash(200_000);
+		expect(checkItem(item(KASPER_SHOWROOM, "halcyon"))).toEqual({ buyable: false, reason: "Garage full" });
 	});
 
 	it("can't sell rounds or armour before the player's in the world", () => {
@@ -141,11 +146,41 @@ describe("the shops", () => {
 		for (const gun of ORION_ARMS_WALL) expect(weaponById(gun.weapon).model, gun.weapon).not.toBeNull();
 	});
 
-	it("keep the kiosk window out of reach of the cars on the lot, so it's the shop that's offered", () => {
+	it("keep the desk clear of the cars on show, inside the hall", () => {
 		const [cx, , cz] = KASPER_LOT_PLACES.customer;
 		for (const [id, bay] of Object.entries(KASPER_LOT_BAYS)) {
-			// The driver's door is about a metre off the car's middle; boarding reaches 3.2 m from it.
-			expect(Math.hypot(bay.x - cx, bay.z - cz), id).toBeGreaterThan(4.5);
+			// Half a car's length and a step: the customer isn't standing in a car.
+			expect(Math.hypot(bay.x - cx, bay.z - cz), id).toBeGreaterThan(2.7);
+			expect(Math.abs(bay.x), id).toBeLessThan(KASPER_HALL.side - 1.5);
+			expect(bay.z, id).toBeLessThan(KASPER_HALL.front - 2);
+			expect(bay.z, id).toBeGreaterThan(KASPER_HALL.back + 2);
+			for (const point of [bay.view.from, bay.view.at]) {
+				// The camera stays in the hall.
+				expect(Math.abs(point[0]), id).toBeLessThan(KASPER_HALL.side);
+				expect(point[2], id).toBeLessThan(KASPER_HALL.front);
+				expect(point[2], id).toBeGreaterThan(KASPER_HALL.back);
+			}
+		}
+	});
+
+	it("sell only the premium line, the only place it can be had", () => {
+		for (const sold of KASPER_SHOWROOM.items) {
+			expect(sold.kind).toBe("vehicle");
+			if (sold.kind === "vehicle") expect(PREMIUM_STYLES.has(sold.vehicle.style), sold.id).toBe(true);
+		}
+		const styles = new Set(KASPER_SHOWROOM.items.flatMap((sold) => (sold.kind === "vehicle" ? [sold.vehicle.style] : [])));
+		expect(styles.size).toBe(PREMIUM_STYLES.size);
+		// Never in traffic, never a mission's car, never a reward handed out for nothing.
+		for (const car of ORION_VEHICLES) expect(PREMIUM_STYLES.has(car.style), car.id).toBe(false);
+		for (const mission of ALL_MISSIONS) {
+			for (const spawn of missionSpawns(mission)) if (spawn.type === "vehicle") expect(PREMIUM_STYLES.has(spawn.style), mission.id).toBe(false);
+			for (const reward of mission.reward?.vehicles ?? []) expect(PREMIUM_STYLES.has(reward.style), mission.id).toBe(false);
+		}
+		// Each has its own model, loaded after the loading screen (nothing in traffic waits on it).
+		for (const style of PREMIUM_STYLES) {
+			const models = VEHICLE_MODELS.filter((model) => model.styles.includes(style));
+			expect(models.length, style).toBe(1);
+			expect(models[0].deferred, style).toBe(true);
 		}
 	});
 

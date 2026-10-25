@@ -1,5 +1,5 @@
 import type { NpcThreat } from "../characters/NpcBrain";
-import { damageFor, type Damageable, type DamageEvent } from "./Damage";
+import { copyHitDetail, damageFor, makeHitDetail, type Damageable, type DamageEvent, type HitDetail } from "./Damage";
 import { rayCapsule, rayOrientedBox, type Ray } from "./HitTests";
 import { SpatialGrid } from "./SpatialGrid";
 
@@ -51,30 +51,48 @@ const segmentAlongScratch: Listener[] = [];
 export interface RayHit {
 	target: Listener;
 	distance: number;
+	/** The part struck, for a target that can tell (a car); null otherwise. */
+	detail: HitDetail | null;
 }
+
+const bestHit: RayHit = { target: null as unknown as Listener, distance: 0, detail: null };
+const bestDetail = makeHitDetail();
+const candidateDetail = makeHitDetail();
 
 const segmentScratch: Listener[] = [];
 
 /**
  * The first living damageable along a ray within `maxDistance`, skipping `ignoreId` (the
  * shooter). World geometry isn't considered here — the caller clips `maxDistance` to the first
- * wall first.
+ * wall first. A target with geometry of its own (a car) is asked what the ray really strikes
+ * inside its box, so a round over a bonnet or through an empty window frame flies on. The result
+ * is reused; read it before the next call.
  */
 export function raycastDamageables(ray: Ray, maxDistance: number, ignoreId: number): RayHit | null {
 	const endX = ray.ox + ray.dx * maxDistance;
 	const endZ = ray.oz + ray.dz * maxDistance;
 	// Margin covers the longest thing registered (a bus-sized box's half-length).
 	const candidates = grid.querySegment(ray.ox, ray.oz, endX, endZ, 4, segmentScratch);
-	let best: RayHit | null = null;
+	let found = false;
 	for (const target of candidates) {
 		if (target.id === ignoreId || !target.alive) continue;
-		const limit: number = best ? best.distance : maxDistance;
-		const distance: number = target.kind === "vehicle"
+		const limit: number = found ? bestHit.distance : maxDistance;
+		let distance: number = target.kind === "vehicle"
 			? rayOrientedBox(ray, limit, target.x, target.y, target.z, target.headingX, target.headingZ, target.radius, target.height, target.halfLength)
 			: rayCapsule(ray, limit, target.x, target.y, target.z, target.radius, target.height);
-		if (distance >= 0 && (!best || distance < best.distance)) best = { target, distance };
+		let detailed = false;
+		if (distance >= 0 && target.refineHit) {
+			distance = target.refineHit(ray, distance, limit, candidateDetail);
+			detailed = distance >= 0;
+		}
+		if (distance >= 0 && (!found || distance < bestHit.distance)) {
+			found = true;
+			bestHit.target = target;
+			bestHit.distance = distance;
+			bestHit.detail = detailed ? copyHitDetail(candidateDetail, bestDetail) : null;
+		}
 	}
-	return best;
+	return found ? bestHit : null;
 }
 
 /** Tells everyone within `radius` of (x, z) about a threat — a gunshot, an explosion, a fight. */

@@ -1,9 +1,11 @@
 import type { Line, LineVoice } from "../missions/MissionDirector";
 import { audioBus } from "./AudioBus";
+import { recordedLine } from "./VoiceLines";
 
 /**
- * Mission dialogue said out loud with the browser's own speech (the Web Speech API): no recorded
- * lines and no files to download, so every line in the catalog is voiced the moment it's written.
+ * Mission dialogue said out loud. A line with a recording (performed with feeling, see
+ * scripts/generate-voice-lines.ts) plays that; any other line, one just written or changed, is
+ * read by the browser's own speech (the Web Speech API), so every line is voiced either way.
  *
  * Each speaker is cast once and keeps their voice: one of the system's English voices (the
  * better-sounding "natural" ones first, where the system has them) and a pitch of their own, so
@@ -42,6 +44,7 @@ export class MissionVoice implements LineVoice {
 	private voices: SpeechSynthesisVoice[] = [];
 	private readonly cast = new Map<string, Casting>();
 	private current: SpeechSynthesisUtterance | null = null;
+	private recording: HTMLAudioElement | null = null;
 	private busy = false;
 	private readonly onVoices = () => this.loadVoices();
 
@@ -53,9 +56,38 @@ export class MissionVoice implements LineVoice {
 
 	public speak(line: Line): void {
 		const level = audioBus().dialogueLevel();
-		this.synth.cancel();
-		this.busy = false;
+		this.silence();
 		if (level <= 0) return;
+		const recording = recordedLine(line.who, line.text);
+		if (recording && typeof Audio !== "undefined") this.play(recording, line, level);
+		else this.say(line, level);
+	}
+
+	/** A performed recording of the line; browser speech instead if it won't load or play. */
+	private play(url: string, line: Line, level: number): void {
+		const audio = new Audio(url);
+		audio.volume = Math.min(1, level);
+		let fellBack = false;
+		const fallBack = () => {
+			if (this.recording !== audio || fellBack) return;
+			fellBack = true;
+			this.recording = null;
+			this.say(line, level);
+		};
+		audio.onended = () => {
+			if (this.recording === audio) {
+				this.recording = null;
+				this.busy = false;
+			}
+		};
+		audio.onerror = fallBack;
+		this.recording = audio;
+		this.busy = true;
+		audio.play().catch(fallBack);
+	}
+
+	/** The line read out by the browser's speech, in the speaker's cast voice. */
+	private say(line: Line, level: number): void {
 		const casting = this.casting(line.who);
 		const utterance = new SpeechSynthesisUtterance(line.text);
 		if (casting.voice) {
@@ -82,9 +114,19 @@ export class MissionVoice implements LineVoice {
 	}
 
 	public stop(): void {
+		this.silence();
+	}
+
+	private silence(): void {
 		this.busy = false;
 		this.current = null;
 		this.synth.cancel();
+		const recording = this.recording;
+		this.recording = null;
+		if (recording) {
+			recording.pause();
+			recording.removeAttribute("src");
+		}
 	}
 
 	public dispose(): void {

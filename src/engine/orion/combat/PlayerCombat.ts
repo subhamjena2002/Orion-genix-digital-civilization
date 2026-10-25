@@ -20,6 +20,10 @@ import { PICKUP_REACH, PICKUP_REACH_DRIVING, takePickupsNear, updatePickups } fr
 import { MAX_ARMOUR, setPlayerSupplies, type PlayerSupplies } from "./PlayerSupplies";
 import { WeaponModels, type WeaponVisual } from "./WeaponModels";
 import { playAt } from "../audio/SoundBank";
+import { shootShopfront } from "../buildings/ShopfrontGlass";
+import { decals } from "../effects/Decals";
+import type { ImpactSurface } from "../traffic/CrashEffects";
+import { markOf, surfaceOf } from "./Surfaces";
 
 /** What the controller passes in each frame. */
 export interface CombatInput {
@@ -478,24 +482,56 @@ export class PlayerCombat {
 			const y = this.ray.oy + this.ray.dy * hit.distance;
 			const z = this.ray.oz + this.ray.dz * hit.distance;
 			const flat = Math.hypot(this.ray.dx, this.ray.dz) || 1;
-			applyDamage(hit.target, this.fillEvent(weapon, x, y, z, this.ray.dx / flat, this.ray.dz / flat));
-			effects.impact(x, y, z, -this.ray.dx, -this.ray.dy, -this.ray.dz, hit.target.kind === "vehicle" ? "metal" : "flesh");
-			if (hit.target.kind === "vehicle") {
-				combatAudio().play("impact", x, y, z, 0.8);
-				// Now and then the round finds a window.
-				if (Math.random() < 0.25) combatAudio().play("bulletGlass", x, y, z, 0.6);
+			// Copied before damage is applied: a kill can recycle the target and touch the grid.
+			const detail = hit.detail;
+			const kind = hit.target.kind;
+			const event = this.fillEvent(weapon, x, y, z, this.ray.dx / flat, this.ray.dz / flat);
+			event.detail = detail;
+			applyDamage(hit.target, event);
+			event.detail = null;
+			if (kind === "vehicle") {
+				// What it struck decides the kick and the sound: the part's own sounds (glass
+				// cracking, a tyre's thud) are played by the car.
+				const part = detail?.part ?? "body";
+				const surface: ImpactSurface = part === "glass" || part === "lamp" ? "glass" : part === "tyre" ? "rubber" : "metal";
+				const nx = detail ? detail.nx : -this.ray.dx;
+				const ny = detail ? detail.ny : -this.ray.dy;
+				const nz = detail ? detail.nz : -this.ray.dz;
+				effects.impact(x, y, z, nx, ny, nz, surface);
+				if (part === "body" || part === "rim") combatAudio().play("impact", x, y, z, 0.8);
 			} else {
+				effects.impact(x, y, z, -this.ray.dx, -this.ray.dy, -this.ray.dz, "flesh");
 				combatAudio().play("bulletFlesh", x, y, z, 0.8);
 			}
 			if (weapon.effects.tracer) effects.tracer(this.ray.ox, this.ray.oy, this.ray.oz, x, y, z);
 			return;
 		}
-		if (wall) {
-			effects.impact(wall.point.x, wall.point.y, wall.point.z, wall.normal.x, wall.normal.y, wall.normal.z, "hard");
-			// The street underfoot or a wall: they sound different when a round strikes them.
-			combatAudio().play(wall.normal.y > 0.6 ? "bulletGround" : "bulletHit", wall.point.x, wall.point.y, wall.point.z, 0.6);
-		}
+		if (wall) this.strikeWorld(weapon, wall.entity, wall.point, wall.normal);
 		if (weapon.effects.tracer) effects.tracer(this.ray.ox, this.ray.oy, this.ray.oz, this.to.x, this.to.y, this.to.z);
+	}
+
+	/**
+	 * A round into the world: what it's made of decides the dust, sparks, mark and sound, and a
+	 * shop's window takes the hit as glass (cracking, or breaking out).
+	 */
+	private strikeWorld(weapon: WeaponDefinition, entity: Entity, point: Vec3, normal: Vec3) {
+		const effects = crashEffects(this.app);
+		const shop = shootShopfront(this.app, entity, point.x, point.y, point.z, this.ray.dx, this.ray.dz, weapon.damageType, weapon.damage);
+		if (shop === "glass") {
+			effects.impact(point.x, point.y, point.z, normal.x, normal.y, normal.z, "glass");
+			return;
+		}
+		if (shop === "hole") {
+			// Through the empty frame into the dark of the shop: a muffled knock somewhere inside.
+			combatAudio().play("bulletHit", point.x, point.y, point.z, 0.25);
+			return;
+		}
+		const surface = surfaceOf(`${entity.name} ${(entity.parent as Entity | null)?.name ?? ""}`, normal.y);
+		effects.impact(point.x, point.y, point.z, normal.x, normal.y, normal.z, surface);
+		const mark = markOf(surface);
+		if (mark) decals(this.app).place(mark, null, point.x, point.y, point.z, normal.x, normal.y, normal.z, mark === "metal" ? 0.05 : 0.09 + Math.random() * 0.04, { life: 90 });
+		// The street underfoot or a wall: they sound different when a round strikes them.
+		combatAudio().play(normal.y > 0.6 ? "bulletGround" : surface === "metal" ? "impact" : "bulletHit", point.x, point.y, point.z, 0.6);
 	}
 
 	/**
@@ -546,6 +582,7 @@ export class PlayerCombat {
 		event.directionX = directionX;
 		event.directionZ = directionZ;
 		event.impulse = weapon.impulse;
+		event.detail = null;
 		return event;
 	}
 

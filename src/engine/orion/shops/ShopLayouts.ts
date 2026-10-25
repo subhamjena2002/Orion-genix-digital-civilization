@@ -125,35 +125,49 @@ export const ORION_ARMS_DISPLAYS: Readonly<Record<string, DisplaySpot>> = {
 	vest: { at: [4.35, 1.38, 2.0], from: [3.0, 1.55, 3.1] },
 };
 
-// ---- Kasper Motors' lot ------------------------------------------------------------------------
+// ---- Kasper Motors' showroom -------------------------------------------------------------------
 
 /**
- * Beside Kasper Motors on the east side of the arterial: an open lot of cars for sale, nose to the
- * road, and a sales kiosk at its corner by the pavement.
+ * Beside Kasper Motors on the east side of the arterial: the Prestige showroom, a glass pavilion
+ * on the plot of the old open lot, a polished forecourt in front of it.
  */
 export const KASPER_LOT_SITE: ShopSite = { x: 16.2, z: 35, ground: LAND + 0.06, yaw: -90, width: 13.6, depth: 14, replaces: ["building-026"] };
 
 /**
- * The kiosk at the lot's front-right corner, the customer at its window, the salesman inside. Kept
- * well clear of every car's driver's door, or "take car" would be offered at the window.
+ * The pavilion: its glass front set back from the street behind a forecourt, an open doorway in the
+ * middle of it, stone side walls and a dark feature wall at the back; the reception desk before
+ * the feature wall, facing the door, the customer before it and the salesperson behind.
  */
-export const KASPER_LOT_PLACES = {
-	kiosk: { x: 5.2, z: 4.7, width: 2.8, depth: 2.6, height: 2.8 },
-	customer: [2.6, 0, 4.7] as Point3,
-	keeper: [5.5, 0, 4.7] as Point3,
+export const KASPER_HALL = {
+	/** The glass front (z), the inside face of the back wall, and the side walls' inside faces (±x). */
+	front: 5.0,
+	back: -6.8,
+	side: 6.6,
+	wall: 0.2,
+	height: 5.2,
+	door: { halfWidth: 1.4, height: 3.1 },
+	desk: { x: 0, z: -5.9, width: 2.6, depth: 0.7, height: 1.05 },
 } as const;
 
+export const KASPER_LOT_PLACES = {
+	customer: [0, 0, -5.15] as Point3,
+	keeper: [0, 0, -6.45] as Point3,
+} as const;
+
+/** A car on show: on a plinth this high. */
+export interface ShowroomBay extends DisplayBay {
+	plinth: number;
+}
+
 /**
- * The cars for sale, by item id, where they're parked in the lot's frame: two nose to the road,
- * three behind. Each is shown from its own side of the lot, the camera a little off to the right
- * of it so it sits left of the panel: the front pair from the road corners, the back three from
- * the open end, over the gap between the front pair and the kiosk, and the corner by the kiosk.
+ * The cars for sale, by item id, on plinths in the hall: the hypercar on the big plinth in the
+ * middle, facing the door, two cars either side angled toward it. Each is shown from inside the hall, the camera
+ * a little to the right of it so it sits left of the panel.
  */
-export const KASPER_LOT_BAYS: Readonly<Record<string, DisplayBay>> = {
-	// From beside the pylon sign rather than behind it.
-	"hatch-red": { x: -5, z: 1.9, yaw: 0, view: { at: [-4.4, 0.7, 2.1], from: [-9.2, 2.0, 5.4] } },
-	"saloon-blue": { x: -1.9, z: 1.9, yaw: 0, view: { at: [-1.2, 0.7, 2.1], from: [1.9, 2.1, 7.4] } },
-	"suv-white": { x: -4.6, z: -3.7, yaw: 15, view: { at: [-4.0, 0.85, -3.4], from: [-8.9, 2.4, -0.6] } },
-	"vesper-silver": { x: -1.1, z: -3.9, yaw: 0, view: { at: [-0.6, 0.55, -3.6], from: [0.9, 2.9, 0.9] } },
-	"vesper-black": { x: 2.6, z: -3.7, yaw: -20, view: { at: [3.1, 0.55, -3.4], from: [5.4, 2.4, 1.0] } },
+export const KASPER_LOT_BAYS: Readonly<Record<string, ShowroomBay>> = {
+	halcyon: { x: 0, z: -2.3, yaw: 0, plinth: 0.12, view: { at: [0.7, 0.6, -2.1], from: [2.6, 1.9, 2.2] } },
+	calliope: { x: -4.4, z: 2.0, yaw: 12, plinth: 0.08, view: { at: [-3.8, 0.6, 2.2], from: [-0.8, 1.9, 4.6] } },
+	"solenne-gt": { x: 4.4, z: 2.0, yaw: -12, plinth: 0.08, view: { at: [5.0, 0.6, 2.2], from: [1.6, 1.9, 4.6] } },
+	regalia: { x: -4.4, z: -3.65, yaw: 12, plinth: 0.08, view: { at: [-3.7, 0.75, -3.3], from: [-0.6, 2.2, 0.6] } },
+	ascendant: { x: 4.4, z: -3.65, yaw: -12, plinth: 0.08, view: { at: [5.0, 0.85, -3.3], from: [1.8, 2.3, 0.4] } },
 };

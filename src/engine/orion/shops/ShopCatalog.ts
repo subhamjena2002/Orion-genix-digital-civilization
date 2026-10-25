@@ -4,12 +4,12 @@ import { KASPER_LOT_PLACES, KASPER_LOT_SITE, ORION_ARMS_ROOM, ORION_ARMS_SITE, t
 
 /**
  * Where the player spends what the missions pay: Orion Arms for guns, rounds and body armour,
- * and Kasper Motors' lot for cars, delivered to the safehouse garage. Data only, like the mission
+ * and Kasper Motors' showroom for cars, delivered to the safehouse garage. Data only, like the mission
  * catalog; buying is in Shops, the buildings in components/world/ShopBuildings and the counters
  * in components/world/Shops, laid out in ShopLayouts.
  *
  * Prices are set against what the missions pay: a street job (about $350) buys a box of rounds,
- * a story mission (a few thousand) a new gun, and the Vesper is something to save for.
+ * a story mission (a few thousand) a new gun, and the showroom's cars are something to save for.
  */
 
 export type ShopItem =
@@ -77,27 +77,31 @@ export const ORION_ARMS: Shop = {
 	],
 };
 
-/** Benny's lot beside Kasper Motors: the cars on it to keep, delivered to the garage. */
+/**
+ * Kasper Motors' Prestige showroom: the five premium cars, each only ever had by buying it here (see
+ * PREMIUM_STYLES), delivered to the garage. Each wears its own paint (keepPaint); `colour` is what
+ * stands in while the model loads.
+ */
 export const KASPER_SHOWROOM: Shop = {
 	id: "kasper-showroom",
 	name: "Kasper Motors",
 	kind: "cars",
-	tagline: "Delivered to your garage in Hillcrest.",
+	tagline: "The Prestige Collection. Delivered to your garage in Hillcrest.",
 	...at(KASPER_LOT_SITE, KASPER_LOT_PLACES.customer),
 	site: KASPER_LOT_SITE,
 	keeper: {
 		id: "keeper-kasper-lot",
-		look: { model: "womanSuit", palette: { skin: "#c48a62", shirt: "#1f3a6b", pants: "#1b1f27", hair: "#3a2416" } },
+		look: { model: "womanSuit", palette: { skin: "#c48a62", shirt: "#1b1b1f", pants: "#141418", hair: "#3a2416" } },
 		...at(KASPER_LOT_SITE, KASPER_LOT_PLACES.keeper),
-		// Out of the kiosk's window at the customer.
-		yaw: yawToWorld(KASPER_LOT_SITE, -90),
+		// Behind the desk, facing the door and the customer.
+		yaw: yawToWorld(KASPER_LOT_SITE, 0),
 	},
 	items: [
-		{ kind: "vehicle", id: "hatch-red", vehicle: { id: "bought-hatch-red", style: "hatchback", colour: "#b3121b", name: "Red Orion Hatch" }, price: 8500, detail: "Compact crossover, quick through traffic" },
-		{ kind: "vehicle", id: "saloon-blue", vehicle: { id: "bought-saloon-blue", style: "sedan", colour: "#1f3a6b", name: "Midnight Orion Saloon" }, price: 12000, detail: "Four doors, smooth and quiet" },
-		{ kind: "vehicle", id: "suv-white", vehicle: { id: "bought-suv-white", style: "suv", colour: "#e8e8e6", name: "White Orion SUV" }, price: 18000, detail: "High, heavy, hard to push off the road" },
-		{ kind: "vehicle", id: "vesper-silver", vehicle: { id: "bought-vesper-silver", style: "luxury", colour: "#b8bcc2", name: "Silver Vesper GT" }, price: 45000, detail: "Mid-engined. The fastest thing in the city" },
-		{ kind: "vehicle", id: "vesper-black", vehicle: { id: "bought-vesper-black", style: "luxury", colour: "#151517", name: "Black Vesper GT" }, price: 60000, detail: "The same, in black. Nobody sees you coming" },
+		{ kind: "vehicle", id: "ascendant", vehicle: { id: "bought-ascendant", style: "grandSuv", colour: "#7a6040", name: "Orion Ascendant" }, price: 75000, detail: "Grand SUV. V8, a floating roof, room for five" },
+		{ kind: "vehicle", id: "solenne-gt", vehicle: { id: "bought-solenne-gt", style: "grandTourer", colour: "#6b0a12", name: "Orion Solenne GT" }, price: 90000, detail: "V8 grand tourer. Two doors, tan leather, long legs" },
+		{ kind: "vehicle", id: "regalia", vehicle: { id: "bought-regalia", style: "flagship", colour: "#0d1a3a", name: "Orion Regalia" }, price: 110000, detail: "V12 flagship. Two-tone, cream leather in the back" },
+		{ kind: "vehicle", id: "calliope", vehicle: { id: "bought-calliope", style: "roadster", colour: "#0b3a22", name: "Orion Calliope Spider" }, price: 125000, detail: "Straight-six roadster. Roof up or down with O" },
+		{ kind: "vehicle", id: "halcyon", vehicle: { id: "bought-halcyon", style: "hypercar", colour: "#e8e9ea", name: "Orion Halcyon EV" }, price: 180000, detail: "Electric hypercar. Nothing in the city keeps up" },
 	],
 };
 
