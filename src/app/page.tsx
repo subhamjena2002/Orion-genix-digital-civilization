@@ -73,7 +73,7 @@ const REQUIREMENTS = [
 const FAQ = [
 	{
 		q: "Is OrionGenix free to play?",
-		a: "Yes — completely free. No sign-up, no account and no payment. Open the page, press Play and you're in the city.",
+		a: "Yes — completely free, with no payment. You need a free OrionGenix account to play: sign up in seconds with Google or your email, press Play and you're in the city.",
 	},
 	{
 		q: "Do I need to download or install anything?",
@@ -93,7 +93,7 @@ const FAQ = [
 	},
 	{
 		q: "Is my progress saved?",
-		a: "Yes. Your cash, passed missions, unlocked weapons and the cars in your garage are saved in your browser automatically, on this device.",
+		a: "Yes. Your cash, passed missions, unlocked weapons and the cars in your garage are saved to your account automatically, so you can pick up where you left off on any device.",
 	},
 	{
 		q: "Who is OrionGenix for?",
@@ -196,7 +196,7 @@ export default function Home() {
 							</h1>
 							<p className="lp-hero-lead">
 								Steal any car. Fly fighter jets and an attack gunship. Outrun a 5-star police chase and beat street racers who never brake.
-								<strong> No download. No sign-up. One click and you&apos;re in the driver&apos;s seat.</strong>
+								<strong> No download. Sign up free with Google or email and you&apos;re in the driver&apos;s seat.</strong>
 							</p>
 							<div className="lp-hero-actions">
 								<PlayLink from="hero" className="lp-button lp-button-primary lp-button-large">
@@ -207,7 +207,7 @@ export default function Home() {
 							<ul className="lp-trust" aria-label="Why it's easy to start">
 								<li>100% free</li>
 								<li>No download</li>
-								<li>No account</li>
+								<li>Free account</li>
 								<li>Laptop · Desktop · Phone</li>
 							</ul>
 						</div>

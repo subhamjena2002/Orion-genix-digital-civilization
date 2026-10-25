@@ -1,6 +1,7 @@
 import { mergeSaves, newGameSave } from "../src/engine/orion/missions/SaveMerge";
 import { checkSave, MAX_SAVE_CHARS, SAVE_SCHEMA_VERSION, sameSave, type SaveData } from "../src/engine/orion/missions/SaveSchema";
-import { clearCookie, clientAddress, GUEST_COOKIE, json, limited, newId, newToken, readCookie, readJsonBody, readToken, refuse, sameOrigin, SESSION_COOKIE, setCookie, sha256 } from "./http";
+import { emailConfigured, issueToken, sendAlreadyRegisteredEmail, sendVerifyEmail } from "./email";
+import { clearCookie, clientAddress, GUEST_COOKIE, inBackground, json, limited, newId, newToken, readCookie, readJsonBody, readToken, refuse, sameOrigin, SESSION_COOKIE, setCookie, sha256, type Waiter } from "./http";
 import type { Env } from "./index";
 import { burnPasswordCheck, hashPassword, isBreached, MAX_PASSWORD, passwordProblem, verifyPassword } from "./password";
 
@@ -10,8 +11,8 @@ import { burnPasswordCheck, hashPassword, isBreached, MAX_PASSWORD, passwordProb
  * `startSession`; this file has the parts they share.
  *
  *   GET  /api/auth/me       the signed-in player ({ user: null } for a guest).
- *   POST /api/auth/signup   { email, password, displayName?, turnstileToken? }: a new account,
- *                           signed in.
+ *   POST /api/auth/signup   { email, password, displayName?, turnstileToken? }: 202, "check your
+ *                           inbox" (or, where email isn't set up, 201 and signed in).
  *   POST /api/auth/signin   { email, password, turnstileToken? }
  *   POST /api/auth/signout  ends this browser's session and starts it over as a new guest.
  *
@@ -28,7 +29,7 @@ const USER_AGENT_CHARS = 200;
 /** Rounds of merge-and-write when the account's save changes while a guest's joins it. */
 const JOIN_ATTEMPTS = 3;
 /** Sign-up and sign-in bodies: an email, a password and a Turnstile token. */
-const MAX_AUTH_BODY = 4096;
+export const MAX_AUTH_BODY = 4096;
 const MAX_EMAIL = 254;
 const MAX_DISPLAY_NAME = 32;
 /** Something@something.something, with no spaces or control characters: the mailbox decides the rest. */
@@ -201,7 +202,7 @@ async function joinSave(env: Env, userId: string, guest: SaveData): Promise<void
 }
 
 /** What the game is told about the signed-in player: nothing it doesn't show them. */
-async function userView(env: Env, userId: string) {
+export async function userView(env: Env, userId: string) {
 	const row = await env.DB.prepare(
 		"SELECT email, email_verified, display_name, password_hash IS NOT NULL AS has_password, (SELECT json_group_array(provider) FROM oauth_accounts WHERE user_id = users.id) AS providers FROM users WHERE id = ?1",
 	).bind(userId).first<UserRow>();
@@ -224,14 +225,14 @@ async function me(request: Request, url: URL, env: Env): Promise<Response> {
 }
 
 /** The email as stored, if it looks like one. */
-function readEmail(value: unknown): string | null {
+export function readEmail(value: unknown): string | null {
 	if (typeof value !== "string") return null;
 	const email = normaliseEmail(value);
 	return email.length <= MAX_EMAIL && EMAIL.test(email) ? email : null;
 }
 
 /** The name shown in the game: the one given, or else the email's part before the @. */
-function readDisplayName(value: unknown, email: string): string | null {
+export function readDisplayName(value: unknown, email: string): string | null {
 	if (value !== undefined && value !== null && typeof value !== "string") return null;
 	const given = (value ?? "").normalize("NFKC").trim().replace(/\s+/g, " ");
 	const name = given === "" ? email.slice(0, email.indexOf("@")) : given;
@@ -244,7 +245,7 @@ function readDisplayName(value: unknown, email: string): string | null {
  * secret is set (local development); refused if Turnstile can't be reached, since otherwise a
  * bot would only need to wait for an outage.
  */
-async function passesTurnstile(request: Request, url: URL, env: Env, token: unknown): Promise<boolean> {
+export async function passesTurnstile(request: Request, url: URL, env: Env, token: unknown): Promise<boolean> {
 	if (!env.TURNSTILE_SECRET) return true;
 	if (typeof token !== "string" || token.length < 1 || token.length > 2048) return false;
 	const form = new FormData();
@@ -260,14 +261,22 @@ async function passesTurnstile(request: Request, url: URL, env: Env, token: unkn
 	}
 }
 
-const tryLater = (seconds: number) => refuse(429, "try_later", { "retry-after": String(seconds) });
+export const tryLater = (seconds: number) => refuse(429, "try_later", { "retry-after": String(seconds) });
 
 /**
- * A new account with a password, signed in straight away (the address is confirmed later, by
- * email). Saying an email is taken does tell whoever asks that it has an account here; once
- * sign-up emails exist, that answer moves into an email to the address instead.
+ * A new account with a password.
+ *
+ * Where email is set up, the answer is the same whether or not the address already has an
+ * account, so sign-up can't be used to find out who plays here: 202, "check your inbox". A new
+ * address gets a link that confirms it and signs in; one that already has an account gets an email
+ * saying so, with a link to reset (or set) its password. Both take the same work, and the email
+ * goes out after the response. The new account can be signed into with its password straight away,
+ * before the address is confirmed.
+ *
+ * Where email isn't set up (no provider yet), the account is signed in at once, and a taken
+ * address is answered with 409 email_taken: there's no other way to tell the player.
  */
-async function signUp(request: Request, url: URL, env: Env): Promise<Response> {
+async function signUp(request: Request, url: URL, env: Env, ctx?: Waiter): Promise<Response> {
 	const read = await readJsonBody(request, url, MAX_AUTH_BODY);
 	if ("refused" in read) return read.refused;
 	const { body } = read;
@@ -280,19 +289,45 @@ async function signUp(request: Request, url: URL, env: Env): Promise<Response> {
 	const displayName = readDisplayName(body.displayName, email);
 	if (!displayName) return refuse(400, "display_name");
 	if (!(await passesTurnstile(request, url, env, body.turnstileToken))) return refuse(400, "turnstile");
-	if (await env.DB.prepare("SELECT id FROM users WHERE email = ?1").bind(email).first()) return refuse(409, "email_taken");
+	if (await limited(env.AUTH_LIMITER, `signup:${email}`)) return tryLater(60);
 	if ((await isBreached(password)) === true) return refuse(400, "password_breached");
 
+	const existing = await env.DB.prepare("SELECT id, display_name, password_hash IS NOT NULL AS has_password FROM users WHERE email = ?1")
+		.bind(email)
+		.first<{ id: string; display_name: string; has_password: number }>();
+
+	if (!emailConfigured(env)) {
+		if (existing) return refuse(409, "email_taken");
+		let userId: string;
+		try {
+			userId = await createUser(env, { email, displayName, emailVerified: false, passwordHash: await hashPassword(password) });
+		} catch (error) {
+			// Someone else signed up with it a moment ago.
+			if (error instanceof Error && /unique/i.test(error.message)) return refuse(409, "email_taken");
+			throw error;
+		}
+		const cookies = await startSession(request, url, env, userId);
+		return json({ user: await userView(env, userId) }, 201, {}, cookies);
+	}
+
+	if (existing) {
+		// As much work as making the account would have been.
+		await burnPasswordCheck(password);
+		const token = await issueToken(env, existing.id, "reset");
+		if (token) await inBackground(ctx, sendAlreadyRegisteredEmail(env, url.origin, email, existing.display_name, token, existing.has_password === 1));
+		return json({ checkInbox: true }, 202);
+	}
 	let userId: string;
 	try {
 		userId = await createUser(env, { email, displayName, emailVerified: false, passwordHash: await hashPassword(password) });
 	} catch (error) {
-		// Someone else signed up with it a moment ago.
-		if (error instanceof Error && /unique/i.test(error.message)) return refuse(409, "email_taken");
+		// Someone else signed up with it a moment ago: they get the email, if anyone does.
+		if (error instanceof Error && /unique/i.test(error.message)) return json({ checkInbox: true }, 202);
 		throw error;
 	}
-	const cookies = await startSession(request, url, env, userId);
-	return json({ user: await userView(env, userId) }, 201, {}, cookies);
+	const token = await issueToken(env, userId, "verify");
+	if (token) await inBackground(ctx, sendVerifyEmail(env, url.origin, email, displayName, token));
+	return json({ checkInbox: true }, 202);
 }
 
 /**
@@ -347,9 +382,9 @@ async function signOut(request: Request, url: URL, env: Env): Promise<Response> 
 	return json({ user: null }, 200, {}, [clearCookie(url, SESSION_COOKIE), clearCookie(url, GUEST_COOKIE)]);
 }
 
-export async function handleAuth(request: Request, url: URL, env: Env): Promise<Response> {
+export async function handleAuth(request: Request, url: URL, env: Env, ctx?: Waiter): Promise<Response> {
 	if (url.pathname === "/api/auth/me") return request.method === "GET" ? me(request, url, env) : refuse(405, "method", { allow: "GET" });
-	if (url.pathname === "/api/auth/signup") return request.method === "POST" ? signUp(request, url, env) : refuse(405, "method", { allow: "POST" });
+	if (url.pathname === "/api/auth/signup") return request.method === "POST" ? signUp(request, url, env, ctx) : refuse(405, "method", { allow: "POST" });
 	if (url.pathname === "/api/auth/signin") return request.method === "POST" ? signIn(request, url, env) : refuse(405, "method", { allow: "POST" });
 	if (url.pathname === "/api/auth/signout") return request.method === "POST" ? signOut(request, url, env) : refuse(405, "method", { allow: "POST" });
 	return refuse(404, "not_found");

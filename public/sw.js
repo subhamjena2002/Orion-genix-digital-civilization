@@ -84,7 +84,8 @@ async function warm(urls) {
 		if (await pages.match(path)) continue;
 		try {
 			const page = await fetch(path, { cache: "force-cache" });
-			if (page.ok) await store(pages, path, page);
+			// Signed out, /play redirects to sign-in: don't keep that page as the game.
+			if (page.ok && !page.redirected) await store(pages, path, page);
 		} catch {
 			// Offline; the next online start caches it.
 		}

@@ -46,3 +46,6 @@ next-env.d.ts
 # Local Cloudflare state from `wrangler dev`
 .wrangler/
 /reference-assets/audio/
+
+# wrangler dev secrets (GOOGLE_CLIENT_SECRET, TURNSTILE_SECRET): never commit
+.dev.vars*

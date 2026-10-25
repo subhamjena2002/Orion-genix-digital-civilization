@@ -79,7 +79,8 @@
   transition: background 160ms ease, border-color 160ms ease;
 }
 
-.lp-auth-google:hover:not(:disabled) {
+.lp-auth-google:hover:not(:disabled),
+.lp-auth-google:focus-visible {
   background: #1e1f20;
   border-color: #8e918f;
 }
@@ -95,16 +96,6 @@
   flex: none;
 }
 
-.lp-auth-soon {
-  flex: none;
-  padding: 0.2rem 0.5rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--lp-muted);
-  font: 600 0.62rem/1 var(--font-geist-mono), monospace;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
 
 .lp-auth-or {
   display: flex;
@@ -281,15 +272,7 @@
   margin-top: 0.6rem;
 }
 
-.lp-auth-switch .lp-auth-guest {
-  color: var(--lp-muted);
-  font-weight: 500;
-  text-decoration: none;
-}
 
-.lp-auth-switch .lp-auth-guest:hover {
-  color: var(--lp-ink);
-}
 
 .lp-auth-fine {
   margin: 1.2rem 0 0;
@@ -304,4 +287,72 @@
   .lp-auth-google {
     transition: none;
   }
+}
+
+/* ---------- Email confirmation and recovery (/verify, /forgot, /reset) ---------- */
+
+.lp-auth-badge {
+  flex: none;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--lp-muted);
+  font: 600 0.62rem/1 var(--font-geist-mono), monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.lp-auth-forgot {
+  color: var(--lp-cyan);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.lp-auth-forgot:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.lp-auth-notice {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0 0 1.2rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(247, 183, 51, 0.4);
+  border-radius: 12px;
+  background: rgba(247, 183, 51, 0.08);
+  color: #ffe6b0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.lp-auth-notice p {
+  margin: 0;
+}
+
+.lp-auth-text-button {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--lp-cyan);
+  font: 600 0.85rem/1.4 var(--font-geist-sans), sans-serif;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.lp-auth-text-button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.lp-auth-hint-ok {
+  margin: 0 0 1rem;
+  color: #9ff3c4;
+}
+
+.lp-auth-lead-after,
+.lp-auth-actions-after {
+  margin-top: 1.2rem;
 }

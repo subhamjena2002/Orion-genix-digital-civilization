@@ -179,9 +179,9 @@ describe("save api", () => {
 		});
 	});
 
-	it("serves everything outside /api/ from the static assets", async () => {
+	it("serves everything outside /api/ (and the signed-in-only /play, see play.test.ts) from the static assets", async () => {
 		env.ASSETS = { fetch: async () => new Response("asset") };
-		const response = await worker.fetch(new Request(`${ORIGIN}/play`), env);
+		const response = await worker.fetch(new Request(`${ORIGIN}/credits`), env);
 		expect(await response.text()).toBe("asset");
 	});
 });

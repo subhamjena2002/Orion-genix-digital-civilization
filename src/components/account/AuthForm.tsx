@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { useEffect, useId, useState, useSyncExternalStore, type FormEvent } from "react";
 
-import { authMessage, fetchMe, returnPath, signIn, signOut, signUp, type AccountUser } from "./authApi";
+import { authMessage, fetchMe, fetchOptions, googleStartUrl, resendVerification, returnPath, signIn, signOut, signUp, type AccountUser } from "./authApi";
 import { Turnstile, TURNSTILE_SITE_KEY } from "./Turnstile";
 
 /**
- * The sign-in and sign-up forms (/signin, /signup). Email and password for now; Google joins
- * them once its client is set up. Playing never needs an account: the guest link is always
- * there.
+ * The sign-in and sign-up forms (/signin, /signup): Google, when the server has it set up, or
+ * email and password. Playing needs an account (/play sends anyone signed out here), so these
+ * are the way in.
  *
  * Built for password managers and phones: real <form>, labelled inputs with the autocomplete
  * values managers look for, the email keyboard on phones, Enter submits, a show/hide toggle, and
@@ -19,6 +19,12 @@ import { Turnstile, TURNSTILE_SITE_KEY } from "./Turnstile";
 type Mode = "signin" | "signup";
 
 const MIN_PASSWORD = 10;
+
+/**
+ * Development builds show the Google button even before Google sign-in is set up (greyed out),
+ * so it's clear where it goes; the live site leaves it out until it works.
+ */
+const SHOW_GOOGLE_UNSET = process.env.NODE_ENV !== "production";
 
 /** The page's query (`?return=/play`): fixed for the page's life, and empty while pre-rendered. */
 const useSearch = () => useSyncExternalStore(() => () => {}, () => window.location.search, () => "");
@@ -34,7 +40,7 @@ const COPY = {
 	signup: {
 		kicker: "Free account",
 		title: "Save your city",
-		lead: "Keep your progress safe and play it on any device. What you've earned as a guest comes with you.",
+		lead: "A free account is all you need to play. Your progress is saved to it, on any device.",
 		submit: "Create account",
 		busy: "Creating account…",
 	},
@@ -64,12 +70,23 @@ export function AuthForm({ mode }: Readonly<{ mode: Mode }>) {
 	const [token, setToken] = useState("");
 	const [resetTurnstile, setResetTurnstile] = useState(0);
 	const [user, setUser] = useState<AccountUser | null>(null);
+	/** Whether Google sign-in is offered: unknown until the server says. */
+	const [google, setGoogle] = useState<boolean | null>(null);
+	/** A Google sign-in that came back with `?error=` shows it until the form is used. */
+	const [usedForm, setUsedForm] = useState(false);
+	/** Sign-up sent a confirmation email to this address instead of signing in. */
+	const [inbox, setInbox] = useState<string | null>(null);
+	const [notice, setNotice] = useState<string | null>(null);
 	const search = useSearch();
+	const queryError = new URLSearchParams(search).get("error");
 
 	useEffect(() => {
 		let live = true;
 		void fetchMe().then((result) => {
 			if (live && result.ok) setUser(result.user);
+		});
+		void fetchOptions().then((offered) => {
+			if (live) setGoogle(offered.google);
 		});
 		return () => {
 			live = false;
@@ -88,10 +105,16 @@ export function AuthForm({ mode }: Readonly<{ mode: Mode }>) {
 			return;
 		}
 		setBusy(true);
+		setUsedForm(true);
 		setError(null);
 		setErrorCode(null);
 		const turnstileToken = needsTurnstile ? token : undefined;
 		const result = mode === "signup" ? await signUp({ email, password, displayName, turnstileToken }) : await signIn({ email, password, turnstileToken });
+		if (result.ok && result.checkInbox) {
+			setBusy(false);
+			setInbox(email.trim());
+			return;
+		}
 		if (result.ok) {
 			// A full load, so the game starts afresh under the account's save.
 			window.location.assign(returnPath(window.location.search));
@@ -112,8 +135,21 @@ export function AuthForm({ mode }: Readonly<{ mode: Mode }>) {
 		else setError(authMessage(result.error));
 	};
 
+	const resend = async () => {
+		setBusy(true);
+		setNotice(null);
+		setError(null);
+		const result = await resendVerification();
+		setBusy(false);
+		if (!result.ok) setError(authMessage(result.error, result.retryAfter));
+		else if (result.verified) setNotice("Your email is already confirmed.");
+		else setNotice("Sent. Check your inbox (and spam) for the new link.");
+	};
+
 	const other = mode === "signin" ? "/signup" : "/signin";
-	const keepReturn = search.includes("return=") ? search : "";
+	const shownError = error ?? (queryError && !usedForm ? authMessage(queryError) : null);
+	const returnTo = new URLSearchParams(search).get("return");
+	const keepReturn = returnTo ? `?${new URLSearchParams({ return: returnTo })}` : "";
 
 	if (user) {
 		return (
@@ -123,6 +159,13 @@ export function AuthForm({ mode }: Readonly<{ mode: Mode }>) {
 				<p className="lp-auth-lead">
 					You&apos;re signed in as <strong>{user.email}</strong>. Your progress saves to your account.
 				</p>
+				{!user.emailVerified && (
+					<div className="lp-auth-notice">
+						<p>Confirm your email so you can always get back into your account. We sent a link when you signed up.</p>
+						<button type="button" className="lp-auth-text-button" onClick={resend} disabled={busy}>Send a new link</button>
+					</div>
+				)}
+				{notice && <p className="lp-auth-hint lp-auth-hint-ok" role="status">{notice}</p>}
 				<div className="lp-auth-actions">
 					<Link href={returnPath(search)} className="lp-button lp-button-primary">Play</Link>
 					<button type="button" className="lp-button lp-button-ghost" onClick={leave} disabled={busy}>
@@ -134,19 +177,51 @@ export function AuthForm({ mode }: Readonly<{ mode: Mode }>) {
 		);
 	}
 
+	if (inbox) {
+		return (
+			<section className="lp-auth-card" aria-labelledby={`${ids}-title`}>
+				<p className="lp-kicker">Check your inbox</p>
+				<h1 id={`${ids}-title`} className="lp-auth-title">One more step</h1>
+				<p className="lp-auth-lead" role="status">
+					We&apos;ve sent an email to <strong>{inbox}</strong>. Click the link in it to confirm your address and sign in. It works for 24 hours.
+				</p>
+				<p className="lp-auth-hint">
+					Nothing after a few minutes? Check your spam folder. You can also sign in with your new password now and send a new link from there.
+				</p>
+				<div className="lp-auth-actions lp-auth-actions-after">
+					<Link href={`/signin${keepReturn}`} className="lp-button lp-button-primary">Sign in</Link>
+				</div>
+			</section>
+		);
+	}
+
 	return (
 		<section className="lp-auth-card" aria-labelledby={`${ids}-title`}>
 			<p className="lp-kicker">{copy.kicker}</p>
 			<h1 id={`${ids}-title`} className="lp-auth-title">{copy.title}</h1>
 			<p className="lp-auth-lead">{copy.lead}</p>
 
-			<button type="button" className="lp-auth-google" disabled aria-describedby={`${ids}-google-soon`}>
-				<GoogleMark />
-				Continue with Google
-				<span id={`${ids}-google-soon`} className="lp-auth-soon">Soon</span>
-			</button>
-
-			<div className="lp-auth-or" role="separator"><span>or with email</span></div>
+			{google === true && (
+				// A plain link, not a fetch: the browser itself goes to Google and back.
+				<a className="lp-auth-google" href={googleStartUrl(returnPath(search))}>
+					<GoogleMark />
+					{mode === "signin" ? "Sign in with Google" : "Sign up with Google"}
+				</a>
+			)}
+			{google === null && (
+				<button type="button" className="lp-auth-google" disabled aria-busy="true">
+					<GoogleMark />
+					{mode === "signin" ? "Sign in with Google" : "Sign up with Google"}
+				</button>
+			)}
+			{google === false && SHOW_GOOGLE_UNSET && (
+				<button type="button" className="lp-auth-google" disabled title="Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (docs/accounts.md)">
+					<GoogleMark />
+					{mode === "signin" ? "Sign in with Google" : "Sign up with Google"}
+					<span className="lp-auth-badge">Not set up yet</span>
+				</button>
+			)}
+			{(google !== false || SHOW_GOOGLE_UNSET) && <div className="lp-auth-or" role="separator"><span>or with email</span></div>}
 
 			<form className="lp-auth-form" onSubmit={submit}>
 				{mode === "signup" && (
@@ -184,7 +259,7 @@ export function AuthForm({ mode }: Readonly<{ mode: Mode }>) {
 				<div className="lp-auth-field">
 					<div className="lp-auth-label-row">
 						<label htmlFor={`${ids}-password`}>Password</label>
-						{mode === "signin" && <span className="lp-auth-hint">Forgot it? Reset is coming soon.</span>}
+						{mode === "signin" && <Link href="/forgot" className="lp-auth-forgot">Forgot password?</Link>}
 					</div>
 					<div className="lp-auth-password">
 						<input
@@ -219,9 +294,9 @@ export function AuthForm({ mode }: Readonly<{ mode: Mode }>) {
 
 				{needsTurnstile && <Turnstile onToken={setToken} resetKey={resetTurnstile} action={mode} />}
 
-				{error && (
+				{shownError && (
 					<p className="lp-auth-error" role="alert">
-						{error}
+						{shownError}
 						{errorCode === "email_taken" && <> <Link href={`/signin${keepReturn}`}>Sign in</Link></>}
 					</p>
 				)}
@@ -234,9 +309,6 @@ export function AuthForm({ mode }: Readonly<{ mode: Mode }>) {
 			<p className="lp-auth-switch">
 				{mode === "signin" ? "New to OrionGenix? " : "Already have an account? "}
 				<Link href={`${other}${keepReturn}`}>{mode === "signin" ? "Create an account" : "Sign in"}</Link>
-			</p>
-			<p className="lp-auth-switch">
-				<Link href="/play" className="lp-auth-guest">Or play as a guest →</Link>
 			</p>
 			{mode === "signup" && (
 				<p className="lp-auth-fine">Your email is only used to sign you in and to help you get back into your account.</p>

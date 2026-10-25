@@ -1,6 +1,9 @@
 import { checkSave, MAX_SAVE_CHARS, SAVE_SCHEMA_VERSION } from "../src/engine/orion/missions/SaveSchema";
 import { currentSession, handleAuth, storedSave } from "./auth";
-import { clientAddress, GUEST_COOKIE, json, limited, newToken, readToken, refuse, sameOrigin, setCookie, sha256, type D1, type RateLimiter } from "./http";
+import { cleanUp } from "./cleanup";
+import { handleGoogle } from "./google";
+import { handleRecovery, isRecoveryPath } from "./recovery";
+import { clientAddress, GUEST_COOKIE, json, limited, newToken, readToken, refuse, sameOrigin, setCookie, sha256, type D1, type RateLimiter, type Waiter } from "./http";
 
 /**
  * The game's server side: everything under /api/ (wrangler.jsonc sends only those paths here;
@@ -14,7 +17,12 @@ import { clientAddress, GUEST_COOKIE, json, limited, newToken, readToken, refuse
  *   GET /api/save  the player's save and its revision (and the guest cookie, on a first visit).
  *   PUT /api/save  { baseRevision, schemaVersion, writeId, save } — lands only if baseRevision
  *                  is still current; otherwise 409 with what's there now, to merge and retry.
- *   /api/auth/*    signing in and out (worker/auth.ts).
+ *   /api/auth/*    signing in and out (worker/auth.ts; Google in worker/google.ts).
+ *   /play          the game: only for a signed-in player (`playPage`); anyone else is sent to
+ *                  /signin and brought back after.
+ *
+ * Once a day (wrangler.jsonc `triggers`) it also clears out expired sessions and spent email
+ * links (worker/cleanup.ts).
  */
 
 export interface Env {
@@ -28,6 +36,15 @@ export interface Env {
 	AUTH_LIMITER?: RateLimiter;
 	/** Cloudflare Turnstile's secret key. When set, sign-up and sign-in need a passed challenge. */
 	TURNSTILE_SECRET?: string;
+	/** Google sign-in (worker/google.ts): offered only once both are set. The id is a plain var, the secret a secret. */
+	GOOGLE_CLIENT_ID?: string;
+	GOOGLE_CLIENT_SECRET?: string;
+	/** Account emails (worker/email.ts), sent through Resend once both are set. */
+	RESEND_API_KEY?: string;
+	/** Who they're from, e.g. "OrionGenix <accounts@example.com>", on a domain set up in Resend. */
+	EMAIL_FROM?: string;
+	/** "1" in local .dev.vars only: write emails to the console instead of sending them. */
+	EMAIL_DEV_LOG?: string;
 }
 
 /** 400 days: the longest a browser keeps a cookie. Each visit renews it. */
@@ -136,10 +153,12 @@ async function writeSave(request: Request, url: URL, env: Env): Promise<Response
 	return json({ error: "conflict", revision: row?.revision ?? 0, save: current }, 409, {}, cookies);
 }
 
-export async function handleApi(request: Request, env: Env): Promise<Response> {
+export async function handleApi(request: Request, env: Env, ctx?: Waiter): Promise<Response> {
 	const url = new URL(request.url);
 	try {
-		if (url.pathname.startsWith("/api/auth/")) return await handleAuth(request, url, env);
+		if (url.pathname === "/api/auth/options" || url.pathname.startsWith("/api/auth/google/")) return await handleGoogle(request, url, env);
+		if (isRecoveryPath(url.pathname)) return await handleRecovery(request, url, env, ctx);
+		if (url.pathname.startsWith("/api/auth/")) return await handleAuth(request, url, env, ctx);
 		if (url.pathname !== "/api/save") return refuse(404, "not_found");
 		if (request.method === "GET") return await readSave(request, url, env);
 		if (request.method === "PUT") return await writeSave(request, url, env);
@@ -151,10 +170,45 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
 	}
 }
 
+/** The game's page and the files Next fetches for it (`/play/__next…`): wrangler.jsonc sends these here first. */
+export const isPlayPath = (path: string) => path === "/play" || path === "/play.html" || path.startsWith("/play/") || path.startsWith("/play.");
+
+/**
+ * The game, for signed-in players only. Anyone else is sent to sign in, and comes back here
+ * after. The page is marked private and uncacheable, so no shared cache hands it to someone else.
+ */
+export async function playPage(request: Request, env: Env): Promise<Response> {
+	const url = new URL(request.url);
+	let checked: Awaited<ReturnType<typeof currentSession>>;
+	try {
+		checked = await currentSession(request, url, env);
+	} catch (error) {
+		console.error("play:", error instanceof Error ? error.message : "unknown error");
+		return new Response("Sign-in is unavailable right now. Please try again in a moment.", { status: 503, headers: { "retry-after": "30", "cache-control": "no-store" } });
+	}
+	const { session, cookies } = checked;
+	if (!session) {
+		const headers = new Headers({ location: new URL("/signin?return=%2Fplay", url.origin).toString(), "cache-control": "no-store" });
+		for (const cookie of cookies) headers.append("set-cookie", cookie);
+		return new Response(null, { status: 302, headers });
+	}
+	const page = env.ASSETS ? await env.ASSETS.fetch(request) : new Response("Not found", { status: 404 });
+	const response = new Response(page.body, page);
+	response.headers.set("cache-control", "private, no-store");
+	for (const cookie of cookies) response.headers.append("set-cookie", cookie);
+	return response;
+}
+
 const worker = {
-	async fetch(request: Request, env: Env): Promise<Response> {
-		if (new URL(request.url).pathname.startsWith("/api/")) return handleApi(request, env);
+	async fetch(request: Request, env: Env, ctx?: Waiter): Promise<Response> {
+		const path = new URL(request.url).pathname;
+		if (path.startsWith("/api/")) return handleApi(request, env, ctx);
+		if (isPlayPath(path)) return playPage(request, env);
 		return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found", { status: 404 });
+	},
+
+	async scheduled(_controller: unknown, env: Env, ctx: Waiter): Promise<void> {
+		ctx.waitUntil(cleanUp(env));
 	},
 };
 

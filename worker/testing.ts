@@ -24,6 +24,10 @@ export function memoryDatabase(): { env: Env; db: DatabaseSync } {
 						const row = db.prepare(query).get(...(values as never[]));
 						return (row ?? null) as T | null;
 					},
+					async run() {
+						const result = db.prepare(query).run(...(values as never[])) as { changes: number | bigint };
+						return { meta: { changes: Number(result.changes) } };
+					},
 				};
 				return statement;
 			},

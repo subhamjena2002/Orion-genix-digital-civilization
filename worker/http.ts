@@ -6,6 +6,8 @@
 export interface D1Statement {
 	bind(...values: unknown[]): D1Statement;
 	first<T = Record<string, unknown>>(): Promise<T | null>;
+	/** Runs a write; `meta.changes` is how many rows it changed. */
+	run(): Promise<{ meta: { changes: number } }>;
 }
 
 export interface D1 {
@@ -124,6 +126,20 @@ export async function readJsonBody(request: Request, url: URL, maxChars: number)
 	} catch {
 		return { refused: refuse(400, "body") };
 	}
+}
+
+/** The Worker's ExecutionContext, as far as the API needs it: work that outlives the response. */
+export interface Waiter {
+	waitUntil(promise: Promise<unknown>): void;
+}
+
+/**
+ * Runs `work` after the response has gone, where the Worker can (so how long it takes can't be
+ * timed from outside); otherwise (tests) waits for it.
+ */
+export async function inBackground(ctx: Waiter | undefined, work: Promise<unknown>): Promise<void> {
+	if (ctx) ctx.waitUntil(work.catch(() => undefined));
+	else await work;
 }
 
 export function clientAddress(request: Request): string {

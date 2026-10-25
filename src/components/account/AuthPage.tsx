@@ -1,11 +1,12 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 
 import { AuthForm } from "./AuthForm";
 import "@/app/landing.css";
 import "./auth.css";
 
-/** The frame around the sign-in and sign-up forms: the landing page's look, with a way home. */
-export function AuthPage({ mode }: Readonly<{ mode: "signin" | "signup" }>) {
+/** The frame around every account page: the landing page's look, with a way home. */
+export function AuthFrame({ children }: Readonly<{ children: ReactNode }>) {
 	return (
 		<div className="lp lp-auth-page">
 			<header className="lp-nav">
@@ -17,12 +18,20 @@ export function AuthPage({ mode }: Readonly<{ mode: "signin" | "signup" }>) {
 						ORION<span>GENIX</span>
 					</span>
 				</Link>
-				<Link href="/play" className="lp-button lp-button-ghost lp-button-small">Play as guest</Link>
+				<Link href="/" className="lp-button lp-button-ghost lp-button-small">Home</Link>
 			</header>
 			<main className="lp-auth">
 				<div className="lp-auth-glow" aria-hidden="true" />
-				<AuthForm mode={mode} />
+				{children}
 			</main>
 		</div>
+	);
+}
+
+export function AuthPage({ mode }: Readonly<{ mode: "signin" | "signup" }>) {
+	return (
+		<AuthFrame>
+			<AuthForm mode={mode} />
+		</AuthFrame>
 	);
 }
