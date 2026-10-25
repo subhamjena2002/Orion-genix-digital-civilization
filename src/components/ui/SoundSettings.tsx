@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { releasePointer } from "./pause";
+
 import {
 	applyAudioSettings,
 	DEFAULT_AUDIO_SETTINGS,
@@ -10,12 +12,8 @@ import {
 	type AudioSettings,
 } from "@/engine/orion/audio/AudioSettings";
 
-/**
- * The sound button in the header: master and effects volume, and mute. Saved between visits
- * (AudioSettings), and put into the mix as soon as the page loads, before the first sound plays.
- */
-export function SoundSettings() {
-	const [open, setOpen] = useState(false);
+/** The saved sound settings, and a way to change them: applied to the mix and saved at once. */
+export function useAudioSettings(): [AudioSettings, (change: Partial<AudioSettings>) => void] {
 	const [settings, setSettings] = useState<AudioSettings>(DEFAULT_AUDIO_SETTINGS);
 
 	useEffect(() => {
@@ -26,23 +24,65 @@ export function SoundSettings() {
 		setSettings(saved);
 	}, []);
 
-	useEffect(() => {
-		if (!open) return;
-		// The cursor is needed on the sliders: let go of mouse-look.
-		if (document.pointerLockElement) document.exitPointerLock();
-		function handleKeyDown(event: KeyboardEvent) {
-			if (event.code === "Escape") setOpen(false);
-		}
-		window.addEventListener("keydown", handleKeyDown);
-		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [open]);
-
 	const update = (change: Partial<AudioSettings>) => {
 		const next = { ...settings, ...change };
 		setSettings(next);
 		applyAudioSettings(next);
 		saveAudioSettings(next);
 	};
+	return [settings, update];
+}
+
+/** Master and effects volume, and mute: in the header's sound panel and the pause menu's settings. */
+export function SoundControls({ settings, update }: Readonly<{ settings: AudioSettings; update: (change: Partial<AudioSettings>) => void }>) {
+	return (
+		<>
+			<label className="orion-sound-row">
+				<span>Master</span>
+				<input
+					type="range" min={0} max={100} step={1}
+					value={Math.round(settings.master * 100)}
+					aria-valuetext={`${Math.round(settings.master * 100)}%`}
+					onChange={(event) => update({ master: Number(event.target.value) / 100 })}
+				/>
+				<output>{Math.round(settings.master * 100)}</output>
+			</label>
+			<label className="orion-sound-row">
+				<span>Effects</span>
+				<input
+					type="range" min={0} max={100} step={1}
+					value={Math.round(settings.effects * 100)}
+					aria-valuetext={`${Math.round(settings.effects * 100)}%`}
+					onChange={(event) => update({ effects: Number(event.target.value) / 100 })}
+				/>
+				<output>{Math.round(settings.effects * 100)}</output>
+			</label>
+			<label className="orion-sound-mute">
+				<input type="checkbox" checked={settings.muted} onChange={(event) => update({ muted: event.target.checked })} />
+				<span>Mute all sound</span>
+			</label>
+		</>
+	);
+}
+
+/**
+ * The sound button in the header: master and effects volume, and mute. Saved between visits
+ * (AudioSettings), and put into the mix as soon as the page loads, before the first sound plays.
+ */
+export function SoundSettings() {
+	const [open, setOpen] = useState(false);
+	const [settings, update] = useAudioSettings();
+
+	useEffect(() => {
+		if (!open) return;
+		// The cursor is needed on the sliders: let go of mouse-look.
+		releasePointer();
+		function handleKeyDown(event: KeyboardEvent) {
+			if (event.code === "Escape") setOpen(false);
+		}
+		window.addEventListener("keydown", handleKeyDown);
+		return () => window.removeEventListener("keydown", handleKeyDown);
+	}, [open]);
 
 	const silent = settings.muted || settings.master === 0;
 
@@ -66,30 +106,7 @@ export function SoundSettings() {
 			{open ? (
 				<section className="orion-sound-panel" role="dialog" aria-label="Sound">
 					<p className="orion-kicker">Sound</p>
-					<label className="orion-sound-row">
-						<span>Master</span>
-						<input
-							type="range" min={0} max={100} step={1}
-							value={Math.round(settings.master * 100)}
-							aria-valuetext={`${Math.round(settings.master * 100)}%`}
-							onChange={(event) => update({ master: Number(event.target.value) / 100 })}
-						/>
-						<output>{Math.round(settings.master * 100)}</output>
-					</label>
-					<label className="orion-sound-row">
-						<span>Effects</span>
-						<input
-							type="range" min={0} max={100} step={1}
-							value={Math.round(settings.effects * 100)}
-							aria-valuetext={`${Math.round(settings.effects * 100)}%`}
-							onChange={(event) => update({ effects: Number(event.target.value) / 100 })}
-						/>
-						<output>{Math.round(settings.effects * 100)}</output>
-					</label>
-					<label className="orion-sound-mute">
-						<input type="checkbox" checked={settings.muted} onChange={(event) => update({ muted: event.target.checked })} />
-						<span>Mute all sound</span>
-					</label>
+					<SoundControls settings={settings} update={update} />
 				</section>
 			) : null}
 		</div>

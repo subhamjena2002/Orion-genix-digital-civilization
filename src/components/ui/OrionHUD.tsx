@@ -10,6 +10,7 @@ import { enterFullscreen, useFullscreen } from "./fullscreen";
 import { LandscapeMode } from "./LandscapeMode";
 import { MissionHud } from "./MissionHud";
 import { MissionLog } from "./MissionLog";
+import { PauseMenu } from "./PauseMenu";
 import { ShopPanel } from "./ShopPanel";
 import { TouchControls } from "./TouchControls";
 import { useTouchDevice } from "./useTouchDevice";
@@ -62,6 +63,7 @@ export function OrionHUD() {
 				<FlightHud touch={touch} />
 				{touch ? <LandscapeMode /> : null}
 			</div>
+			<PauseMenu />
 		</div>
 	);
 }

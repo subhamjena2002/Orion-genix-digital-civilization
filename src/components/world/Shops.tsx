@@ -13,6 +13,7 @@ import { readPlayerPose } from "@/engine/orion/player/PlayerPose";
 import { SHOPS, type Shop } from "@/engine/orion/shops/ShopCatalog";
 import { KASPER_LOT_BAYS, ORION_ARMS_DISPLAYS, toWorld, type DisplaySpot, type Point3 } from "@/engine/orion/shops/ShopLayouts";
 import { closeShop, counterInReach, currentShop, openCounterInReach, setCounterInReach, shopSelection } from "@/engine/orion/shops/Shops";
+import { releasePointer } from "@/components/ui/pause";
 
 /** Served from this close to the counter. */
 const COUNTER_REACH = 1.6;
@@ -61,7 +62,7 @@ export const Shops = memo(function Shops() {
 		const serve = () => {
 			if (!openCounterInReach()) return;
 			// The panel's clicked, not the world: let the mouse go.
-			if (document.pointerLockElement) document.exitPointerLock();
+			releasePointer();
 		};
 		const handleKeyDown = (event: KeyboardEvent) => {
 			if (event.code === "KeyE" && !event.repeat && counterInReach() && !currentShop()) serve();

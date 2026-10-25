@@ -10,6 +10,7 @@ import { abandonMission, playMissionFromGiver } from "@/engine/orion/missions/Mi
 import { availableMissions, FACTIONS, missionOpen, onProgressChange, progressVersion, readProgress } from "@/engine/orion/missions/Progress";
 import { setWaypoint } from "@/engine/orion/navigation/Navigation";
 import { FACTION_NAMES, formatCash, formatClock, rewardLines } from "./MissionHud";
+import { releasePointer } from "./pause";
 
 const SECTIONS: readonly { chapter: MissionChapter; title: string }[] = [
 	{ chapter: "story", title: "Story · The Meridian Job" },
@@ -42,7 +43,7 @@ export function MissionLog() {
 
 	useEffect(() => {
 		// The cursor is needed on the list: let go of mouse-look.
-		if (open && document.pointerLockElement) document.exitPointerLock();
+		if (open) releasePointer();
 	}, [open]);
 
 	const busy = () => {

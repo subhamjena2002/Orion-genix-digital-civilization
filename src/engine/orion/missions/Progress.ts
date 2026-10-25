@@ -302,6 +302,18 @@ export function resetProgress(): void {
 }
 
 /**
+ * Forgets the saved progress in this browser, without announcing anything: for signing out
+ * (CloudSave's forgetLocalSave), just before the page goes, so nothing uploads a new game.
+ */
+export function forgetSavedProgress(): void {
+	try {
+		progressStorage()?.removeItem(STORAGE_KEY);
+	} catch {
+		// Nothing saved to forget.
+	}
+}
+
+/**
  * Progress from elsewhere (the server's copy, see CloudSave) put in place of what's here, as if
  * it had been played: saved locally and announced, so the HUD, garage and weapons pick it up.
  */

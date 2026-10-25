@@ -30,6 +30,7 @@ import { RenderPipeline } from "./RenderPipeline";
 import { applyDisplayPixelRatio } from "@/engine/orion/rendering/Renderer";
 import { onPlayerRig, playerRig } from "@/engine/orion/player/PlayerRig";
 import { BackgroundLoadStatus } from "./BackgroundLoadStatus";
+import { GamePause } from "./GamePause";
 import { LoadingScreen } from "./LoadingScreen";
 
 // Module-level so re-renders hand the same arrays back: a fresh literal would make the entity
@@ -300,6 +301,7 @@ export default function OrionCanvas() {
         usePhysics
       >
         <OrionWorld />
+        <GamePause />
       </Application>
 
       <OrionHUD />

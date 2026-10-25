@@ -34,6 +34,18 @@ const SSAO = { radius: 1.5, intensity: 0.55, power: 3, samples: 12, scale: 0.5 }
 /** How often newly loaded textures are checked for filtering upgrades. */
 const TEXTURE_SWEEP_SECONDS = 1;
 
+/** Turns adaptive quality on or off in the running pipeline (as F4 does); null when none is. */
+let adaptiveSwitch: ((on: boolean) => void) | null = null;
+
+/** Adaptive quality, from the pause menu's settings: applied now if the game is running, saved either way. */
+export function setAdaptiveQuality(on: boolean): void {
+	if (adaptiveSwitch) {
+		adaptiveSwitch(on);
+		return;
+	}
+	saveGraphicsSettings({ ...loadGraphicsSettings(), adaptiveQuality: on });
+}
+
 /**
  * The camera's frame: the scene renders into an HDR target at native resolution, then is
  * tone-mapped and bloomed onto the canvas.
@@ -159,13 +171,18 @@ export function installRenderPipeline(app: AppBase, component: CameraComponent):
 			}
 		} else if (event.code === "F4") {
 			event.preventDefault();
-			settings.adaptiveQuality = !settings.adaptiveQuality;
-			saveGraphicsSettings(settings);
-			// Switching off returns straight to full quality.
-			apply(QUALITY_LEVELS[settings.adaptiveQuality ? governor.level : 0]);
-			console.info(`Adaptive quality ${settings.adaptiveQuality ? "on" : "off (full quality)"}`);
+			switchAdaptive(!settings.adaptiveQuality);
 		}
 	};
+	const switchAdaptive = (on: boolean) => {
+		if (settings.adaptiveQuality === on) return;
+		settings.adaptiveQuality = on;
+		saveGraphicsSettings(settings);
+		// Switching off returns straight to full quality.
+		apply(QUALITY_LEVELS[settings.adaptiveQuality ? governor.level : 0]);
+		console.info(`Adaptive quality ${settings.adaptiveQuality ? "on" : "off (full quality)"}`);
+	};
+	adaptiveSwitch = switchAdaptive;
 	window.addEventListener("keydown", onKey);
 
 	if (process.env.NODE_ENV !== "production") {
@@ -174,6 +191,7 @@ export function installRenderPipeline(app: AppBase, component: CameraComponent):
 	}
 
 	return () => {
+		if (adaptiveSwitch === switchAdaptive) adaptiveSwitch = null;
 		window.removeEventListener("keydown", onKey);
 		app.off("frameupdate", onFrameUpdate);
 		app.off("frameend", onFrameEnd);

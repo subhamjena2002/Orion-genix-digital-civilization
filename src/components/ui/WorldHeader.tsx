@@ -1,6 +1,7 @@
 "use client";
 
 import { enterFullscreen, exitFullscreen, useFullscreen } from "./fullscreen";
+import { setPaused } from "./pause";
 import { SoundSettings } from "./SoundSettings";
 
 export function WorldHeader() {
@@ -54,7 +55,7 @@ export function WorldHeader() {
 						<path d="M9.5 19a2.5 2.5 0 0 0 5 0" />
 					</svg>
 				</button>
-				<button type="button" className="orion-icon-button orion-focus" aria-label="Account">
+				<button type="button" className="orion-icon-button orion-focus" aria-label="Menu: map, settings, account" title="Menu (Esc)" onClick={() => setPaused(true)}>
 					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
 						<circle cx="12" cy="8" r="3.4" />
 						<path d="M5 20c1.2-3.6 4-5.5 7-5.5s5.8 1.9 7 5.5" />

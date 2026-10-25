@@ -13,6 +13,7 @@ import { isOnLand, landBounds } from "@/engine/orion/world/StateOutline";
 import { BLIP_LABELS, BlipIcon } from "./MapIcons";
 import { MAP_COLOURS, MapLayers } from "./MapLayers";
 import { useTouchDevice } from "./useTouchDevice";
+import { mapClosed, onMapRequest, releasePointer } from "./pause";
 
 /**
  * The map: a radar in the corner that turns with the camera, and the full map (M) to zoom, pan and
@@ -129,11 +130,17 @@ export function WorldMap() {
 		setExpanded(next);
 		if (next) {
 			// The cursor is needed on the map: let go of mouse-look.
-			if (document.pointerLockElement) document.exitPointerLock();
+			releasePointer();
 			setZoom(1);
 			setCentre(STATE_CENTRE);
 		}
 	}, []);
+
+	// The pause menu's Map button opens it; closing it takes the player back to that menu.
+	useEffect(() => onMapRequest(() => open(true)), [open]);
+	useEffect(() => {
+		if (!expanded) mapClosed();
+	}, [expanded]);
 
 	useEffect(() => {
 		function handleKeyDown(event: KeyboardEvent) {
@@ -281,7 +288,7 @@ export function WorldMap() {
 	const north = !expanded ? pinned(0, -MINIMAP_SPAN) : null;
 
 	return (
-		<div className={expanded ? "orion-map-expanded pointer-events-auto" : "orion-map-corner pointer-events-auto"}>
+		<div className={expanded ? "orion-map-expanded pointer-events-auto" : "orion-map-corner pointer-events-auto"} role={expanded ? "dialog" : undefined} aria-label={expanded ? "Map" : undefined}>
 			<div ref={frameRef} className="orion-map-frame" onClick={!expanded ? () => open(true) : undefined}>
 				<svg
 					ref={svgRef}

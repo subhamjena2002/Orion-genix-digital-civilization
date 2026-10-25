@@ -2797,3 +2797,173 @@ body {
 .orion-sound-mute input {
   accent-color: var(--oi-accent);
 }
+
+/* ---------- Pause menu (Esc): components/ui/PauseMenu.tsx ---------- */
+
+.orion-pause-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(6 8 10 / 58%);
+  backdrop-filter: blur(6px) saturate(0.85);
+  animation: orion-pause-in 160ms ease-out;
+}
+
+.orion-pause {
+  width: min(22rem, 100%);
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  border: 1px solid var(--oi-border-strong);
+  border-radius: 16px;
+  background: var(--oi-surface-raised);
+  box-shadow: var(--oi-shadow-elevated);
+  padding: 1.4rem 1.3rem 1.3rem;
+  color: var(--oi-text-primary);
+}
+
+.orion-pause-title {
+  margin: 0.35rem 0 1.1rem;
+  font-size: 1.35rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.orion-pause-actions {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.orion-pause-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 44px;
+  padding: 0.65rem 0.95rem;
+  border: 1px solid var(--oi-border-subtle);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--oi-text-primary);
+  font-size: 0.92rem;
+  font-weight: 560;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.orion-pause-button:hover {
+  border-color: var(--oi-border-strong);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.orion-pause-button.is-primary {
+  border-color: transparent;
+  background: var(--oi-accent);
+  color: #17140d;
+}
+
+.orion-pause-button.is-primary:hover {
+  background: var(--oi-accent-strong);
+}
+
+.orion-pause-button.is-quiet {
+  justify-content: center;
+  color: var(--oi-text-secondary);
+}
+
+.orion-pause-button.is-quiet:hover {
+  color: var(--oi-text-primary);
+}
+
+.orion-pause-button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.orion-pause-button kbd {
+  padding: 0.1rem 0.4rem;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.68rem;
+  opacity: 0.6;
+}
+
+.orion-pause-account {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 1.1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--oi-border-subtle);
+}
+
+.orion-pause-who {
+  margin: 0;
+  color: var(--oi-text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.orion-pause-who strong {
+  color: var(--oi-text-primary);
+  font-weight: 600;
+}
+
+.orion-pause-who span {
+  display: block;
+  overflow: hidden;
+  color: var(--oi-text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orion-pause-error {
+  margin: 0;
+  color: #f2a7a7;
+  font-size: 0.8rem;
+}
+
+.orion-pause-group {
+  margin-bottom: 1.1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--oi-border-subtle);
+}
+
+.orion-pause-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+  font-size: 0.85rem;
+  color: var(--oi-text-primary);
+  cursor: pointer;
+}
+
+.orion-pause-toggle input {
+  margin-top: 0.2rem;
+  accent-color: var(--oi-accent);
+}
+
+.orion-pause-toggle small {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--oi-text-tertiary);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+@keyframes orion-pause-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orion-pause-backdrop {
+    animation: none;
+  }
+}

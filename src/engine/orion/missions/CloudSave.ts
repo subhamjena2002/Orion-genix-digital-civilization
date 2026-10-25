@@ -1,4 +1,4 @@
-import { onProgressChange, parseProgress, progressStorage, readProgress, replaceProgress, type ProgressState } from "./Progress";
+import { forgetSavedProgress, onProgressChange, parseProgress, progressStorage, readProgress, replaceProgress, type ProgressState } from "./Progress";
 import { mergeSaves } from "./SaveMerge";
 import { canonicalSave, checkSave, SAVE_SCHEMA_VERSION, sameSave, type SaveData } from "./SaveSchema";
 
@@ -157,6 +157,16 @@ export class CloudSave {
 		if (this.status === "off" || this.status === "disabled") return;
 		if (this.connected) void this.flush();
 		else void this.bootstrap();
+	}
+
+	/**
+	 * Sends what's waiting now, rather than in a moment: before signing out. True when the server
+	 * has everything this browser has.
+	 */
+	public async settle(): Promise<boolean> {
+		this.clearTimer();
+		if (this.ready() && !this.inFlight && this.dirty()) await this.flush();
+		return this.ready() && !this.inFlight && !this.dirty();
 	}
 
 	/** The page is going away or out of sight: send what's waiting, best effort. */
@@ -454,4 +464,23 @@ export function startCloudSave(): () => void {
 		cloud.stop();
 		instance = null;
 	};
+}
+
+/** Sends any progress not yet on the server, now; true when the server has it all. */
+export function settleCloudSave(): Promise<boolean> {
+	return instance ? instance.settle() : Promise.resolve(false);
+}
+
+/**
+ * After signing out: this browser keeps no copy of the account's progress (on a shared computer,
+ * the next player starts a new game). Only once the server has it all (`settleCloudSave`).
+ */
+export function forgetLocalSave(): void {
+	forgetSavedProgress();
+	try {
+		progressStorage()?.removeItem(META_KEY);
+		progressStorage()?.removeItem(BACKUP_KEY);
+	} catch {
+		// Nothing saved to forget.
+	}
 }

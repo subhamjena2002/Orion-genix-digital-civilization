@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { audioBus } from "@/engine/orion/audio/AudioBus";
 import { formatMegabytes } from "@/engine/orion/loading/ResourceLedger";
+import { markGameReady } from "@/components/ui/pause";
 
 /**
  * The one loading screen between pressing Play and the city: a progress bar, the step it's on,
@@ -48,6 +49,7 @@ export function LoadingScreen({ progress, label, done = false, error = false, lo
 	// No sound while this screen is up; it fades in as the screen fades out.
 	useEffect(() => {
 		audioBus().setAudible(done);
+		if (done) markGameReady();
 	}, [done]);
 
 	useEffect(() => {
