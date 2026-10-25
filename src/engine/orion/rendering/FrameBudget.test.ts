@@ -161,6 +161,18 @@ describe("calm gate", () => {
 		expect(run(gate, [20, 120, 200, 20, 20, 20, 20])).toEqual([false, false, false, false, false, true, true]);
 	});
 
+	it("judges calm against the machine's own pace when given a typical factor", () => {
+		const fixed = calmGate({ frames: 3, frameMs: 50, maxWaitMs: 1_000_000 });
+		const relative = calmGate({ frames: 3, frameMs: 50, maxWaitMs: 1_000_000, typicalFactor: 1.3 });
+		// A machine that never draws faster than 70 ms: steady, but never under 50.
+		const steady = Array.from({ length: 120 }, () => 70);
+		expect(run(fixed, steady).some(Boolean)).toBe(false);
+		expect(run(relative, steady).at(-1)).toBe(true);
+		// A fast machine's threshold stays at frameMs.
+		const fast = calmGate({ frames: 3, frameMs: 50, maxWaitMs: 1_000_000, typicalFactor: 1.3 });
+		expect(run(fast, [...Array.from({ length: 120 }, () => 16), 60, 16, 16]).slice(-3)).toEqual([false, false, false]);
+	});
+
 	it("starts over after a slow frame", () => {
 		const gate = calmGate({ frames: 3, frameMs: 50, maxWaitMs: 10_000 });
 		expect(run(gate, [20, 20, 20, 80, 20, 20, 20])).toEqual([false, false, false, false, false, false, true]);

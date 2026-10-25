@@ -5,6 +5,9 @@
 
 Renders use brighter lamps; the game drives brake, indicator and headlamp glow itself, so the
 file carries the original values. Only the car's hierarchy is exported (not the studio).
+
+Then flatten the plain materials (the game draws one call per material per car):
+    node scripts/flatten-vehicle-materials.mjs public/models/vehicles/orion-suv-2026.glb
 """
 import bpy, os
 

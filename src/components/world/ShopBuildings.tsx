@@ -36,6 +36,7 @@ import {
 } from "@/engine/orion/shops/ShopLayouts";
 import { LAND_Y } from "@/engine/orion/world/Mountains";
 
+import { cullBatchGroup } from "./useDistanceCull";
 import { ParkedVehicle } from "./Vehicles";
 
 /** The car lot's asphalt (its top is the site's ground): solid, so the cars on it stand on it. */
@@ -45,6 +46,16 @@ const ROOM_FILL = 0.32;
 /** Gun models load after the store does; their shadows are switched off as they arrive, checked this often while near. */
 const DISPLAY_CHECK_SECONDS = 2;
 const DISPLAY_CHECK_RANGE = 90;
+/** The shops' static batch is cut into cells this size (m), so each culls on its own. */
+const SHOP_BATCH_CELL = 20;
+/** Both places, as one area for distance culling; not drawn from further than this. */
+const SHOPS_AREA = {
+	x: (ORION_ARMS_SITE.x + KASPER_LOT_SITE.x) / 2,
+	z: (ORION_ARMS_SITE.z + KASPER_LOT_SITE.z) / 2,
+	halfX: Math.abs(ORION_ARMS_SITE.x - KASPER_LOT_SITE.x) / 2 + 10,
+	halfZ: Math.abs(ORION_ARMS_SITE.z - KASPER_LOT_SITE.z) / 2 + 10,
+};
+const SHOP_DRAW_DISTANCE = 300;
 
 interface Finish {
 	gloss?: number;
@@ -180,6 +191,20 @@ const ShopPlaces = memo(function ShopPlaces() {
 		const store = buildOrionArms(app, root, finish, texture);
 		const lot = buildKasperLot(root, finish, texture);
 
+		// Every box and cylinder of both places, one static batch: built part by part they were ~220
+		// draws (shadows included) whenever the spawn street was in view. The gun models stay out:
+		// they arrive later and have their shadows switched off below.
+		const batcher = app.batcher;
+		const group = batcher?.addGroup("shop-buildings", false, SHOP_BATCH_CELL) ?? null;
+		if (group) {
+			for (const place of [store.entity, lot]) {
+				for (const render of place.findComponents("render") as RenderComponent[]) {
+					if (!render.entity.isDescendantOf(store.displays)) render.batchGroupId = group.id;
+				}
+			}
+		}
+		const stopCulling = group ? cullBatchGroup(app, group.id, SHOPS_AREA, SHOP_DRAW_DISTANCE) : null;
+
 		// The gun models arrive after the store: as they do, they stop taking the roof's shadow.
 		let sinceCheck = DISPLAY_CHECK_SECONDS;
 		const update = (dt: number) => {
@@ -196,6 +221,8 @@ const ShopPlaces = memo(function ShopPlaces() {
 		app.on("update", update);
 		return () => {
 			app.off("update", update);
+			stopCulling?.();
+			if (group && batcher) batcher.removeGroup(group.id);
 			for (const models of store.models) models.destroy();
 			store.entity.destroy();
 			lot.destroy();

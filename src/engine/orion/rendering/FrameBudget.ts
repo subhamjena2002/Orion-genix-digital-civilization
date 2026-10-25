@@ -123,7 +123,19 @@ export interface CalmGateOptions {
 	 * goes ahead at least this often.
 	 */
 	maxWaitMs: number;
+	/**
+	 * A frame also counts as calm when it took under this many times the machine's typical frame.
+	 * On a slow machine no frame comes in under `frameMs`, and the gate only opened every
+	 * `maxWaitMs` — a street of cars waited over a minute, drawn unmerged at ~90–190 draws each
+	 * (measured on an Iris Xe laptop). Omitted, only `frameMs` counts.
+	 */
+	typicalFactor?: number;
 }
+
+/** Frames longer than this (ms) are hitches, not the machine's typical pace. */
+const TYPICAL_IGNORE_MS = 250;
+/** How quickly the typical frame follows the measured ones. */
+const TYPICAL_SMOOTHING = 0.05;
 
 export interface CalmGate {
 	/**
@@ -142,16 +154,22 @@ export interface CalmGate {
  * first frames of play compile shaders and parse the models loaded after it (OrionVehicleModel).
  */
 export function calmGate(options: CalmGateOptions): CalmGate {
-	const { frames, frameMs, maxWaitMs } = options;
+	const { frames, frameMs, maxWaitMs, typicalFactor } = options;
 	let currentFrame = Number.NaN;
 	let lastFrameStart: number | null = null;
 	let calm = 0;
 	let waitingSince: number | null = null;
+	let typical = frameMs;
 	return {
 		allows(frame, now, active) {
 			if (frame !== currentFrame) {
 				currentFrame = frame;
-				if (lastFrameStart !== null) calm = now - lastFrameStart < frameMs ? calm + 1 : 0;
+				if (lastFrameStart !== null) {
+					const length = now - lastFrameStart;
+					const threshold = typicalFactor === undefined ? frameMs : Math.max(frameMs, typical * typicalFactor);
+					calm = length < threshold ? calm + 1 : 0;
+					if (length < TYPICAL_IGNORE_MS) typical += (length - typical) * TYPICAL_SMOOTHING;
+				}
 				lastFrameStart = now;
 			}
 			if (!active) {

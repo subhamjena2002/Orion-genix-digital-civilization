@@ -107,8 +107,11 @@ let lastSetupFrame = -1;
  * after the loading screen, the first sight of everything — and a setup landing there took
  * 115–250 ms where the same model took 8–17 ms a little later (measured, Phase 2.6). Until then
  * the car draws its model unmerged and drives as ever.
+ *
+ * The wait is capped at 300 ms: a setup is ~17 ms, while a car waiting for one draws its raw model
+ * (up to ~190 draws). With 90 cars and a 2 s cap, a slow laptop took minutes to set them all up.
  */
-const setupGate = calmGate({ frames: 12, frameMs: 50, maxWaitMs: 2000 });
+const setupGate = calmGate({ frames: 12, frameMs: 50, maxWaitMs: 300, typicalFactor: 1.3 });
 /**
  * A car this close to the player sets up without waiting for calm frames: its seat, door and cabin
  * are handed to the driving script by the setup, and the player may be about to take it (boarding
@@ -116,6 +119,17 @@ const setupGate = calmGate({ frames: 12, frameMs: 50, maxWaitMs: 2000 });
  * and set up in the busiest frames, undoing the gate (measured, Phase 2.7).
  */
 const SETUP_NOW_WITHIN = 10;
+/**
+ * Before its setup a car has no levels of detail: its raw model (~90k triangles, 40–95 parts) is
+ * all there is. Further than this (m) it isn't drawn until set up — 90 cars set up one at a time,
+ * and until then the far ones were most of the frame (measured on an Iris Xe laptop).
+ */
+const RAW_DRAW_DISTANCE = 80;
+/**
+ * The nearest car still waiting for its setup, as found during the last frame: it goes next, so
+ * the cars around the player are set up first, not whichever updated first.
+ */
+const setupQueue = { frame: -1, nearestSlot: -1, nearestDistance: Infinity, nextSlot: -1 };
 /** Cars switching to a coarser level of detail, per frame (see update). */
 const allowCoarserLod = perFrameAllowance(3);
 
@@ -196,6 +210,7 @@ export class OrionVehicleModel extends Script {
 
 	private ready = false;
 	private fit: Entity | null = null;
+	private fitHolder: Entity | null = null;
 	private vehicle: OrionVehicle | null = null;
 	private wheels: Wheel[] = [];
 	private paintMaterials: StandardMaterial[] = [];
@@ -253,10 +268,35 @@ export class OrionVehicleModel extends Script {
 			// One car's setup per frame: cars whose model arrives together (both fire engines, a
 			// fleet of one model) otherwise all merge and batch in the same frame — 240–430 ms
 			// (measured, Phase 2.3). Until then the car draws its model unmerged; it drives as ever.
-			if (this.app.frame === lastSetupFrame) return;
-			const allowed = setupGate.allows(this.app.frame, performance.now(), deferredLoadingStarted());
-			if (!allowed && !this.nearPlayer(SETUP_NOW_WITHIN)) return;
+			const distance = this.playerDistance();
+			this.hideRaw(distance > RAW_DRAW_DISTANCE);
+			const frame = this.app.frame;
+			if (setupQueue.frame !== frame) {
+				setupQueue.nextSlot = setupQueue.nearestSlot;
+				setupQueue.nearestSlot = -1;
+				setupQueue.nearestDistance = Infinity;
+				setupQueue.frame = frame;
+			}
+			// Only cars whose model has arrived queue: one still loading can't take its turn.
+			if (distance < setupQueue.nearestDistance && this.rawFit()?.children.length) {
+				setupQueue.nearestDistance = distance;
+				setupQueue.nearestSlot = this.slot;
+			}
+			if (frame === lastSetupFrame) return;
+			const near = distance < SETUP_NOW_WITHIN;
+			// Nobody chosen yet (the first frame, or the chosen car went away): anyone may go.
+			if (!near && setupQueue.nextSlot !== -1 && setupQueue.nextSlot !== this.slot) return;
+			const allowed = setupGate.allows(frame, performance.now(), deferredLoadingStarted());
+			if (!allowed && !near) return;
+			this.hideRaw(false);
 			this.trySetup();
+			if (!this.ready) {
+				this.hideRaw(distance > RAW_DRAW_DISTANCE);
+				// Not loaded yet: let the next nearest go meanwhile.
+				if (setupQueue.nextSlot === this.slot) setupQueue.nextSlot = -1;
+				return;
+			}
+			setupQueue.nextSlot = -1;
 			if (!this.ready) return;
 			lastSetupFrame = this.app.frame;
 			setupGate.used(performance.now());
@@ -318,10 +358,22 @@ export class OrionVehicleModel extends Script {
 		this.updateLights(dt);
 	}
 
-	private nearPlayer(within: number): boolean {
+	private playerDistance(): number {
 		const position = this.entity.getPosition();
 		const player = readPlayerPose();
-		return Math.hypot(position.x - player.x, position.z - player.z) < within;
+		return Math.hypot(position.x - player.x, position.z - player.z);
+	}
+
+	/** The entity the model loads into, found once. */
+	private rawFit(): Entity | null {
+		this.fitHolder ??= (this.entity.children.find((child) => child.name === "car-model-fit") as Entity | undefined) ?? null;
+		return this.fitHolder;
+	}
+
+	/** Hides or shows the raw model while the car waits for its setup (see RAW_DRAW_DISTANCE). */
+	private hideRaw(hidden: boolean) {
+		const fit = this.rawFit();
+		if (fit && fit.enabled === hidden) fit.enabled = !hidden;
 	}
 
 	private trySetup() {
