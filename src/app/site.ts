@@ -4,11 +4,11 @@
  * read from here.
  *
  * Canonical links, the sitemap and social share cards need the real address, so the default is
- * where the game is live today (the Worker's workers.dev address). With a custom domain, set
- * NEXT_PUBLIC_SITE_URL to it at build time (it's read when the pages are built, not at runtime).
+ * the live domain. To build for another address, set NEXT_PUBLIC_SITE_URL at build time (it's
+ * read when the pages are built, not at runtime).
  */
 
-export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://orion-genix-digital-civilization.subhamj811.workers.dev").replace(/\/+$/, "");
+export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.oriongenixglobal.com").replace(/\/+$/, "");
 
 export const SITE_NAME = "OrionGenix";
 
