@@ -2,7 +2,7 @@ import type { WeaponId } from "./WeaponData";
 
 /**
  * What the player carries, for anything outside combat that hands them more: a shop counter
- * selling rounds and armour. The player's combat registers itself here while it exists.
+ * selling rounds and armour, a rest on the safehouse sofa. The player's combat registers itself here while it exists.
  */
 export interface PlayerSupplies {
 	/** Spare rounds carried for a weapon. */
@@ -13,6 +13,8 @@ export interface PlayerSupplies {
 	readonly armour: number;
 	/** Tops armour up, to MAX_ARMOUR at most; returns how much went on. */
 	addArmour(amount: number): number;
+	/** Heals up to full (a rest at the safehouse); returns how much health that gave back. */
+	restoreHealth(): number;
 }
 
 /** A full vest. */

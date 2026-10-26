@@ -1,5 +1,5 @@
 import { pavedHeightAt } from "../roads/RoadNetwork";
-import { distanceToPath, ESTATE_PAVEMENT, ESTATE_ROAD_WIDTH, ESTATE_ROAD_Y, ESTATE_ROADS, TURNING_CIRCLE_RADIUS, type EstateRoad, type Point } from "./Estates";
+import { distanceToPath, ESTATE_PAVEMENT, ESTATE_ROAD_WIDTH, ESTATE_ROAD_Y, ESTATE_ROADS, TURNING_CIRCLE_RADIUS, withinPath, type EstateRoad, type Point } from "./Estates";
 import type { MeshData } from "./MeshData";
 import { LAND_Y } from "./Mountains";
 
@@ -82,7 +82,7 @@ function onCityRoad(x: number, z: number): boolean {
 }
 
 function nearOtherRoad(road: EstateRoad, x: number, z: number, margin: number): boolean {
-	return ESTATE_ROADS.some((other) => other !== road && distanceToPath(other.points, x, z) < ESTATE_ROAD_WIDTH / 2 + margin);
+	return ESTATE_ROADS.some((other) => other !== road && withinPath(other.points, x, z, ESTATE_ROAD_WIDTH / 2 + margin));
 }
 
 export function buildEstateRoadMeshes(): EstateRoadMeshes {

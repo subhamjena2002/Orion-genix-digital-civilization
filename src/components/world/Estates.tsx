@@ -21,7 +21,7 @@ import { cityBuildingMaterials } from "@/engine/orion/buildings/CityBuildingMate
 import type { FacadeStyle } from "@/engine/orion/buildings/FacadeTextures";
 import { buildHouse } from "@/engine/orion/buildings/HouseMesh";
 import { buildEstateRoadMeshes } from "@/engine/orion/world/EstateRoadMesh";
-import { HOUSE_LOTS, type HouseLot } from "@/engine/orion/world/Estates";
+import { HOUSE_LOTS, SAFEHOUSE_LOT, type HouseLot } from "@/engine/orion/world/Estates";
 import type { MeshData } from "@/engine/orion/world/MeshData";
 import { LAND_Y } from "@/engine/orion/world/Mountains";
 import { useNearby } from "./useNearby";
@@ -152,6 +152,8 @@ const EstateHouse = memo(function EstateHouse({ lot }: Readonly<{ lot: HouseLot 
 });
 
 const lotPosition = (lot: HouseLot): readonly [number, number] => [lot.x, lot.z];
+/** Every lot but the safehouse's, which has its own villa (see Safehouse). */
+const GENERATED_LOTS = HOUSE_LOTS.filter((lot) => lot.id !== SAFEHOUSE_LOT);
 
 /**
  * The residential estates round the city (see world/Estates): their streets always, their houses
@@ -163,7 +165,7 @@ export const Estates = memo(function Estates(props: Readonly<{
 	paving: Texture | null;
 	pavingNormal: Texture | null;
 }>) {
-	const nearby = useNearby(HOUSE_LOTS, lotPosition, HOUSE_RADIUS, HOUSE_UNMOUNT_RADIUS, HOUSE_SAMPLE_MS, HOUSES_PER_SAMPLE);
+	const nearby = useNearby(GENERATED_LOTS, lotPosition, HOUSE_RADIUS, HOUSE_UNMOUNT_RADIUS, HOUSE_SAMPLE_MS, HOUSES_PER_SAMPLE);
 	return (
 		<>
 			<EstateRoads {...props} />

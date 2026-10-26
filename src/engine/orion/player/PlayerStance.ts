@@ -25,8 +25,10 @@ export interface StanceAim {
 export const CHARACTER_CREATOR_STANCE: readonly StanceAim[] = (["L", "R"] as const).flatMap((side): StanceAim[] => [
 	{ bone: `CC_Base_${side}_Thigh`, child: `CC_Base_${side}_Calf`, direction: [0.05, -1, 0.02] },
 	{ bone: `CC_Base_${side}_Calf`, child: `CC_Base_${side}_Foot`, direction: [0.02, -1, -0.03] },
-	{ bone: `CC_Base_${side}_Upperarm`, child: `CC_Base_${side}_Forearm`, direction: [0.14, -1, 0.02] },
-	{ bone: `CC_Base_${side}_Forearm`, child: `CC_Base_${side}_Hand`, direction: [0.06, -1, 0.2] },
+	// Upper arms ~17 degrees out: closer than that, the broad chest and loose shirt swallow them
+	// and the arms read as stuck to the sides.
+	{ bone: `CC_Base_${side}_Upperarm`, child: `CC_Base_${side}_Forearm`, direction: [0.3, -1, 0.02] },
+	{ bone: `CC_Base_${side}_Forearm`, child: `CC_Base_${side}_Hand`, direction: [0.12, -1, 0.2] },
 ]);
 
 interface Aim {

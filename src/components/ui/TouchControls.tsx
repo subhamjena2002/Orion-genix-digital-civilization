@@ -13,6 +13,7 @@ import {
 } from "@/engine/orion/input/TouchInput";
 import { readPlayerPose } from "@/engine/orion/player/PlayerPose";
 import { counterInReach, onShopChange, openCounterInReach } from "@/engine/orion/shops/Shops";
+import { isResting, onRestChange, restOffered, toggleRest } from "@/engine/orion/world/SafehouseRest";
 import { useCombatHud } from "./CombatHud";
 import { useFlightHud } from "./FlightHud";
 
@@ -62,6 +63,9 @@ export function TouchControls() {
 	const flight = useFlightHud(120);
 	// At a shop's counter: a Shop button where "Take car" would be.
 	const counter = useSyncExternalStore(onShopChange, counterInReach, () => null);
+	// By the safehouse sofa: Rest, and Get up once sitting.
+	const rest = useSyncExternalStore(onRestChange, restOffered, () => false);
+	const resting = useSyncExternalStore(onRestChange, isResting, () => false);
 
 	useEffect(() => {
 		// A finger lifted while the page wasn't listening never sends its "up".
@@ -153,7 +157,12 @@ export function TouchControls() {
 							<span className="orion-touch-caption">Fly</span>
 						</TapButton>
 					) : null}
-					{counter ? (
+					{rest || resting ? (
+						<TapButton label={resting ? "Get up" : "Rest on the sofa"} className="orion-touch-enter is-urgent" onTap={() => toggleRest()}>
+							<SofaIcon />
+							<span className="orion-touch-caption">{resting ? "Get up" : "Rest"}</span>
+						</TapButton>
+					) : counter ? (
 						<TapButton label={counter.kind === "guns" ? "Shop" : "Browse cars"} className="orion-touch-enter is-urgent" onTap={() => openCounterInReach()}>
 							{counter.kind === "guns" ? <ShopIcon /> : <CarIcon />}
 							<span className="orion-touch-caption">{counter.kind === "guns" ? "Shop" : "Cars"}</span>
@@ -452,6 +461,17 @@ function ShopIcon() {
 		<Icon>
 			<path d="M5 8h14l-1 12H6L5 8Z" />
 			<path d="M9 8V6.5a3 3 0 0 1 6 0V8" />
+		</Icon>
+	);
+}
+
+/** A sofa, side on. */
+function SofaIcon() {
+	return (
+		<Icon>
+			<path d="M5 11V8a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3" />
+			<path d="M3 13a2 2 0 0 1 4 0v1h10v-1a2 2 0 0 1 4 0v4H3v-4Z" />
+			<path d="M5 17v2M19 17v2" />
 		</Icon>
 	);
 }

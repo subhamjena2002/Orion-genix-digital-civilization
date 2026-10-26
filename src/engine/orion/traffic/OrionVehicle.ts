@@ -1023,6 +1023,11 @@ export class OrionVehicle extends Script {
 		return this.manual && this.physics ? this.physics.rearSlide : 0;
 	}
 
+	/** How hard the front tyres are washing wide past their grip (0 = gripping); for the tyre sound. */
+	public get frontSlide(): number {
+		return this.manual && this.physics ? this.physics.frontSlide : 0;
+	}
+
 	/** An ambulance or a fire engine: its beacons flash in their own pattern (OrionVehicleModel). */
 	public get emergency(): boolean {
 		return EMERGENCY_STYLES.has(this.style);

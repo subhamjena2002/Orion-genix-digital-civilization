@@ -157,6 +157,7 @@ export class OrionPlayerBody extends Script {
 			},
 			hand: findBone(target, "CC_Base_R_Hand"),
 			palm: findBone(target, "CC_Base_R_Mid1"),
+			chest: findBone(target, "CC_Base_Spine02"),
 			holds: pose !== null,
 			setHold: (request) => {
 				this.hold = request;

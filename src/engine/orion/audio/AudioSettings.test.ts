@@ -20,8 +20,14 @@ afterEach(() => {
 describe("audio settings", () => {
 	it("round-trips through storage", () => {
 		stubStorage();
-		saveAudioSettings({ master: 0.4, effects: 0.75, muted: true });
-		expect(loadAudioSettings()).toEqual({ master: 0.4, effects: 0.75, muted: true });
+		const vehicles = { engines: 0.8, tyres: 0.5, transmission: 0, sirens: 0.3, collisions: 1 };
+		saveAudioSettings({ master: 0.4, effects: 0.75, muted: true, vehicles });
+		expect(loadAudioSettings()).toEqual({ master: 0.4, effects: 0.75, muted: true, vehicles });
+	});
+
+	it("keeps settings saved before the vehicle mix existed, with the vehicle levels at full", () => {
+		stubStorage({ "orion.audio": JSON.stringify({ master: 0.5, effects: 0.6, muted: false }) });
+		expect(loadAudioSettings()).toEqual({ master: 0.5, effects: 0.6, muted: false, vehicles: DEFAULT_AUDIO_SETTINGS.vehicles });
 	});
 
 	it("falls back to the defaults for missing or corrupt storage", () => {
@@ -34,7 +40,7 @@ describe("audio settings", () => {
 	});
 
 	it("clamps levels and ignores fields of the wrong type", () => {
-		stubStorage({ "orion.audio": JSON.stringify({ master: 7, effects: "loud", muted: "yes" }) });
-		expect(loadAudioSettings()).toEqual({ master: 1, effects: 1, muted: false });
+		stubStorage({ "orion.audio": JSON.stringify({ master: 7, effects: "loud", muted: "yes", vehicles: { sirens: -2, tyres: "x" } }) });
+		expect(loadAudioSettings()).toEqual({ master: 1, effects: 1, muted: false, vehicles: { ...DEFAULT_AUDIO_SETTINGS.vehicles, sirens: 0 } });
 	});
 });

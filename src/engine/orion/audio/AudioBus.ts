@@ -46,12 +46,37 @@ const CHANNEL_LEVELS = {
 	impacts: 0.7,
 	/** Engines, tyres, sirens, aircraft, crashes, horns. */
 	vehicles: 0.85,
-	/** The street and the sea. */
-	ambience: 0.75,
+	/** The street and the sea: a bed under everything, never in front of it. */
+	ambience: 0.4,
 	/** Doors, glass, punches, reloading: everything else in the world. */
 	world: 0.9,
 } as const;
 export type Channel = keyof typeof CHANNEL_LEVELS;
+/**
+ * The parts of the vehicle mix, each a level of its own under the vehicles channel, set by the
+ * player (see AudioSettings): engines (with start and stop), tyres (rolling, squeal and brakes),
+ * the transmission (gear changes, air brakes), sirens, and collisions.
+ */
+export const VEHICLE_PARTS = ["engines", "tyres", "transmission", "sirens", "collisions"] as const;
+export type VehiclePart = (typeof VEHICLE_PARTS)[number];
+/** Where a sound plays into: a channel of the mix, or a part of the vehicle channel. */
+export type Route = Channel | VehiclePart;
+/** In a vehicle: the background's level, its top end (Hz), and how fast it fades (time constant, s). */
+const CABIN_AMBIENCE = 0.3;
+const CABIN_AMBIENCE_MUFFLE = 900;
+const CABIN_SECONDS = 0.35;
+/** Speed of sound (m/s), for the Doppler shift of moving sources. */
+const SPEED_OF_SOUND = 343;
+/**
+ * The Doppler shift is capped at this either way. A car passing at 25 m/s shifts by about 7%
+ * (just over a semitone), which is what a real pass-by does; past the cap something has gone
+ * wrong (a teleport, a camera cut) and a lurch in pitch would be worse than none.
+ */
+const MAX_DOPPLER = 0.08;
+/** The listener moving faster than this (m/s) is a camera cut, not motion. */
+const LISTENER_JUMP_SPEED = 80;
+/** Seconds over which the listener's velocity is smoothed. */
+const LISTENER_VELOCITY_SMOOTHING = 0.2;
 /** How far other gunfire drops while the player fires, and over what (s). */
 const DUCK_LEVEL = 0.55;
 const DUCK_HOLD = 0.12;
@@ -74,6 +99,10 @@ class AudioBus {
 	private masterGain: GainNode | null = null;
 	private effectsGain: GainNode | null = null;
 	private readonly channels = new Map<Channel, GainNode>();
+	private readonly vehicleParts = new Map<VehiclePart, GainNode>();
+	private cabinFilter: BiquadFilterNode | null = null;
+	private inVehicle = false;
+	private readonly vehicleLevels: Record<VehiclePart, number> = { engines: 1, tyres: 1, transmission: 1, sirens: 1, collisions: 1 };
 	private echoInput: GainNode | null = null;
 	private noiseLoop: AudioBuffer | null = null;
 	private sinceResume = 0;
@@ -84,15 +113,55 @@ class AudioBus {
 	private audible = false;
 	/** The player's settings (see AudioSettings): 0..1 each, and mute. */
 	private readonly levels = { master: 1, effects: 1, muted: false };
-	private readonly listener = { x: 0, y: 0, z: 0, rightX: 1, rightZ: 0 };
+	private readonly listener = { x: 0, y: 0, z: 0, rightX: 1, rightZ: 0, vx: 0, vy: 0, vz: 0, placed: false };
 
-	/** Where the camera is and which way its right-hand side points (flat, unit). */
-	public setListener(x: number, y: number, z: number, rightX: number, rightZ: number): void {
-		this.listener.x = x;
-		this.listener.y = y;
-		this.listener.z = z;
-		this.listener.rightX = rightX;
-		this.listener.rightZ = rightZ;
+	/**
+	 * Where the camera is and which way its right-hand side points (flat, unit). With the frame's
+	 * time step, the listener's own velocity is tracked too, for the Doppler shift (see doppler).
+	 */
+	public setListener(x: number, y: number, z: number, rightX: number, rightZ: number, dt = 0): void {
+		// A broken camera (NaN) would put NaN into every gain in the mix, which the audio API throws on.
+		if (!Number.isFinite(x + y + z + rightX + rightZ)) return;
+		const listener = this.listener;
+		if (listener.placed && dt > 0) {
+			const vx = (x - listener.x) / dt;
+			const vy = (y - listener.y) / dt;
+			const vz = (z - listener.z) / dt;
+			const jump = Math.hypot(vx, vy, vz) > LISTENER_JUMP_SPEED;
+			const blend = 1 - Math.exp(-dt / LISTENER_VELOCITY_SMOOTHING);
+			listener.vx += ((jump ? 0 : vx) - listener.vx) * blend;
+			listener.vy += ((jump ? 0 : vy) - listener.vy) * blend;
+			listener.vz += ((jump ? 0 : vz) - listener.vz) * blend;
+		}
+		listener.x = x;
+		listener.y = y;
+		listener.z = z;
+		listener.rightX = rightX;
+		listener.rightZ = rightZ;
+		listener.placed = true;
+	}
+
+	/**
+	 * The Doppler pitch factor for a source at (x, y, z) moving at (vx, vz) m/s on the ground:
+	 * physical (c - listener's speed away) / (c - source's speed towards), capped at MAX_DOPPLER.
+	 * Both velocities are real ones (the vehicle's own, and the listener's smoothed), so the shift
+	 * changes as smoothly as the pass-by itself; callers smooth it further on the audio thread.
+	 */
+	public doppler(x: number, y: number, z: number, vx: number, vz: number): number {
+		const listener = this.listener;
+		const dx = listener.x - x;
+		const dy = listener.y - y;
+		const dz = listener.z - z;
+		const distance = Math.hypot(dx, dy, dz);
+		if (distance < 1) return 1;
+		// Unit vector from the source towards the listener.
+		const ux = dx / distance;
+		const uy = dy / distance;
+		const uz = dz / distance;
+		const sourceTowards = vx * ux + vz * uz;
+		const listenerAway = listener.vx * ux + listener.vy * uy + listener.vz * uz;
+		const factor = (SPEED_OF_SOUND - listenerAway) / (SPEED_OF_SOUND - sourceTowards);
+		return Number.isFinite(factor) ? Math.max(1 - MAX_DOPPLER, Math.min(1 + MAX_DOPPLER, factor)) : 1;
 	}
 
 	/**
@@ -117,8 +186,26 @@ class AudioBus {
 		for (const [channel, level] of Object.entries(CHANNEL_LEVELS) as [Channel, number][]) {
 			const gain = context.createGain();
 			gain.gain.value = level;
-			gain.connect(effects);
+			if (channel === "ambience") {
+				// The street is heard through the cabin when the player is in a vehicle (setInVehicle).
+				const cabin = context.createBiquadFilter();
+				cabin.type = "lowpass";
+				cabin.frequency.value = 20000;
+				cabin.Q.value = 0.5;
+				gain.connect(cabin).connect(effects);
+				this.cabinFilter = cabin;
+			} else {
+				gain.connect(effects);
+			}
 			this.channels.set(channel, gain);
+		}
+		this.applyCabin(0.01);
+		const vehicles = this.channels.get("vehicles");
+		for (const part of VEHICLE_PARTS) {
+			const gain = context.createGain();
+			gain.gain.value = this.vehicleLevels[part];
+			if (vehicles) gain.connect(vehicles);
+			this.vehicleParts.set(part, gain);
 		}
 		// Traffic, gunfire and an explosion at once would otherwise clip; this rides the peaks.
 		// Gently: it used to sit at -18 dB, 6:1, which squashed the engines flat all the time and
@@ -179,6 +266,37 @@ class AudioBus {
 		this.rampMaster(0.08);
 	}
 
+	/**
+	 * The player is inside a vehicle (a car, the gunship, the jet), or not. Inside, the city's
+	 * background — the street, the traffic hum, the sea — drops well down and loses its top end,
+	 * as it does behind glass, so the vehicle itself is what's heard; it comes back as they get
+	 * out. Cheap to call every frame: it only acts on a change.
+	 */
+	public setInVehicle(inside: boolean): void {
+		if (inside === this.inVehicle) return;
+		this.inVehicle = inside;
+		this.applyCabin(CABIN_SECONDS);
+	}
+
+	private applyCabin(seconds: number) {
+		const context = this.context;
+		const ambience = this.channels.get("ambience");
+		if (!context || !ambience || !this.cabinFilter) return;
+		const now = context.currentTime;
+		ambience.gain.setTargetAtTime(CHANNEL_LEVELS.ambience * (this.inVehicle ? CABIN_AMBIENCE : 1), now, seconds);
+		this.cabinFilter.frequency.setTargetAtTime(this.inVehicle ? CABIN_AMBIENCE_MUFFLE : 20000, now, seconds);
+	}
+
+	/** The player's level for each part of the vehicle mix (0..1); kept for a context not created yet. */
+	public setVehicleLevels(levels: Readonly<Record<VehiclePart, number>>): void {
+		const context = this.context;
+		for (const part of VEHICLE_PARTS) {
+			this.vehicleLevels[part] = clamp01(levels[part]);
+			const gain = this.vehicleParts.get(part);
+			if (context && gain) gain.gain.setTargetAtTime(this.vehicleLevels[part], context.currentTime, 0.03);
+		}
+	}
+
 	/** How loud speech should be (0..1): the player's master volume, the same curve, 0 muted or hidden. */
 	public dialogueLevel(): number {
 		if (!this.audible || this.levels.muted) return 0;
@@ -201,9 +319,12 @@ class AudioBus {
 		master.gain.linearRampToValueAtTime(this.masterTarget(), now + seconds);
 	}
 
-	/** Where a sound of this kind plays into (see CHANNEL_LEVELS); null before the context exists. */
-	public channel(channel: Channel): GainNode | null {
-		return this.channels.get(channel) ?? null;
+	/**
+	 * Where a sound of this kind plays into (see CHANNEL_LEVELS, VEHICLE_PARTS); null before the
+	 * context exists.
+	 */
+	public channel(route: Route): GainNode | null {
+		return this.channels.get(route as Channel) ?? this.vehicleParts.get(route as VehiclePart) ?? null;
 	}
 
 	/**
@@ -244,6 +365,14 @@ class AudioBus {
 		const dz = z - this.listener.z;
 		const distance = Math.hypot(dx, dy, dz);
 		const result = out ?? { gain: 0, pan: 0, muffle: 20000, distance: 0 };
+		if (!Number.isFinite(distance)) {
+			// Somewhere that isn't anywhere (a body with a NaN position): out of earshot.
+			result.distance = Infinity;
+			result.gain = 0;
+			result.pan = 0;
+			result.muffle = 20000;
+			return result;
+		}
 		result.distance = distance;
 		result.gain = HALF_VOLUME_DISTANCE / (HALF_VOLUME_DISTANCE + distance);
 		// Sideways component against the camera's right, so sounds swing across the stereo field.

@@ -2798,6 +2798,16 @@ body {
   accent-color: var(--oi-accent);
 }
 
+.orion-sound-group {
+  margin-top: 1rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--oi-border-subtle);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--oi-text-secondary);
+}
+
 /* ---------- Pause menu (Esc): components/ui/PauseMenu.tsx ---------- */
 
 .orion-pause-backdrop {

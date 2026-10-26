@@ -1,4 +1,4 @@
-import { audioBus, AUDIBLE_DISTANCE, type Channel, type Placement } from "../audio/AudioBus";
+import { audioBus, AUDIBLE_DISTANCE, type Placement, type Route } from "../audio/AudioBus";
 import { playOneShot } from "../audio/SoundBank";
 import type { SoundId } from "./WeaponData";
 
@@ -84,6 +84,14 @@ interface Recorded {
 	 * Only for the loud, far-carrying ones; a punch is never far enough away to notice.
 	 */
 	travels?: boolean;
+	/**
+	 * A second recording fired with the first, for weight a single take doesn't have: a rocket's
+	 * back-blast under its launch. Level against `level`; rate as `rate`.
+	 */
+	blast?: { sound: string; level: number; rate: number };
+	/** How hard it's felt in the chest close to (see THUMP_LEVEL), and from how far (m). */
+	thump?: number;
+	thumpWithin?: number;
 }
 
 /** Recordings for each id; ids not listed stay synthesised. */
@@ -91,7 +99,12 @@ const RECORDED: Partial<Record<SoundId, Recorded>> = {
 	pistol: { near: "pistol-close", far: "pistol-far", distant: "gun-distant", level: 1, farLevel: 1.7, echo: 0.55, travels: true, range: 600 },
 	rifle: { near: "rifle-close", far: "rifle-far", distant: "gun-distant", level: 0.95, farLevel: 1.6, echo: 0.6, travels: true, range: 800 },
 	shotgun: { near: "shotgun-close", far: "shotgun-far", distant: "gun-distant", level: 1.1, farLevel: 1.4, echo: 0.65, travels: true, range: 600 },
-	rocket: { near: "rocket", level: 1, echo: 0.4, travels: true, range: 400 },
+	// A launch is a blast, not a whoosh: the launch take over a short, pitched-up explosion (the
+	// back-blast), a heavy chest thump, the street's echo, and a boom that carries across the city.
+	rocket: {
+		near: "rocket", far: "explosion-far", level: 1.2, farLevel: 0.9, echo: 0.85, travels: true, range: 700,
+		blast: { sound: "explosion", level: 0.75, rate: 1.3 }, thump: 0.9, thumpWithin: 22,
+	},
 	explosion: { near: "explosion", far: "explosion-far", level: 1.5, farLevel: 1.8, echo: 0.9, travels: true, range: 900 },
 	punch: { near: "punch", level: 0.85 },
 	swing: { near: "whoosh", level: 0.5 },
@@ -159,6 +172,8 @@ const SYNTHS: Readonly<Record<SoundId, readonly Layer[]>> = {
 		{ kind: "noise", decay: 0.06, level: 0.6, cutoff: 3000, highpass: 800 },
 		{ kind: "noise", decay: 0.9, level: 0.7, cutoff: 1400, cutoffTo: 5200, attack: 0.04 },
 		{ kind: "tone", decay: 0.25, level: 0.6, from: 95, to: 38 },
+		// The back-blast's pressure wave: deep and long, felt more than heard.
+		{ kind: "tone", decay: 0.6, level: 0.8, from: 62, to: 24 },
 	],
 	explosion: [
 		{ kind: "noise", decay: 0.05, level: 0.6, cutoff: 7000, highpass: 1200 },
@@ -209,8 +224,8 @@ class CombatAudio {
 	private readonly place: Placement = { gain: 0, pan: 0, muffle: 20000, distance: 0 };
 
 	/** Where the camera is and which way its right-hand side points (flat, unit). */
-	public setListener(x: number, y: number, z: number, rightX: number, rightZ: number): void {
-		audioBus().setListener(x, y, z, rightX, rightZ);
+	public setListener(x: number, y: number, z: number, rightX: number, rightZ: number, dt = 0): void {
+		audioBus().setListener(x, y, z, rightX, rightZ, dt);
 	}
 
 	/**
@@ -231,9 +246,10 @@ class CombatAudio {
 			// version's low thump alone (its tone layers), for the punch a microphone doesn't keep.
 			// On the same sample as the recording and with no attack of its own, so it's heard as
 			// the weight of the one shot, never as a second one.
-			if (placed.distance < THUMP_WITHIN && THUMPS.has(id)) {
+			const within = RECORDED[id]?.thumpWithin ?? THUMP_WITHIN;
+			if (placed.distance < within && THUMPS.has(id)) {
 				const thump = context.createGain();
-				thump.gain.value = volume * THUMP_LEVEL * placed.gain * (1 - placed.distance / THUMP_WITHIN);
+				thump.gain.value = volume * (RECORDED[id]?.thump ?? THUMP_LEVEL) * placed.gain * (1 - placed.distance / within);
 				const panner = context.createStereoPanner();
 				panner.pan.value = placed.pan;
 				thump.connect(panner).connect(master);
@@ -260,7 +276,7 @@ class CombatAudio {
 	}
 
 	/** The recorded version of a sound; false if it hasn't loaded (the synthesised one plays). */
-	private playRecorded(id: SoundId, placed: Placement, volume: number, channel: Channel): boolean {
+	private playRecorded(id: SoundId, placed: Placement, volume: number, channel: Route): boolean {
 		if (id === "crash") return this.playCrash(placed, volume);
 		const recorded = RECORDED[id];
 		if (!recorded) return false;
@@ -283,6 +299,10 @@ class CombatAudio {
 		if (recorded.distant && distant > 0) {
 			played = playOneShot(recorded.distant, placed, { level: farLevel * 1.2 * Math.sin((distant * Math.PI) / 2), delay, echo: echo * 1.3, channel }) || played;
 		}
+		if (played && recorded.blast && far < 1) {
+			const blast = recorded.blast;
+			playOneShot(blast.sound, placed, { level: blast.level * recorded.level * volume * Math.cos((far * Math.PI) / 2), rate: blast.rate, variation: 0.06, delay, echo: echo * 1.2, channel });
+		}
 		return played;
 	}
 
@@ -293,8 +313,8 @@ class CombatAudio {
 	private playCrash(placed: Placement, severity: number): boolean {
 		const heavy = severity >= 0.9;
 		// Level follows the hit: a bump at walking pace is a soft knock, not most of a full crunch.
-		const played = playOneShot(heavy ? "crash-heavy" : "crash-light", placed, { level: 0.15 + Math.min(1.5, severity), variation: 0.08, echo: heavy ? 0.35 : 0.15, channel: "vehicles" });
-		if (played && severity >= 1.15) playOneShot("glass", placed, { level: 0.55 * Math.min(1.4, severity), delay: 0.03, echo: 0.1, channel: "vehicles" });
+		const played = playOneShot(heavy ? "crash-heavy" : "crash-light", placed, { level: 0.15 + Math.min(1.5, severity), variation: 0.08, echo: heavy ? 0.35 : 0.15, channel: "collisions" });
+		if (played && severity >= 1.15) playOneShot("glass", placed, { level: 0.55 * Math.min(1.4, severity), delay: 0.03, echo: 0.1, channel: "collisions" });
 		return played;
 	}
 
@@ -343,11 +363,11 @@ class CombatAudio {
 }
 
 /** The part of the mix a sound belongs to (see AudioBus). */
-function channelFor(id: SoundId, own: boolean): Channel {
+function channelFor(id: SoundId, own: boolean): Route {
 	if (SHOTS.has(id)) return own ? "own" : "gunfire";
 	if (id === "explosion") return "gunfire";
 	if (IMPACTS.has(id)) return "impacts";
-	if (id === "crash") return "vehicles";
+	if (id === "crash") return "collisions";
 	return "world";
 }
 

@@ -103,7 +103,9 @@ export const ORION_ARMS_WALL: readonly WallGun[] = [
 ];
 
 /** Pistols lying under the counter's glass. */
-export const ORION_ARMS_CASE: readonly number[] = [-2.6, -1.3, 1.3, 2.6];
+export const ORION_ARMS_CASE: readonly number[] = [-1.3, 0, 1.3, 2.6];
+/** A tray of grenades under the glass at the counter's left end: its middle, across the room. */
+export const ORION_ARMS_GRENADES = -2.75;
 
 /** Looking at the wall from over the counter: the thing a little left of centre, clear of the panel on the right. */
 function onTheWall(x: number, y: number): DisplaySpot {
@@ -122,6 +124,9 @@ export const ORION_ARMS_DISPLAYS: Readonly<Record<string, DisplaySpot>> = {
 	"ammo-shotgun": ARMS_SHELF,
 	"ammo-ar": ARMS_SHELF,
 	"ammo-rockets": ARMS_SHELF,
+	"ammo-grenades": ARMS_SHELF,
+	// Down through the case's glass at the tray, from the customer's side of the counter.
+	grenade: { at: [ORION_ARMS_GRENADES, 1.05, -1.95], from: [ORION_ARMS_GRENADES + 0.6, 1.75, -0.75] },
 	vest: { at: [4.35, 1.38, 2.0], from: [3.0, 1.55, 3.1] },
 };
 

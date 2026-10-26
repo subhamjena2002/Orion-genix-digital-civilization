@@ -6,6 +6,7 @@ import { usePlayerPose } from "@/components/world/usePlayerPose";
 import { JET_NAME } from "@/engine/orion/aircraft/JetModel";
 import { counterInReach, onShopChange } from "@/engine/orion/shops/Shops";
 import { playerCarHasRoof } from "@/engine/orion/traffic/Carjack";
+import { isResting, onRestChange, restOffered } from "@/engine/orion/world/SafehouseRest";
 import { useFlightHud } from "./FlightHud";
 
 const KMH_PER_MS = 3.6;
@@ -20,6 +21,8 @@ export function DrivingHud({ touch }: Readonly<{ touch: boolean }>) {
 	const { inVehicle, vehicleSpeed, nearCar, vehicleIntegrity, vehicleBurning } = usePlayerPose(80);
 	const { flying, nearGunship, nearJet } = useFlightHud(120);
 	const counter = useSyncExternalStore(onShopChange, counterInReach, () => null);
+	const rest = useSyncExternalStore(onRestChange, restOffered, () => false);
+	const resting = useSyncExternalStore(onRestChange, isResting, () => false);
 	if (flying) return null;
 	const kmh = Math.round(vehicleSpeed * KMH_PER_MS);
 	const condition = Math.max(0, Math.round(vehicleIntegrity));
@@ -66,6 +69,11 @@ export function DrivingHud({ touch }: Readonly<{ touch: boolean }>) {
 					<HintKey keys={["E"]} label={counter.kind === "guns" ? "Shop" : "Browse cars"} />
 				</div>
 			) : null}
+			{!touch && !inVehicle && (rest || resting) ? (
+				<div className="orion-control-hint orion-control-hint-prompt" role="status">
+					<HintKey keys={["E"]} label={resting ? "Get up" : "Rest"} />
+				</div>
+			) : null}
 			{!touch && !inVehicle && nearCar && !counter ? (
 				<div className="orion-control-hint orion-control-hint-prompt" role="status">
 					<HintKey keys={["F"]} label="Take car" />
@@ -100,7 +108,7 @@ export function DrivingHud({ touch }: Readonly<{ touch: boolean }>) {
 							<Separator />
 							<HintKey keys={["Click"]} label="Attack" />
 							<Separator />
-							<HintKey keys={["1–6"]} label="Weapon" />
+							<HintKey keys={["1–7"]} label="Weapon" />
 							<Separator />
 							<HintKey keys={["R"]} label="Reload" />
 						</>

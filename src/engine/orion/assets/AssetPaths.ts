@@ -8,13 +8,15 @@ export const ORION_ASSET_PATHS = {
   vegetation: "/models/vegetation/",
   materials: "/textures/materials/",
   character: "/models/characters/orion-citizen/orion-citizen.glb",
-  // The player's own body ("Casual Male Char (Rigged)" by ijiklvn, CC-BY-4.0 — credit required:
+  // The player's own body: a gangster restyle (black satin shirt, cream trousers, gold chain,
+  // watch and aviators; blender/export_player_gangster.py) of "Casual Male Char (Rigged)" by
+  // ijiklvn, CC-BY-4.0 — credit required, modified from the original:
   // https://sketchfab.com/3d-models/casual-male-char-rigged-9034a1acc95e494592441a057d319953).
   // It has no animations of its own; the citizen rig's are retargeted onto it (player/Retarget).
-  playerCharacter: "/models/characters/player-casual.glb",
+  playerCharacter: "/models/characters/player-gangster.glb",
   // The same body with its two 2048 textures at 1024 (scripts/make-texture-variant.mjs): what
   // TextureBudget shows anyway unless full quality is pinned, at under half the download.
-  playerCharacter1k: "/models/characters/player-casual-1k.glb",
+  playerCharacter1k: "/models/characters/player-gangster-1k.glb",
 } as const;
 
 /**

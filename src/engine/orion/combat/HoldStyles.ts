@@ -9,7 +9,7 @@ import type { FingerCurl } from "../player/HandRig";
  * (or blade tip). Body space: +x is the character's right, +y up, +z forward.
  */
 
-export type HoldStyleId = "unarmed" | "blade" | "pistol" | "rifle" | "shotgun" | "launcher";
+export type HoldStyleId = "unarmed" | "blade" | "pistol" | "rifle" | "shotgun" | "launcher" | "grenade";
 
 export type Vec3Tuple = readonly [number, number, number];
 
@@ -142,5 +142,17 @@ export const HOLD_STYLES: Readonly<Record<HoldStyleId, HoldStyle>> = {
 		butt: null,
 		elbows: { right: [0.5, -1, -0.5], left: [-0.3, -1, 0.1] },
 		slide: 0.08, readyReach: 0.85, reload: [0, -0.1, 0.1], look: 0.8,
+	},
+
+	// One hand round the body, held at the chest; the throw lets go of the hold and the clip's arm swings it.
+	grenade: {
+		id: "grenade",
+		right: { point: [0, 0, 0], fingers: [0, -0.4, -1], thumb: [-1, 0.3, 0], curl: curl(0.55, 0.75, 0.8, 0.8, 0.85) },
+		left: null,
+		aimed: { offset: [-0.12, -0.12, 0.3], roll: 0, twist: 10 },
+		ready: { offset: [-0.1, -0.3, 0.28], pitch: 0, yaw: 0, twist: 0 },
+		butt: null,
+		elbows: { right: [0.4, -1, -0.4], left: [-0.4, -1, -0.3] },
+		slide: 0, readyReach: 0.85, reload: [0, -0.1, 0.05], look: 0.6,
 	},
 };

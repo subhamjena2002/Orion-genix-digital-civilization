@@ -29,6 +29,7 @@ import { FireEngines, GarageVehicles, MissionVehicles, Vehicles } from "./Vehicl
 import { MissionRuntime } from "./MissionRuntime";
 import { Pickups } from "./Pickups";
 import { ShopBuildings } from "./ShopBuildings";
+import { Safehouse } from "./Safehouse";
 import { Shops } from "./Shops";
 import { DistanceCulling } from "./useDistanceCull";
 import { Police } from "./Police";
@@ -173,6 +174,7 @@ export function DistrictScene() {
 			<ShopBuildings />
 			<Pickups />
 			<DistanceCulling />
+			<Safehouse />
 			<Estates asphalt={asphaltDiffuse} asphaltNormal={asphaltNormal} paving={pavementDiffuse} pavingNormal={pavementNormal} />
 			<Railway />
 			<Pedestrians />

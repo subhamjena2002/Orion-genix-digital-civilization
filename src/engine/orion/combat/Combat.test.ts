@@ -202,18 +202,19 @@ describe("weapon data", () => {
 		expect(validateWeapons(WEAPONS)).toEqual([]);
 	});
 
-	it("maps the number keys to the planned weapons and keeps 7 free", () => {
+	it("maps the number keys to the planned weapons and keeps 8 free", () => {
 		expect(weaponInSlot(2)?.id).toBe("sword");
 		expect(weaponInSlot(3)?.id).toBe("pistol");
 		expect(weaponInSlot(4)?.id).toBe("ar");
 		expect(weaponInSlot(5)?.id).toBe("shotgun");
 		expect(weaponInSlot(6)?.id).toBe("rocketLauncher");
-		expect(weaponInSlot(7)).toBeNull();
-		expect(RESERVED_SLOTS).toContain(7);
+		expect(weaponInSlot(7)?.id).toBe("grenade");
+		expect(weaponInSlot(8)).toBeNull();
+		expect(RESERVED_SLOTS).toContain(8);
 	});
 
 	it("flags broken definitions", () => {
-		const broken = { ...weaponById("pistol"), id: "sword" as const, slot: 7, fireRate: 0 };
+		const broken = { ...weaponById("pistol"), id: "sword" as const, slot: 8, fireRate: 0 };
 		const problems = validateWeapons([...WEAPONS, broken]);
 		expect(problems.some((problem) => problem.includes("duplicate id"))).toBe(true);
 		expect(problems.some((problem) => problem.includes("reserved"))).toBe(true);
@@ -232,7 +233,7 @@ describe("WeaponInventory", () => {
 		expect(weapons.selectSlot(4)).toBe(true);
 		expect(weapons.current.definition.id).toBe("ar");
 		expect(weapons.selectSlot(4)).toBe(false);
-		expect(weapons.selectSlot(7)).toBe(false);
+		expect(weapons.selectSlot(8)).toBe(false);
 		expect(weapons.selectSlot(9)).toBe(false);
 		expect(weapons.current.definition.id).toBe("ar");
 	});
@@ -298,7 +299,7 @@ describe("WeaponInventory", () => {
 	it("cycles with the mouse wheel in slot order, wrapping round", () => {
 		const weapons = inventory();
 		weapons.cycle(-1);
-		expect(weapons.current.definition.id).toBe("rocketLauncher");
+		expect(weapons.current.definition.id).toBe("grenade");
 		weapons.cycle(1);
 		expect(weapons.current.definition.id).toBe("fists");
 		weapons.cycle(1);

@@ -20,16 +20,38 @@ export interface PedestrianSpawn {
 
 /**
  * Character meshes are untextured with named materials, so appearance is driven by tinting.
- * Skin tones cover a South Asian range and the clothing palette leans on the saturated
- * colours common on Indian streets.
+ * Skin tones cover a South Asian range; clothing comes as styled outfits (OUTFITS) in the
+ * city's warm coastal look.
  *
  * Caveat: this changes colour, not tailoring. Garment *geometry* is still western
  * shirt-and-trousers — kurtas, sarees and uniforms need modelled assets.
  */
 const SKIN_TONES = ["#8d5a3b", "#a9724a", "#6f4526", "#c08b5c", "#7d4f30", "#b07f52", "#94603f"];
-const SHIRT_COLOURS = ["#d94f4f", "#e8a33d", "#2f8f6b", "#3f6bbf", "#8e4fa8", "#f2e6d0", "#d9762b", "#2c6e8f", "#c2185b", "#00897b", "#7e57c2", "#ef6c00"];
-const PANTS_COLOURS = ["#2b2f38", "#3a3f33", "#d8d2c4", "#4a3b2f", "#1f2933", "#5b4636"];
-const HAIR_COLOURS = ["#141010", "#1d1512", "#2a1f1a"];
+/**
+ * Whole outfits rather than a shirt and trousers drawn separately: random pairs gave the crowd
+ * clashing primaries (orange over olive, purple over brown). These are styled pairs in the
+ * city's warm coastal look: pastels and whites with navy, charcoal and tan, a few deep jewel
+ * tones, and the odd all-black. [top, bottom].
+ */
+const OUTFITS: readonly (readonly [string, string])[] = [
+	["#f4ede1", "#1f2a44"], // ivory linen, navy
+	["#e8837a", "#f2ece0"], // coral, white
+	["#7fc8b8", "#2a2f3a"], // mint, charcoal
+	["#f2c4ce", "#3b4a6b"], // blush, denim
+	["#1c1c22", "#1c1c22"], // all black
+	["#2d6f8f", "#d9cfbd"], // ocean blue, stone
+	["#f6d98c", "#33302b"], // butter yellow, espresso
+	["#9b2335", "#202226"], // wine, black
+	["#ffffff", "#8a6a4a"], // white, tan
+	["#4b3f72", "#e6dfd2"], // aubergine, cream
+	["#3f7a5a", "#e9e2d3"], // palm green, cream
+	["#b9d7ef", "#262b33"], // sky, slate
+	["#c96f3b", "#f0e8da"], // terracotta, off-white
+	["#262a33", "#a89a84"], // graphite, khaki
+	["#e3b6d6", "#ffffff"], // orchid, white
+	["#0f4c5c", "#c8b79e"], // teal, sand
+];
+const HAIR_COLOURS = ["#141010", "#1d1512", "#2a1f1a", "#3b2516", "#4a2c1c"];
 
 const BASE = "/models/characters/orion-citizen";
 
@@ -93,14 +115,17 @@ function lightness(hex: string): number {
 	return (0.2126 * ((value >> 16) & 255) + 0.7152 * ((value >> 8) & 255) + 0.0722 * (value & 255)) / 255;
 }
 
-/** A person's colours. A pale shirt over pale trousers washed the whole figure out to one cream shape, so the trousers go dark then. */
+/**
+ * A person's colours: one styled outfit, sometimes worn the other way round. Flipping is
+ * skipped when it would put two pale halves together, which washes the figure out to one
+ * cream shape.
+ */
 function outfit(random: () => number): PedestrianPalette {
 	const skin = SKIN_TONES[Math.floor(random() * SKIN_TONES.length)];
-	const shirt = SHIRT_COLOURS[Math.floor(random() * SHIRT_COLOURS.length)];
-	let pants = PANTS_COLOURS[Math.floor(random() * PANTS_COLOURS.length)];
+	const [top, bottom] = OUTFITS[Math.floor(random() * OUTFITS.length)];
+	const flip = random() < 0.25 && !(lightness(top) > 0.6 && lightness(bottom) > 0.6);
 	const hair = HAIR_COLOURS[Math.floor(random() * HAIR_COLOURS.length)];
-	if (lightness(shirt) > 0.6 && lightness(pants) > 0.6) pants = PANTS_COLOURS[0];
-	return { skin, shirt, pants, hair };
+	return { skin, shirt: flip ? bottom : top, pants: flip ? top : bottom, hair };
 }
 
 function buildPedestrians(): PedestrianSpawn[] {

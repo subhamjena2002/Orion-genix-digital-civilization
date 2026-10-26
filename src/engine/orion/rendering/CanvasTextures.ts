@@ -92,11 +92,13 @@ export function normalsFromHeight(height: Canvas2D, strength: number, scale = 1)
 	const width = Math.max(1, Math.round(sourceWidth * scale));
 	const rows = Math.max(1, Math.round(sourceHeight * scale));
 	const step = 1 / scale;
-	const sample = (x: number, y: number) => {
-		const sx = ((Math.round(x * step) % sourceWidth) + sourceWidth) % sourceWidth;
-		const sy = ((Math.round(y * step) % sourceHeight) + sourceHeight) % sourceHeight;
-		return source[(sy * sourceWidth + sx) * 4] / 255;
-	};
+	// The wrapped source column for each output column from -1 to width (and row offsets likewise),
+	// worked out once rather than per sample: these maps are painted at startup, on the loading screen.
+	const columns = new Int32Array(width + 2);
+	for (let x = -1; x <= width; x++) columns[x + 1] = (((Math.round(x * step) % sourceWidth) + sourceWidth) % sourceWidth) * 4;
+	const rowStarts = new Int32Array(rows + 2);
+	for (let y = -1; y <= rows; y++) rowStarts[y + 1] = (((Math.round(y * step) % sourceHeight) + sourceHeight) % sourceHeight) * sourceWidth * 4;
+	const sample = (x: number, y: number) => source[rowStarts[y + 1] + columns[x + 1]] / 255;
 	const pixels = new Uint8ClampedArray(width * rows * 4);
 	for (let y = 0; y < rows; y++) {
 		for (let x = 0; x < width; x++) {

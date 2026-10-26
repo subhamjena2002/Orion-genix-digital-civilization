@@ -1,5 +1,6 @@
-import { audioBus, AUDIBLE_DISTANCE, type Channel, type Placement } from "./AudioBus";
-import { SOUND_FILES } from "./SoundManifest";
+import { audioBus, AUDIBLE_DISTANCE, type Placement, type Route } from "./AudioBus";
+import { SOUND_FILES as WORLD_SOUND_FILES } from "./SoundManifest";
+import { VEHICLE_SOUND_FILES } from "./VehicleSoundManifest";
 import { synthesizeSounds } from "./SynthSounds";
 
 /**
@@ -15,6 +16,8 @@ import { synthesizeSounds } from "./SynthSounds";
  */
 
 const BASE = "/audio/";
+/** Every recorded sound: the world's (prepare-sounds.py) and the vehicles' (prepare-vehicle-sounds.py). */
+const SOUND_FILES: Readonly<Record<string, readonly string[]>> = { ...WORLD_SOUND_FILES, ...VEHICLE_SOUND_FILES };
 
 const buffers = new Map<string, AudioBuffer>();
 /** Sounds rendered in code rather than recorded (see SynthSounds), by id. */
@@ -53,7 +56,7 @@ export function preloadSounds(context: BaseAudioContext): void {
 }
 
 /** Heard from the first second of play: engines, the street, footsteps, the player's own hands. */
-const FIRST_SOUNDS = /^(engine-|amb-|foot|punch|whoosh|door)/;
+const FIRST_SOUNDS = /^(engine-|idle-|tyre-roll|amb-|foot|punch|whoosh|door)/;
 
 /**
  * The order recordings are fetched in: the ones heard at once first, the rest after. The browser
@@ -112,7 +115,7 @@ export interface OneShotOptions {
 	/** How much goes to the city's echo (AudioBus.echo), 0..1: gunfire and blasts, not footsteps. */
 	echo?: number;
 	/** Which part of the mix it belongs to (see AudioBus); "world" if not given. */
-	channel?: Channel;
+	channel?: Route;
 	/**
 	 * Earlier voices of the same sound drop to this share of their level as this one starts: in
 	 * rapid fire each new shot cuts the last one's tail short, as a real gun's report masks it.
@@ -209,7 +212,7 @@ export class LoopVoice {
 	private air: BiquadFilterNode | null = null;
 	private panner: StereoPannerNode | null = null;
 
-	public constructor(private readonly sound: string, private readonly smoothing = 0.08, private readonly channel: Channel = "world") {}
+	public constructor(private readonly sound: string, private readonly smoothing = 0.08, private readonly channel: Route = "world") {}
 
 	public get ready(): boolean {
 		return this.source !== null || soundReady(this.sound);
@@ -246,6 +249,11 @@ export class LoopVoice {
 		this.air?.frequency.setTargetAtTime(Math.min(placed.muffle, ceiling), now, this.smoothing);
 		this.panner?.pan.setTargetAtTime(placed.pan, now, this.smoothing);
 		this.source.playbackRate.setTargetAtTime(rate, now, this.smoothing);
+	}
+
+	/** Whether the loop is playing (it is built the first time it's asked to sound). */
+	public get playing(): boolean {
+		return this.source !== null;
 	}
 
 	public stop(): void {

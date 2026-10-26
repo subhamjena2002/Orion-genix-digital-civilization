@@ -19,7 +19,7 @@ export function itemName(item: ShopItem): string {
 		case "weapon":
 			return weaponById(item.weapon).name;
 		case "ammo":
-			return `${weaponById(item.weapon).name} rounds`;
+			return weaponById(item.weapon).type === "thrown" ? `${weaponById(item.weapon).name} crate` : `${weaponById(item.weapon).name} rounds`;
 		case "armour":
 			return "Body armour";
 		case "vehicle":
@@ -36,7 +36,9 @@ export function itemDetail(item: ShopItem): string {
 			return item.detail;
 		case "ammo": {
 			const max = weaponById(item.weapon).maxAmmo;
-			return supplies ? `${item.rounds} rounds · carrying ${supplies.spareFor(item.weapon)}/${max}` : `${item.rounds} rounds`;
+			// Grenades are counted as grenades, not rounds.
+			const unit = weaponById(item.weapon).type === "thrown" ? "grenades" : "rounds";
+			return supplies ? `${item.rounds} ${unit} · carrying ${supplies.spareFor(item.weapon)}/${max}` : `${item.rounds} ${unit}`;
 		}
 		case "armour":
 			return supplies ? `${item.detail} · wearing ${Math.round(supplies.armour)}/${MAX_ARMOUR}` : item.detail;

@@ -12,15 +12,16 @@ import type { MeleeTiming } from "./MeleeAttack";
  * a model file in public/models/weapons/.
  */
 
-export type WeaponId = "fists" | "sword" | "pistol" | "ar" | "shotgun" | "rocketLauncher";
+export type WeaponId = "fists" | "sword" | "pistol" | "ar" | "shotgun" | "rocketLauncher" | "grenade";
 
 /**
  * How the weapon works:
  * - unarmed / melee: a swing with a hit window (MeleeAttack), hits whatever is in its arc.
  * - hitscan: bullets resolve instantly along a ray (with spread and pellets).
  * - projectile: a real moving object (rocket) that hits something and explodes.
+ * - thrown: lobbed by hand in an arc (grenade); it bounces about and goes off when its fuse runs out.
  */
-export type WeaponType = "unarmed" | "melee" | "hitscan" | "projectile";
+export type WeaponType = "unarmed" | "melee" | "hitscan" | "projectile" | "thrown";
 
 /**
  * `impact` is a bullet striking a vehicle (metal); `bulletHit` one striking a wall, `bulletGround`
@@ -44,7 +45,10 @@ export interface WeaponModelSpec {
 	 * node named like a muzzle, barrel or blade tip.
 	 */
 	muzzleAxis?: "+x" | "-x" | "+y" | "-y" | "+z" | "-z";
-	/** Nodes that aren't part of the weapon itself (display stands, spare magazines, loose rounds). */
+	/**
+	 * Nodes that aren't part of the weapon itself (display stands, spare magazines, loose rounds).
+	 * A node named `muzzle-point` marks exactly where shots leave; otherwise it's the end of the long axis.
+	 */
 	hideNodes?: RegExp;
 	/**
 	 * Where the hand holds it, as a fraction along its length from the back (0) to the muzzle (1),
@@ -67,7 +71,7 @@ export interface WeaponDefinition {
 	type: WeaponType;
 	/** How the player carries and aims it (see HoldStyles). */
 	hold: HoldStyleId;
-	/** Number key that selects it (1–7). */
+	/** Number key that selects it (1–8). */
 	slot: number;
 	/** Per hit, or per pellet. Explosions use `projectile.explosionDamage`. */
 	damage: number;
@@ -97,6 +101,8 @@ export interface WeaponDefinition {
 	equipTime: number;
 	melee?: MeleeTiming & { reach: number; arcDegrees: number };
 	projectile?: { speed: number; gravity: number; lifetime: number; explosionRadius: number; explosionDamage: number };
+	/** Thrown weapons: how hard it's thrown (m/s), its fuse (s) and blast. */
+	thrown?: { speed: number; fuse: number; explosionRadius: number; explosionDamage: number };
 	/** The player clip for an attack, and its playback rate (swings are timed to match it). */
 	animations: { attack: AnimationRef; speed: number };
 	sounds: { fire: SoundId; empty?: SoundId; reload?: SoundId; equip?: SoundId };
@@ -106,8 +112,8 @@ export interface WeaponDefinition {
 	pickupModel: string | null;
 }
 
-/** Slot 7 is kept free for a future weapon. */
-export const RESERVED_SLOTS: readonly number[] = [7];
+/** Slot 8 is kept free for a future weapon. */
+export const RESERVED_SLOTS: readonly number[] = [8];
 
 export const WEAPONS: readonly WeaponDefinition[] = [
 	{
@@ -143,7 +149,8 @@ export const WEAPONS: readonly WeaponDefinition[] = [
 		animations: { attack: "", speed: 1 },
 		sounds: { fire: "pistol", empty: "empty", reload: "reload", equip: "equip" },
 		effects: { muzzle: "pistol", impact: "bullet", tracer: false },
-		model: { file: "pistol.glb", length: 0.2, grip: { along: 0.25, below: 0.35 }, hands: { main: [0, -0.03, 0.02] } },
+		// A full-size polymer service pistol (blender/build_weapons.py).
+		model: { file: "pistol.glb", length: 0.218, muzzleAxis: "-z", grip: { along: 0.281, below: -0.209 }, hands: { main: [0, -0.03, 0.02] } },
 		pickupModel: null,
 	},
 	{
@@ -172,7 +179,8 @@ export const WEAPONS: readonly WeaponDefinition[] = [
 		animations: { attack: "", speed: 1 },
 		sounds: { fire: "shotgun", empty: "empty", reload: "reload", equip: "equip" },
 		effects: { muzzle: "shotgun", impact: "bullet", tracer: false },
-		model: { file: "shotgun.glb", length: 1.05, grip: { along: 0.3, below: 0.35 }, hands: { main: [0, -0.03, 0.02], off: [0, 0.005, -0.3] } },
+		// Pump action with walnut furniture; the off hand on the pump (blender/build_weapons.py).
+		model: { file: "shotgun.glb", length: 1.055, muzzleAxis: "-z", grip: { along: 0.35, below: -0.816 }, hands: { main: [0, -0.03, 0.02], off: [0, -0.03, -0.345] } },
 		pickupModel: null,
 	},
 	{
@@ -184,7 +192,24 @@ export const WEAPONS: readonly WeaponDefinition[] = [
 		animations: { attack: "", speed: 1 },
 		sounds: { fire: "rocket", empty: "empty", reload: "reload", equip: "equip" },
 		effects: { muzzle: "rocket", impact: "explosion", tracer: false },
-		model: { file: "rocket_launcher.glb", length: 1.2, grip: { along: 0.45, below: 0.4 }, hands: { main: [0, 0.02, 0], off: [0, 0.02, -0.28] } },
+		// Shoulder tube with a rocket loaded. Held by a point well under its grip, so the tube sits
+		// as high over the hands as the launcher hold expects (blender/build_weapons.py).
+		model: { file: "rocket_launcher.glb", length: 1.317, muzzleAxis: "-z", grip: { along: 0.34, below: 1.429 }, hands: { main: [0, 0.09, 0], off: [0, 0.095, -0.214] } },
+		pickupModel: null,
+	},
+	{
+		// One in the hand, the rest on the belt: a "reload" is reaching for the next.
+		id: "grenade", name: "Grenade", type: "thrown", hold: "grenade", slot: 7,
+		damage: 0, damageType: "explosive", fireRate: 1.1, automatic: false,
+		magazineSize: 1, startingAmmo: 2, maxAmmo: 10, reloadTime: 0.6, range: 45, spread: 0, pellets: 1,
+		recoil: { pitch: 0, yaw: 0 }, impulse: 0, equipTime: 0.35,
+		thrown: { speed: 19, fuse: 2.6, explosionRadius: 7, explosionDamage: 200 },
+		// Man_Punch's overarm drive is the throw; the grenade leaves the hand as the fist would land.
+		animations: { attack: "Punch", speed: 1.3 },
+		sounds: { fire: "swing", equip: "equip" },
+		effects: { muzzle: "none", impact: "explosion", tracer: false },
+		// Fuze end forward in the hand.
+		model: { file: "grenade.glb", length: 0.089, muzzleAxis: "+y", grip: { along: 0.336, below: 0 } },
 		pickupModel: null,
 	},
 ];
@@ -215,7 +240,8 @@ export function validateWeapons(weapons: readonly WeaponDefinition[]): string[] 
 		if (!(weapon.fireRate > 0)) problems.push(`${weapon.id} needs a positive fire rate`);
 		if ((weapon.type === "melee" || weapon.type === "unarmed") && !weapon.melee) problems.push(`${weapon.id} needs melee timing`);
 		if (weapon.type === "projectile" && !weapon.projectile) problems.push(`${weapon.id} needs projectile data`);
-		if ((weapon.type === "hitscan" || weapon.type === "projectile") && !(weapon.magazineSize > 0)) problems.push(`${weapon.id} needs a magazine`);
+		if (weapon.type === "thrown" && !weapon.thrown) problems.push(`${weapon.id} needs throw data`);
+		if ((weapon.type === "hitscan" || weapon.type === "projectile" || weapon.type === "thrown") && !(weapon.magazineSize > 0)) problems.push(`${weapon.id} needs a magazine`);
 	}
 	return problems;
 }

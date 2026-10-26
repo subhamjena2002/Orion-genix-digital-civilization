@@ -2,6 +2,7 @@ import { Quat, Vec3, type AppBase, type Entity } from "playcanvas";
 
 import { writePlayerAction } from "../player/PlayerPose";
 import { playerRig } from "../player/PlayerRig";
+import { WornVest } from "../player/WornVest";
 import type { HoldRequest } from "../player/WeaponPose";
 import { crashEffects } from "../traffic/CrashEffects";
 import { combatAudio } from "./CombatAudio";
@@ -11,6 +12,7 @@ import { HOLD_STYLES } from "./HoldStyles";
 import { inMeleeArc, type Ray } from "./HitTests";
 import { MeleeAttack } from "./MeleeAttack";
 import { scatter } from "./Scatter";
+import { THROW_GRAVITY, throwVelocity } from "./Throw";
 import { Projectiles } from "./Projectiles";
 import { publishCombatHud } from "./CombatHud";
 import { weaponById, WEAPONS, type WeaponDefinition, type WeaponId } from "./WeaponData";
@@ -108,6 +110,8 @@ export class PlayerCombat {
 	private readonly melee = new MeleeAttack(WEAPONS[0].melee!);
 	private readonly models: WeaponModels;
 	private readonly projectiles: Projectiles;
+	/** The plate carrier, worn while there's armour left. */
+	private readonly vest: WornVest;
 	private readonly event: DamageEvent = makeDamageEvent();
 	private readonly output: CombatOutput = { recoilPitch: 0, recoilYaw: 0, faceAim: false };
 	private readonly body: Listener;
@@ -121,6 +125,10 @@ export class PlayerCombat {
 	private sinceHurt = REGEN_DELAY;
 	private triggerReleased = true;
 	private swingAnimation = false;
+	/** Seconds left of a throw's clip, and until the grenade leaves the hand (0 once it has). */
+	private throwLeft = 0;
+	private releaseLeft = 0;
+	private readonly throwScratch = [0, 0, 0];
 	private readonly muzzle = new Vec3();
 	private readonly from = new Vec3();
 	private readonly to = new Vec3();
@@ -166,6 +174,7 @@ export class PlayerCombat {
 	public constructor(private readonly app: AppBase, private readonly player: Entity) {
 		this.models = new WeaponModels(app, app.root);
 		this.projectiles = new Projectiles(app);
+		this.vest = new WornVest(app);
 		const isAlive = () => this.health.alive;
 		this.body = {
 			id: this.source.id,
@@ -191,6 +200,11 @@ export class PlayerCombat {
 				const added = Math.max(0, Math.min(amount, MAX_ARMOUR - this.armour));
 				this.armour += added;
 				return added;
+			},
+			restoreHealth: () => {
+				const missing = this.health.max - this.health.current;
+				this.health.heal(missing);
+				return this.health.alive ? missing : 0;
 			},
 		};
 		setPlayerSupplies(this.supplies);
@@ -222,12 +236,14 @@ export class PlayerCombat {
 		this.body.z = context.z;
 		damageableMoved(this.body);
 		this.regenerate(dt);
+		this.vest.update(this.armour > 0);
 		updatePickups(dt);
 		this.collectPickups(context);
 
 		if (!context.active) {
-			// In a car or mid-carjack: put the weapon away and drop any swing.
+			// In a car or mid-carjack: put the weapon away and drop any swing or throw.
 			this.melee.cancel();
+			this.cancelThrow();
 			this.endSwingAnimation();
 			this.showWeapon(null);
 			// The weapon is away, so there is nothing left to be aiming at. This used to be
@@ -250,12 +266,15 @@ export class PlayerCombat {
 
 		const weapon = this.equipped;
 		if (weapon.type === "melee" || weapon.type === "unarmed") this.updateMelee(dt, input, weapon);
+		else if (weapon.type === "thrown") this.updateThrow(dt, input, weapon);
 		else this.updateGun(input, weapon);
 		if (!input.attackHeld) this.triggerReleased = true;
 
 		this.aimHold = Math.max(0, this.aimHold - dt);
-		this.output.faceAim = this.aimHold > 0 || this.melee.swinging;
+		this.output.faceAim = this.aimHold > 0 || this.melee.swinging || this.throwLeft > 0;
 		this.showWeapon(weapon);
+		// A grenade's in the hand until it's let go, and the next one only once it's been reached for.
+		if (weapon.type === "thrown" && this.shown) this.shown.root.enabled = this.inventory.current.magazine > 0 || this.releaseLeft > 0;
 		this.projectiles.update(dt);
 		this.publish();
 		return this.output;
@@ -283,7 +302,9 @@ export class PlayerCombat {
 		}
 		this.raise += ((this.aimHold > 0 ? 1 : 0) - this.raise) * (1 - Math.exp(-RAISE_RATE * dt));
 		const melee = weapon.type === "melee";
-		const target = melee && this.melee.swinging ? 0 : 1;
+		const thrown = weapon.type === "thrown";
+		// A swing or a throw lets go of the hold: the clip's arm carries the weapon.
+		const target = (melee && this.melee.swinging) || (thrown && this.throwLeft > 0) ? 0 : 1;
 		this.holdWeight += (target - this.holdWeight) * (1 - Math.exp(-(target > this.holdWeight ? 10 : 30) * dt));
 		const request = this.holdRequest;
 		request.style = HOLD_STYLES[weapon.hold];
@@ -295,7 +316,7 @@ export class PlayerCombat {
 		request.weight = this.holdWeight;
 		request.equip = this.inventory.equipProgress;
 		request.reload = this.inventory.reloading ? this.inventory.reloadProgress : -1;
-		request.attached = melee ? this.attachedToHand : null;
+		request.attached = melee || thrown ? this.attachedToHand : null;
 		rig.setHold(request);
 	}
 
@@ -343,6 +364,8 @@ export class PlayerCombat {
 	public reset(): void {
 		this.health.reset();
 		this.armour = 0;
+		this.throwLeft = 0;
+		this.releaseLeft = 0;
 		this.inventory.restock();
 		this.melee.cancel();
 		this.endSwingAnimation();
@@ -355,9 +378,12 @@ export class PlayerCombat {
 		unregisterDamageable(this.body);
 		this.models.destroy();
 		this.projectiles.destroy();
+		this.vest.destroy();
 	}
 
 	private handleSelection(input: CombatInput) {
+		// Mid-throw the grenade's committed: no swapping it for something else.
+		if (this.throwLeft > 0) return;
 		let changed = false;
 		if (input.slotPressed !== null) changed = this.inventory.selectSlot(input.slotPressed);
 		else if (input.wheel !== 0) changed = this.inventory.cycle(input.wheel > 0 ? 1 : -1);
@@ -449,6 +475,57 @@ export class PlayerCombat {
 			return;
 		}
 		for (let pellet = 0; pellet < weapon.pellets; pellet++) this.fireRound(weapon);
+	}
+
+	/**
+	 * A grenade: a press starts the overarm throw (the punch clip's drive), the grenade leaves the
+	 * hand partway through, lobbed in the arc that lands it where the crosshair is, and the hand
+	 * then reaches for the next one (the "reload").
+	 */
+	private updateThrow(dt: number, input: CombatInput, weapon: WeaponDefinition) {
+		if (this.releaseLeft > 0) {
+			this.releaseLeft -= dt;
+			if (this.releaseLeft <= 0) this.release(weapon);
+		}
+		if (this.throwLeft > 0) {
+			this.throwLeft -= dt;
+			if (this.throwLeft <= 0) this.endSwingAnimation();
+			return;
+		}
+		if (!input.attackPressed) return;
+		const result = this.inventory.fire();
+		if (result === "busy") return;
+		this.aimHold = AIM_HOLD_SECONDS;
+		if (result === "empty") {
+			if (weapon.sounds.empty) this.playWeaponSound(weapon.sounds.empty);
+			return;
+		}
+		this.throwLeft = THROW_SECONDS / weapon.animations.speed;
+		this.releaseLeft = THROW_RELEASE / weapon.animations.speed;
+		writePlayerAction(weapon.animations.attack || "Punch", weapon.animations.speed);
+		this.swingAnimation = true;
+		this.playWeaponSound(weapon.sounds.fire);
+	}
+
+	/** The grenade leaves the hand. */
+	private release(weapon: WeaponDefinition) {
+		this.releaseLeft = 0;
+		const context = this.context;
+		const thrown = weapon.thrown;
+		if (!context || !thrown) return;
+		this.muzzlePoint(weapon);
+		const aim = this.aimPoint(context.aimX, context.aimY, context.aimZ, weapon.range);
+		const [vx, vy, vz] = throwVelocity(this.muzzle.x, this.muzzle.y, this.muzzle.z, aim.x, aim.y, aim.z, thrown.speed, THROW_GRAVITY, this.throwScratch);
+		this.projectiles.throwGrenade(this.muzzle.x, this.muzzle.y, this.muzzle.z, vx, vy, vz, { fuse: thrown.fuse, explosionRadius: thrown.explosionRadius, explosionDamage: thrown.explosionDamage }, this.source);
+		broadcastDisturbance(context.x, context.z, FIGHT_NOTICE, { id: this.source.id, x: context.x, z: context.z, attackable: true });
+		if (this.inventory.current.definition.id === weapon.id && this.inventory.current.magazine === 0) this.inventory.reload();
+	}
+
+	/** Puts away a throw that hasn't let go yet: the grenade goes back in the hand. */
+	private cancelThrow() {
+		if (this.releaseLeft > 0 && this.inventory.current.definition.type === "thrown") this.inventory.current.magazine++;
+		this.releaseLeft = 0;
+		this.throwLeft = 0;
 	}
 
 	/**
@@ -660,13 +737,20 @@ export class PlayerCombat {
 			armour: this.armour,
 			toast: this.toast,
 			toastSerial: this.toastSerial,
-			showCrosshair: carried.definition.type === "hitscan" || carried.definition.type === "projectile",
+			showCrosshair: carried.definition.type === "hitscan" || carried.definition.type === "projectile" || carried.definition.type === "thrown",
 			slots: this.slotList,
 		});
 	}
 }
 
 const AIM_SCRATCH = new Vec3();
+
+/**
+ * A throw, in the clip's own seconds (scaled by the weapon's animation speed): Man_Punch runs
+ * 0.92 s and its arm is at full stretch about 0.32 s in, which is when the grenade goes.
+ */
+const THROW_SECONDS = 0.8;
+const THROW_RELEASE = 0.32;
 
 /** How quickly a gun comes up to aim (1/s). */
 const RAISE_RATE = 14;

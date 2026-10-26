@@ -13,6 +13,8 @@ export interface PlayerRig {
 	hand: GraphNode | null;
 	/** The right hand's middle finger base: the palm's centre is a little way from the wrist towards it. */
 	palm: GraphNode | null;
+	/** The upper spine: what's worn on the chest (body armour) hangs from it. */
+	chest: GraphNode | null;
 	/** True when the body can hold weapons itself (arms reached onto them); otherwise the weapon is carried at the hand. */
 	readonly holds: boolean;
 	/** What is held and how it's posed, for the next `apply`; null leaves the arms to the clips. */

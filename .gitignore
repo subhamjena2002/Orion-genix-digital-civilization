@@ -49,3 +49,7 @@ next-env.d.ts
 
 # wrangler dev secrets (GOOGLE_CLIENT_SECRET, TURNSTILE_SECRET): never commit
 .dev.vars*
+
+# Blender: Python bytecode and autosave backups
+__pycache__/
+*.blend1

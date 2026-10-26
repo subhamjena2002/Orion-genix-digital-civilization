@@ -1,6 +1,7 @@
 import { AIRFIELD_GATE, HELIPAD } from "../world/MilitaryBase";
 import { STANDS } from "../world/Airfield";
 import { HIGHWAY_GEOMETRY, HIGHWAYS, type Highway } from "../world/Highways";
+import { SAFEHOUSE_BAYS_LOCAL, SAFEHOUSE_DRIVEWAY_LOCAL, SAFEHOUSE_SITE, toWorld as toSafehouse, yawToWorld as safehouseYaw } from "../world/Safehouse";
 import { PARKED_PATROL_CARS, POLICE_STATION } from "../police/Police";
 import type { VehicleStyle } from "../traffic/Vehicles";
 import type { Checkpoint, Line, MissionDefinition, MissionSpawn, PersonLook } from "./MissionDirector";
@@ -23,22 +24,19 @@ import type { Checkpoint, Line, MissionDefinition, MissionSpawn, PersonLook } fr
  * much more.
  */
 
-/** The player's safehouse: a house in Hillcrest, its garage holding the cars they've earned. */
+/** The player's safehouse: a villa in Hillcrest (world/Safehouse), its garage holding the cars they've earned. */
+const [driveX, , driveZ] = toSafehouse(SAFEHOUSE_DRIVEWAY_LOCAL);
 export const SAFEHOUSE = {
 	label: "Safehouse",
-	x: -1,
-	z: -310,
+	x: SAFEHOUSE_SITE.x,
+	z: SAFEHOUSE_SITE.z,
 	/** Where the driveway meets the road. */
-	door: { x: -2, z: -295 },
+	door: { x: driveX, z: driveZ },
 	/** Garage bays: x, z and heading. Cars earned fill them in order. */
-	bays: [
-		{ x: -2, z: -302, yaw: 175 },
-		{ x: 10, z: -293, yaw: 85 },
-		{ x: -14, z: -293, yaw: 85 },
-		{ x: 22, z: -293, yaw: 85 },
-		{ x: -26, z: -293, yaw: 85 },
-		{ x: 34, z: -293, yaw: 85 },
-	],
+	bays: SAFEHOUSE_BAYS_LOCAL.map((bay) => {
+		const [x, , z] = toSafehouse([bay.x, 0, bay.z]);
+		return { x, z, yaw: safehouseYaw(bay.yaw) };
+	}),
 } as const;
 
 /** The chop shop: stolen cars go here and don't come back. */

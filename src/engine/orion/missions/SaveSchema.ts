@@ -10,7 +10,7 @@
 /** Bumped when the saved shape changes in a way an older reader can't follow. */
 export const SAVE_SCHEMA_VERSION = 1;
 
-export const SAVE_WEAPONS = ["fists", "sword", "pistol", "ar", "shotgun", "rocketLauncher"] as const;
+export const SAVE_WEAPONS = ["fists", "sword", "pistol", "ar", "shotgun", "rocketLauncher", "grenade"] as const;
 export const SAVE_FACTIONS = ["street", "sunset", "law", "meridian"] as const;
 /** What a new game starts with: fists, a blade and a pistol (Progress's STARTING_WEAPONS). */
 export const SAVE_STARTING_WEAPONS = ["fists", "sword", "pistol"] as const;

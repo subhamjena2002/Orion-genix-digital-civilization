@@ -1,165 +1,155 @@
 import { audioBus, AUDIBLE_DISTANCE, type Placement } from "./AudioBus";
-import { ENGINE_GRAIN_PROCESSOR, loadEngineGrainWorklet, setEngineFamily, type EngineRamp } from "./EngineGrainWorklet";
-import { engineHarmonicTable, engineState, ENGINE_VOICES, firingFrequency } from "./EngineVoices";
-import { ENGINE_PROCESSOR_NAME, loadEngineWorklet } from "./EngineWorklet";
-import { LoopVoice, preloadSounds, takeOf } from "./SoundBank";
-import { ENGINE_RAMPS } from "./SoundManifest";
-import type { VehicleStyle } from "../traffic/Vehicles";
+import { ENGINE_GRAIN_PROCESSOR, loadEngineGrainWorklet, setEngineAwake, setEngineFamily, type EngineFamilyData, type EngineLoop, type EngineRamp } from "./EngineGrainWorklet";
+import { engineState } from "./EngineVoices";
+import { AT_LISTENER, LoopVoice, playAt, playOneShot, preloadSounds, takeOf } from "./SoundBank";
+import { gearboxFor, VEHICLE_AUDIO, type VehicleAudioProfile } from "./VehicleAudioProfiles";
+import { ENGINE_FAMILIES, type EngineLoopMap } from "./VehicleSoundManifest";
 import { drivableCars } from "../traffic/Carjack";
 import type { OrionVehicle } from "../traffic/OrionVehicle";
 
 /**
- * Engine sound for the traffic, mixed from a small pool of synthesised voices.
+ * The sound of the traffic: every vehicle's engine, tyres, gear changes, air brakes, start and
+ * stop, mixed from a small pool of voices.
  *
- * A city's worth of cars can't each own an oscillator, so only the nearest few are heard — the
- * ones further off are inaudible under the ones in front of you anyway. Voices are handed
- * between cars as they come and go, fading rather than cutting so the swap isn't a click.
+ * A city's worth of cars can't each own a voice, so only the nearest few are heard (the player's
+ * own car always, emergency vehicles ahead of the queue) — the ones further off are inaudible
+ * under the ones in front of you anyway. Voices are handed between cars as they come and go,
+ * fading rather than cutting, and a voice with no car is put to sleep on the audio thread.
  *
- * Each voice plays a recorded engine: a studio recording of a real engine revving, scrubbed
- * granularly to the car's revs (EngineGrainWorklet) and blended between on-throttle and overrun
- * by load. Until the recordings have loaded, or where AudioWorklet isn't available, it falls back
- * to the synthesised engine: a pulse-by-pulse source (EngineWorklet) with induction noise and an
- * optional turbo, or as a last resort one oscillator carrying the harmonic stack.
+ * Each vehicle plays the recorded engine its profile names (VehicleAudioProfiles): a seamless
+ * idle loop, handing over to a granular rev ramp or to RPM layers as the revs rise
+ * (EngineGrainWorklet). Revs and gears are an audio model from road speed and pedal (see
+ * EngineVoices) — the driving model has no engine speed. Its tyres roll (a recorded tyre-only
+ * loop), squeal when the tyres are past their grip, and scrub under hard braking.
+ *
+ * Positions come from AudioBus: distance roll-off, pan, air absorption, and a physical Doppler
+ * shift from the vehicle's and the listener's real velocities (capped, and smoothed on the audio
+ * thread), so a car passing at speed drops a semitone as it goes by. Sitting in a car, the
+ * player hears that car from inside and everything else through the cabin.
+ *
+ * Nothing here loads or decodes in the frame loop: the recordings are fetched once the game is
+ * audible (SoundBank.preloadSounds) and each family is sent to the audio thread once.
  */
 
-/**
- * Which recorded engine each kind of vehicle uses, and how far it's pitched from the recording:
- * a van is the lorry's diesel a little higher, a wagon the saloon's engine a little lower.
- */
-const RECORDED_ENGINE: Readonly<Record<VehicleStyle, { family: string; shift: number; level: number }>> = {
-	sedan: { family: "car", shift: 1, level: 1 },
-	// The executive saloon: a big, quiet engine, shifting a little lower.
-	executive: { family: "car", shift: 0.92, level: 0.9 },
-	taxi: { family: "car", shift: 1, level: 1 },
-	police: { family: "car", shift: 0.94, level: 1.1 },
-	hatchback: { family: "car", shift: 1.08, level: 0.95 },
-	suv: { family: "car", shift: 0.86, level: 1.05 },
-	militaryWagon: { family: "car", shift: 0.8, level: 1.1 },
-	auto: { family: "car", shift: 1.45, level: 0.8 },
-	luxury: { family: "sport", shift: 1, level: 1.15 },
-	// The premium line: the V8s and the six on the sports recording, the V12 deeper and quieter,
-	// the electric hypercar high and soft (the recording as a motor's whine).
-	grandTourer: { family: "sport", shift: 0.9, level: 1.1 },
-	flagship: { family: "car", shift: 0.85, level: 0.85 },
-	grandSuv: { family: "sport", shift: 0.8, level: 1.0 },
-	roadster: { family: "sport", shift: 1.05, level: 1.1 },
-	hypercar: { family: "sport", shift: 1.6, level: 0.7 },
-	van: { family: "diesel", shift: 1.35, level: 0.85 },
-	ambulance: { family: "diesel", shift: 1.3, level: 0.9 },
-	serviceTruck: { family: "diesel", shift: 1.25, level: 0.9 },
-	towTruck: { family: "truck", shift: 1.08, level: 1 },
-	truck: { family: "truck", shift: 1, level: 1.05 },
-	bus: { family: "truck", shift: 0.95, level: 1 },
-	schoolBus: { family: "truck", shift: 1.02, level: 1 },
-	garbageTruck: { family: "truck", shift: 0.92, level: 1.05 },
-	fireTruck: { family: "truck", shift: 0.97, level: 1.1 },
-};
-/** Rear slide (see OrionVehicle.rearSlide) below which the tyres are only scrubbing, not squealing. */
+/** Rear or front slide (see OrionVehicle) below which the tyres are only scrubbing, not squealing. */
 const SKID_FROM = 0.1;
-/** Rear slide above SKID_FROM at which the squeal is full. */
+/** Slide above SKID_FROM at which the squeal is full. */
 const SKID_SPAN = 0.45;
 const SKID_LEVEL = 0.7;
 /**
  * Seconds for the squeal to build and to die away. The slide itself switches on and off in a
- * frame (the tyre is either past its grip or not); a squeal that followed it cut in and out like
- * a switch. Real rubber takes a moment to start singing and keeps going a moment after.
+ * frame; real rubber takes a moment to start singing and keeps going a moment after.
  */
 const SKID_ATTACK = 0.09;
 const SKID_RELEASE = 0.28;
-/**
- * Hard braking in a straight line: the tyres scrub on the edge of grip (deceleration, m/s²,
- * from where it starts to where it's at its loudest), well under a slide's squeal.
- */
+/** Hard braking in a straight line (deceleration, m/s²): the tyres scrub on the edge of grip. */
 const SCRUB_FROM = 8;
 const SCRUB_FULL = 12;
 const SCRUB_LEVEL = 0.32;
-/** Recorded engines against the synthesised ones' level scale. */
-const GRAIN_LEVEL = 1.5;
-/** Top of the low-pass (Hz) with the throttle shut and wide open: an engine opens up under load. */
-const GRAIN_DARK = 2600;
-const GRAIN_OPEN = 16000;
+/** The recorded engines' level in the mix. */
+const ENGINE_LEVEL = 1.5;
+/**
+ * Bottom of the low-pass (Hz) with the throttle shut; it opens towards the profile's brightness
+ * under load. (It used to open to 16 kHz: every close-miked rasp and valve tick came through.)
+ */
+const TONE_DARK = 1800;
+/** Tyres rolling: full at this road speed (m/s), and how loud in the player's car and outside. */
+const ROLL_FULL_SPEED = 30;
+const ROLL_LEVEL_OWN = 0.3;
+const ROLL_LEVEL = 0.55;
 
-/** How many engines are audible at once, the player's own car included. */
+/** How many vehicles are audible at once, the player's own included. */
 const MAX_VOICES = 6;
+/** Emergency vehicles with their lights on count as this much nearer when choosing who's heard. */
+const EMERGENCY_PRIORITY = 0.5;
 /** Seconds to fade a voice in or out when it changes car. */
 const SWAP_SECONDS = 0.12;
-/** Smoothing time constants: pitch tracks quickly, level and tone more slowly. */
-/** Pitch follows the revs closely, but not so closely that tiny speed changes make it warble. */
-// Lifting off or braking flips the throttle from full to none in one frame (keys aren't
-// analogue); the engine's note, level and brightness follow over a beat instead of snapping.
-const PITCH_SMOOTHING = 0.08;
-const TONE_SMOOTHING = 0.15;
+/** A voice with no car sleeps once it has faded out. */
+const SLEEP_AFTER = 0.6;
 /**
- * Sitting in a car, you hear that car — everything else is outside a closed cabin.
- *
- * The first cut got this wrong: the player's car was given a flat 0.85 while a lorry five metres
- * away kept its full distance gain of 0.78, so its bigger engine simply drowned the player's out.
- * Now the car you are in is at full level and everything else is ducked and muffled behind glass,
- * which is both what it should sound like and what the mix needs.
+ * Pitch follows the revs, eased so small speed changes and on/off keys glide rather than twitch;
+ * level and tone more slowly still.
  */
-const OWN_CAR_GAIN = 1.25;
-/** What other traffic drops to while the player is inside a car. */
+const PITCH_SMOOTHING = 0.14;
+const TONE_SMOOTHING = 0.25;
+/** The Doppler shift is eased over this long on the audio thread as well. */
+const DOPPLER_SMOOTHING = 0.25;
+/** The car the player sits in is heard from inside it, at this level. */
+const OWN_CAR_GAIN = 1.0;
+/** Share of the own car's full level it idles at: present, but a hum you can talk over. */
+const OWN_IDLE_SHARE = 0.4;
+/** What other traffic drops to, and how far its top end is rolled off (Hz), heard from a cabin. */
 const CABIN_DUCK = 0.32;
-/** And how far its top end is rolled off (Hz) — glass and steel take the treble out. */
 const CABIN_MUFFLE = 1400;
-/** Road and wind noise in the player's own car, at this road speed and above. */
-const ROAD_NOISE_FULL_SPEED = 30;
-const ROAD_NOISE_LEVEL = 0.12;
 /** Other traffic idles quietly: a street of idling cars was a constant drone under everything. */
 const TRAFFIC_IDLE_SHARE = 0.35;
-/** Steady induction hiss under the pulses, relative to each engine's noise level. */
-const INDUCTION_LEVEL = 0.4;
+/** Starts, stops and air brakes are heard within this distance (m). */
+const EVENT_RANGE = 70;
+/** Seconds the start one-shot's tail overlaps the engine fading in (prepare-vehicle-sounds.py OVERLAP). */
+const START_OVERLAP = 0.6;
+/** Air brakes: armed above this speed (m/s), released below this one, no more often than this (s). */
+const AIR_ARM_SPEED = 4;
+const AIR_RELEASE_SPEED = 0.6;
+const AIR_GAP = 8;
+/** The drive eases to this share of the load during a gear change: a dip, not a drop-out. */
+const SHIFT_LOAD = 0.45;
+
+/** What's remembered about each vehicle between frames, whether or not it has a voice. */
+interface CarSound {
+	running: boolean;
+	gear: number;
+	/** Audio-clock time the current gear change ends. */
+	shiftUntil: number;
+	/** Audio-clock time the engine started, and how long its start one-shot holds the idle back. */
+	startedAt: number;
+	startHold: number;
+	airArmed: boolean;
+	lastAir: number;
+}
 
 interface Voice {
 	car: OrionVehicle | null;
-	style: string;
-	gear: number;
-	/** The engine source: the pulse worklet, or the fallback oscillator. */
-	source: AudioWorkletNode | OscillatorNode;
-	/** The synthesised engine's level: shut once the recorded one is playing. */
-	synth: GainNode;
-	/** The recorded engine, scrubbed by revs; null where AudioWorklet isn't available. */
-	grain: AudioWorkletNode | null;
-	grainTone: BiquadFilterNode;
-	grainGain: GainNode;
-	/** The recorded engine family this voice is set to, once its recordings have loaded. */
+	/** The engine family the grain node is set to; null until set (or for an electric car). */
 	family: string | null;
-	/** Tyres screeching when the car slides. */
+	grain: AudioWorkletNode | null;
+	awake: boolean;
+	/** Audio-clock time after which a voice with no car goes to sleep. */
+	sleepAt: number;
+	tone: BiquadFilterNode;
+	output: GainNode;
+	panner: StereoPannerNode;
+	/** Tyres rolling, and tyres squealing. */
+	roll: LoopVoice;
+	rollPlace: Placement;
 	skid: LoopVoice;
-	/** Where the skid is heard from: the car, or the cabin for the player's own. */
 	skidPlace: Placement;
 	/** The squeal as it's heard, 0..1, eased towards how hard the tyres are working. */
 	skidAmount: number;
 	/** Speed last frame (m/s), for the deceleration; NaN until the voice has a car to measure. */
 	lastSpeed: number;
-	tone: BiquadFilterNode;
-	/** The exhaust's own resonance, so the engine has a body rather than being a bare stack. */
-	body: BiquadFilterNode;
-	noise: AudioBufferSourceNode;
-	noiseBand: BiquadFilterNode;
-	noiseGain: GainNode;
-	/** Turbo whistle: air through a narrow band, not a pure tone (which was piercing). */
-	turbo: BiquadFilterNode;
-	turboGain: GainNode;
-	output: GainNode;
-	panner: StereoPannerNode;
+}
+
+interface Candidate {
+	car: OrionVehicle;
+	score: number;
 }
 
 class EngineAudio {
 	private voices: Voice[] = [];
-	private readonly waves = new Map<string, PeriodicWave>();
 	private readonly place: Placement = { gain: 0, pan: 0, muffle: 20000, distance: 0 };
-	private roadNoise: { source: AudioBufferSourceNode; band: BiquadFilterNode; gain: GainNode } | null = null;
-	/** Whether the pulse source loaded; null until it has settled either way. */
-	private worklet: boolean | null = null;
-	private loadingWorklet = false;
-	/** Whether the granular player loaded; null until settled. */
+	private readonly states = new WeakMap<OrionVehicle, CarSound>();
+	/** Reused every frame: the vehicles worth hearing, best first. */
+	private readonly candidates: Candidate[] = [];
+	private candidateCount = 0;
+	private readonly wanted: OrionVehicle[] = [];
+	/** Whether the engine player loaded; null until it has settled either way. */
 	private grains: boolean | null = null;
+	private loadingWorklet = false;
 	private preloaded = false;
-	/** Each family's ramps, once their recordings have been decoded. */
-	private readonly ramps = new Map<string, EngineRamp[]>();
-	/** This frame's time step (s). */
+	/** Each family's recordings, once decoded. */
+	private readonly families = new Map<string, EngineFamilyData>();
 	private dt = 0;
+	private now = 0;
 
 	/** Called once a frame, after the listener has been moved. */
 	public update(dt: number): void {
@@ -167,189 +157,224 @@ class EngineAudio {
 		const bus = audioBus();
 		bus.tick(dt);
 		const context = bus.ensure();
-		const master = bus.channel("vehicles");
+		const master = bus.channel("engines");
 		if (!context || !master) return;
 		// Not while the loading screen is up: nothing is heard until it goes, and the recordings
-		// (a few MB) would only compete with the files the game needs to start. Until each one
-		// arrives its sound plays synthesised, as before.
+		// would only compete with the files the game needs to start.
 		if (!this.preloaded && bus.isAudible()) {
 			this.preloaded = true;
 			preloadSounds(context);
+			if (process.env.NODE_ENV !== "production") (globalThis as Record<string, unknown>).__orionVehicleAudio = this;
 		}
-		if (this.worklet === null || this.grains === null) {
-			// Voices wait for both sources, so none are built on the fallback by mistake.
+		if (this.grains === null) {
 			if (!this.loadingWorklet) {
 				this.loadingWorklet = true;
-				void loadEngineWorklet(context).then((loaded) => {
-					this.worklet = loaded;
-				});
 				void loadEngineGrainWorklet(context).then((loaded) => {
 					this.grains = loaded;
 				});
 			}
 			return;
 		}
-
-		const wanted = this.chooseCars();
-		this.assignVoices(context, master, wanted);
-		const own = wanted.find((car) => car.driver === "player") ?? null;
-		for (const voice of this.voices) this.driveVoice(context, voice, own !== null);
-		this.updateRoadNoise(context, master, own);
+		this.now = context.currentTime;
+		this.chooseCars();
+		this.assignVoices(context, master);
+		let playerDriving = false;
+		for (const car of this.wanted) if (car.driver === "player") playerDriving = true;
+		for (const voice of this.voices) this.driveVoice(voice, playerDriving);
 	}
 
-	/** The nearest cars worth hearing, player's own first. */
-	private chooseCars(): OrionVehicle[] {
-		const scored: { car: OrionVehicle; distance: number }[] = [];
+	/** The cars currently voiced, for checking the mix in development. */
+	public get voiced(): readonly (OrionVehicle | null)[] {
+		return this.voices.map((voice) => voice.car);
+	}
+
+	private stateOf(car: OrionVehicle): { state: CarSound; known: boolean } {
+		const existing = this.states.get(car);
+		if (existing) return { state: existing, known: true };
+		const state: CarSound = { running: false, gear: 0, shiftUntil: 0, startedAt: -Infinity, startHold: 0, airArmed: false, lastAir: -Infinity };
+		this.states.set(car, state);
+		return { state, known: false };
+	}
+
+	/** The cars worth hearing, best first; plays starts and stops as engines go on and off. */
+	private chooseCars() {
+		this.candidateCount = 0;
+		const bus = audioBus();
 		for (const car of drivableCars()) {
-			// Only engines that are running: an empty parked car (the station's patrol cars, the
-			// hospital's ambulances, one the player got out of) is silent. They used to idle for good,
-			// a steady drone from cars with nobody in them that took half the voices near the station.
-			if (!car.engineRunning || !car.entity.enabled) continue;
 			const position = car.entity.getPosition();
-			const placed = audioBus().place(position.x, position.y, position.z, this.place);
-			if (placed.distance > AUDIBLE_DISTANCE) continue;
-			// The car the player is sitting in is always the one they should hear most.
-			scored.push({ car, distance: car.driver === "player" ? -1 : placed.distance });
+			const placed = bus.place(position.x, position.y, position.z, this.place);
+			const running = car.engineRunning && car.entity.enabled;
+			const { state, known } = this.stateOf(car);
+			if (known && running !== state.running && placed.distance < EVENT_RANGE) this.engineSwitched(car, state, running, position.x, position.y, position.z);
+			state.running = running;
+			if (!running || placed.distance > AUDIBLE_DISTANCE) continue;
+			let score = placed.distance;
+			if (car.driver === "player") score = -1;
+			else if (car.emergency && car.lightsFlashing) score *= EMERGENCY_PRIORITY;
+			const slot = this.candidates[this.candidateCount] ?? (this.candidates[this.candidateCount] = { car, score });
+			slot.car = car;
+			slot.score = score;
+			this.candidateCount++;
 		}
-		scored.sort((a, b) => a.distance - b.distance);
-		return scored.slice(0, MAX_VOICES).map((entry) => entry.car);
+		// Only the first few matter: a partial selection, no sort of the whole city.
+		const wanted = this.wanted;
+		wanted.length = 0;
+		for (let pick = 0; pick < MAX_VOICES && pick < this.candidateCount; pick++) {
+			let best = pick;
+			for (let i = pick + 1; i < this.candidateCount; i++) if (this.candidates[i].score < this.candidates[best].score) best = i;
+			const swap = this.candidates[pick];
+			this.candidates[pick] = this.candidates[best];
+			this.candidates[best] = swap;
+			wanted.push(this.candidates[pick].car);
+		}
 	}
 
-	private assignVoices(context: AudioContext, master: GainNode, wanted: readonly OrionVehicle[]) {
-		while (this.voices.length < Math.min(MAX_VOICES, wanted.length)) {
-			this.voices.push(this.createVoice(context, master));
+	/** An engine starting (someone got in) or being switched off (they got out). */
+	private engineSwitched(car: OrionVehicle, state: CarSound, running: boolean, x: number, y: number, z: number) {
+		const profile = VEHICLE_AUDIO[car.style];
+		const family = profile.family ? ENGINE_FAMILIES[profile.family] : null;
+		if (running) {
+			state.startedAt = this.now;
+			state.startHold = 0;
+			state.gear = 0;
+			if (family?.start && playAt(family.start.sound, x, y, z, { level: profile.level * 1.1, variation: 0.02, channel: "engines" })) {
+				state.startHold = Math.max(0, family.start.seconds - START_OVERLAP);
+			}
+			return;
 		}
-		const taken = new Set<OrionVehicle>();
+		// Switched off, not stalled in a crash or burnt out: those have their own noise.
+		if (car.driver === "parked" && family?.stop) playAt(family.stop.sound, x, y, z, { level: profile.level * 1.1, variation: 0.02, channel: "engines" });
+	}
+
+	private assignVoices(context: AudioContext, master: GainNode) {
+		const wanted = this.wanted;
+		while (this.voices.length < Math.min(MAX_VOICES, wanted.length)) this.voices.push(this.createVoice(context, master));
 		for (const voice of this.voices) {
-			if (voice.car && wanted.includes(voice.car)) taken.add(voice.car);
-			else voice.car = null;
+			if (voice.car && !wanted.includes(voice.car)) {
+				voice.car = null;
+				voice.sleepAt = this.now + SLEEP_AFTER;
+			}
 		}
-		const free = this.voices.filter((voice) => voice.car === null);
 		for (const car of wanted) {
-			if (taken.has(car)) continue;
-			const voice = free.pop();
-			if (!voice) break;
-			this.retune(context, voice, car);
+			if (this.voices.some((voice) => voice.car === car)) continue;
+			const free = this.voices.find((voice) => voice.car === null);
+			if (!free) break;
+			this.retune(free, car);
 		}
 	}
 
-	/** Points a voice at a different car: new waveform, new gearbox, faded back in. */
-	private retune(context: AudioContext, voice: Voice, car: OrionVehicle) {
-		const style = car.style;
+	/** Points a voice at a different car, faded back in from silence. */
+	private retune(voice: Voice, car: OrionVehicle) {
 		voice.car = car;
-		voice.gear = 0;
 		voice.skidAmount = 0;
 		voice.lastSpeed = Number.NaN;
-		if (voice.style !== style) {
-			voice.style = style;
-			this.voiceSource(context, voice.source, style);
-			voice.family = null;
-		}
-		const now = context.currentTime;
+		const family = VEHICLE_AUDIO[car.style].family;
+		if (voice.family !== family) voice.family = null;
+		const now = this.now;
 		voice.output.gain.cancelScheduledValues(now);
 		voice.output.gain.setValueAtTime(0.0001, now);
 	}
 
-	private driveVoice(context: AudioContext, voice: Voice, playerDriving: boolean) {
+	private driveVoice(voice: Voice, playerDriving: boolean) {
 		const car = voice.car;
-		const now = context.currentTime;
+		const now = this.now;
 		if (!car) {
 			voice.output.gain.setTargetAtTime(0.0001, now, SWAP_SECONDS);
 			voice.skidAmount = 0;
 			voice.lastSpeed = Number.NaN;
 			voice.skid.set(0, voice.skidPlace);
+			voice.roll.set(0, voice.rollPlace);
+			if (voice.awake && voice.grain && now >= voice.sleepAt) {
+				setEngineAwake(voice.grain, false);
+				voice.awake = false;
+			}
 			return;
 		}
-		const voicing = ENGINE_VOICES[car.style] ?? ENGINE_VOICES.sedan;
+		const profile = VEHICLE_AUDIO[car.style];
+		const { state } = this.stateOf(car);
+		const bus = audioBus();
 		const position = car.entity.getPosition();
-		const placed = audioBus().place(position.x, position.y, position.z, this.place);
-		const state = engineState(voicing, car.currentSpeed, car.throttle, voice.gear);
-		voice.gear = state.gear;
-
+		const placed = bus.place(position.x, position.y, position.z, this.place);
 		const own = car.driver === "player";
-		const recorded = this.driveGrain(voice, car.style, state, voicing, placed, own, playerDriving, now);
-		this.driveSkid(voice, car, placed, own, playerDriving);
-		// The synthesised engine stands in only until the recorded one is playing.
-		voice.synth.gain.setTargetAtTime(recorded ? 0 : 1, now, SWAP_SECONDS);
-		const firing = firingFrequency(voicing, state.rpm);
-		if (voice.source instanceof OscillatorNode) {
-			// Half the firing frequency: the waveform carries the firing orders on its even
-			// harmonics and the half-orders on the odd ones (see engineHarmonicTable).
-			voice.source.frequency.setTargetAtTime(Math.max(8, firing / 2), now, PITCH_SMOOTHING);
-		} else {
-			voice.source.parameters.get("firing")?.setTargetAtTime(firing, now, PITCH_SMOOTHING);
-			voice.source.parameters.get("load")?.setTargetAtTime(state.load, now, TONE_SMOOTHING);
+		const doppler = own ? 1 : bus.doppler(position.x, position.y, position.z, car.velocityX, car.velocityZ);
+		const speed = Math.abs(car.currentSpeed);
+
+		// The audio gearbox, and a gear change: the drive cut for a moment, the revs falling to the new gear.
+		const throttle = car.throttle;
+		const engine = engineState(gearboxFor(car.style), speed, throttle, state.gear);
+		if (engine.gear > state.gear && throttle > 0.2 && profile.shiftSeconds > 0) {
+			state.shiftUntil = now + profile.shiftSeconds;
+			if (own && profile.manual) playOneShot("gear-lever", AT_LISTENER, { level: 0.3, variation: 0.06, channel: "transmission" });
 		}
-		const revs = (state.rpm - voicing.idleRpm) / Math.max(1, voicing.redlineRpm - voicing.idleRpm);
-		const open = voicing.brightness[0] + (voicing.brightness[1] - voicing.brightness[0]) * Math.max(revs, state.load * 0.6);
-		// Other traffic is heard through the cabin when the player is in a car.
-		const ceiling = playerDriving && !own ? Math.min(placed.muffle, CABIN_MUFFLE) : placed.muffle;
-		voice.tone.frequency.setTargetAtTime(Math.min(open, ceiling), now, TONE_SMOOTHING);
-		voice.body.frequency.setTargetAtTime(voicing.resonanceHz, now, TONE_SMOOTHING);
+		state.gear = engine.gear;
+		const shifting = now < state.shiftUntil;
+		const load = shifting ? engine.load * SHIFT_LOAD : engine.load;
+		const revs = Math.max(0, Math.min(1, (engine.rpm - profile.idleRpm) / Math.max(1, profile.redlineRpm - profile.idleRpm)));
 
-		voice.noiseBand.frequency.setTargetAtTime(voicing.noiseCentre * (0.8 + revs * 0.6), now, TONE_SMOOTHING);
-		voice.noiseGain.gain.setTargetAtTime(recorded ? 0.0001 : voicing.noiseLevel * INDUCTION_LEVEL * (0.45 + state.load * 0.55), now, TONE_SMOOTHING);
-
-		const boost = Math.max(0, revs - 0.25) * state.load;
-		if (voicing.turboHz > 0) voice.turbo.frequency.setTargetAtTime(voicing.turboHz * (0.6 + revs * 0.4), now, TONE_SMOOTHING);
-		voice.turboGain.gain.setTargetAtTime(voicing.turboHz > 0 && !recorded ? Math.max(0.0001, boost * 0.35) : 0.0001, now, TONE_SMOOTHING);
-
-		// Its own car is heard from inside it, so distance doesn't apply; everything else ducks.
+		// Heard from inside the player's own car; everything else ducked and muffled by the cabin.
 		const distanceGain = own ? OWN_CAR_GAIN : placed.gain * (playerDriving ? CABIN_DUCK : 1);
-		const idle = own ? 0.5 : TRAFFIC_IDLE_SHARE;
-		const level = voicing.level * distanceGain * (idle + state.load * (1 - idle)) * damageRattle(car);
-		voice.output.gain.setTargetAtTime(Math.max(0.0001, level), now, SWAP_SECONDS);
+		const ceiling = own ? 20000 : playerDriving ? Math.min(placed.muffle, CABIN_MUFFLE) : placed.muffle;
+		const startGate = Math.max(0, Math.min(1, (now - state.startedAt - state.startHold) / START_OVERLAP));
+
+		const sounding = this.driveEngine(voice, profile, revs, load, shifting, doppler, ceiling);
+		const idle = own ? OWN_IDLE_SHARE : TRAFFIC_IDLE_SHARE;
+		const level = sounding ? ENGINE_LEVEL * profile.level * distanceGain * (idle + load * (1 - idle)) * startGate * damageRattle(car, now) : 0;
+		// Lifting off or flooring it (keys aren't analogue) swells and settles rather than switching.
+		voice.output.gain.setTargetAtTime(Math.max(0.0001, level), now, TONE_SMOOTHING);
 		voice.panner.pan.setTargetAtTime(own ? 0 : placed.pan, now, TONE_SMOOTHING);
+
+		this.driveTyres(voice, car, profile, speed, placed, own, playerDriving, doppler);
+		this.driveAirBrakes(car, profile, state, speed, position.x, position.y, position.z, placed.distance);
 	}
 
-	/**
-	 * Steers the recorded engine for this voice's car. Returns false (leaving the synthesised one
-	 * playing) until that engine's recordings have loaded.
-	 */
-	private driveGrain(
-		voice: Voice,
-		style: VehicleStyle,
-		state: { rpm: number; load: number },
-		voicing: { idleRpm: number; redlineRpm: number },
-		placed: Placement,
-		own: boolean,
-		playerDriving: boolean,
-		now: number,
-	): boolean {
+	/** Steers the recorded engine; false (and silent) until its recordings have loaded, or for an electric car. */
+	private driveEngine(voice: Voice, profile: VehicleAudioProfile, revs: number, load: number, shifting: boolean, doppler: number, ceiling: number): boolean {
 		const grain = voice.grain;
-		const recording = RECORDED_ENGINE[style] ?? RECORDED_ENGINE.sedan;
-		if (!grain) return false;
-		if (voice.family !== recording.family) {
-			if (!setEngineFamily(grain, recording.family, () => this.rampsFor(recording.family))) return false;
-			voice.family = recording.family;
+		const familyName = profile.family;
+		if (!grain || !familyName) return false;
+		const data = this.familyData(familyName);
+		if (!data) return false;
+		if (voice.family !== familyName) {
+			if (!setEngineFamily(grain, familyName, () => data)) return false;
+			voice.family = familyName;
 		}
-		const ramps = this.ramps.get(recording.family);
-		if (!ramps) return false;
-		const pitch = ramps[0].pitch;
-		const low = pitch[0];
-		const high = pitch[pitch.length - 1];
-		const revs = Math.max(0, Math.min(1, (state.rpm - voicing.idleRpm) / Math.max(1, voicing.redlineRpm - voicing.idleRpm)));
-		const load = Math.max(0, Math.min(1, (state.load - 0.15) / 0.6));
-		grain.parameters.get("hz")?.setTargetAtTime(low + (high - low) * revs, now, PITCH_SMOOTHING);
-		grain.parameters.get("load")?.setTargetAtTime(load, now, TONE_SMOOTHING);
-		grain.parameters.get("shift")?.setTargetAtTime(recording.shift, now, TONE_SMOOTHING);
-		const open = GRAIN_DARK + (GRAIN_OPEN - GRAIN_DARK) * (0.25 + 0.75 * load) * (0.6 + 0.4 * revs);
-		const ceiling = playerDriving && !own ? Math.min(placed.muffle, CABIN_MUFFLE) : placed.muffle;
-		voice.grainTone.frequency.setTargetAtTime(Math.min(open, own ? 20000 : ceiling), now, TONE_SMOOTHING);
-		voice.grainGain.gain.setTargetAtTime(GRAIN_LEVEL * recording.level * (0.65 + 0.35 * load), now, TONE_SMOOTHING);
+		if (!voice.awake) {
+			setEngineAwake(grain, true);
+			voice.awake = true;
+		}
+		const now = this.now;
+		const low = data.idle?.hz ?? lowestPitch(data);
+		const high = highestPitch(data);
+		const hz = low + (high - low) * revs;
+		// Through a gear change the revs fall to the new gear over the shift, not in one jump.
+		grain.parameters.get("hz")?.setTargetAtTime(hz, now, shifting ? profile.shiftSeconds * 0.35 : PITCH_SMOOTHING);
+		grain.parameters.get("load")?.setTargetAtTime(Math.max(0, Math.min(1, (load - 0.15) / 0.6)), now, TONE_SMOOTHING);
+		grain.parameters.get("shift")?.setTargetAtTime(profile.shift * doppler, now, DOPPLER_SMOOTHING);
+		const dark = Math.min(TONE_DARK, profile.brightness * 0.6);
+		const open = dark + (profile.brightness - dark) * (0.25 + 0.75 * load) * (0.6 + 0.4 * revs);
+		voice.tone.frequency.setTargetAtTime(Math.min(open, ceiling), now, TONE_SMOOTHING);
 		return true;
 	}
 
 	/**
-	 * Tyre squeal from how hard the car's rear is sliding, and a lighter scrub under hard braking;
-	 * eased in and out, and growing gently from a slip into a full slide.
+	 * Tyres: rolling on the road with speed; squealing from how far the rear or front is past its
+	 * grip (eased in and out, squared, so a light slip whispers and only a real slide screams);
+	 * and a lighter scrub under hard braking. Ordinary cornering is within grip and is silent.
 	 */
-	private driveSkid(voice: Voice, car: OrionVehicle, placed: Placement, own: boolean, playerDriving: boolean) {
+	private driveTyres(voice: Voice, car: OrionVehicle, profile: VehicleAudioProfile, speed: number, placed: Placement, own: boolean, playerDriving: boolean, doppler: number) {
+		const roll = Math.min(1, speed / ROLL_FULL_SPEED);
+		const rollPlace = voice.rollPlace;
+		rollPlace.gain = own ? 1 : placed.gain * (playerDriving ? CABIN_DUCK : 1);
+		rollPlace.pan = own ? 0 : placed.pan;
+		rollPlace.muffle = own ? 9000 : playerDriving ? Math.min(placed.muffle, CABIN_MUFFLE) : placed.muffle;
+		rollPlace.distance = placed.distance;
+		voice.roll.set(profile.tyres * (own ? ROLL_LEVEL_OWN : ROLL_LEVEL) * roll ** 1.3, rollPlace, (0.8 + 0.4 * roll) * doppler, 12000);
+
 		const dt = this.dt;
-		const speed = Math.abs(car.currentSpeed);
 		const decel = dt > 0 && Number.isFinite(voice.lastSpeed) ? (voice.lastSpeed - speed) / dt : 0;
 		voice.lastSpeed = speed;
-		const slide = smoothstep((car.rearSlide - SKID_FROM) / SKID_SPAN) * Math.min(1, speed / 6);
+		const slip = Math.max(car.rearSlide, car.frontSlide * 0.8);
+		const slide = smoothstep((slip - SKID_FROM) / SKID_SPAN) * Math.min(1, speed / 6);
 		const scrub = SCRUB_LEVEL * smoothstep((decel - SCRUB_FROM) / (SCRUB_FULL - SCRUB_FROM)) * smoothstep((speed - 2) / 10);
 		const target = Math.max(slide, scrub);
 		const time = target > voice.skidAmount ? SKID_ATTACK : SKID_RELEASE;
@@ -360,52 +385,44 @@ class EngineAudio {
 		place.pan = own ? 0 : placed.pan;
 		place.muffle = own ? 14000 : playerDriving ? Math.min(placed.muffle, CABIN_MUFFLE) : placed.muffle;
 		place.distance = placed.distance;
-		// Squared: a light slip whispers, only a real slide screams. The pitch rises a touch with
-		// speed and with how hard it's sliding, as a tyre's does.
-		voice.skid.set(SKID_LEVEL * amount * amount, place, 0.9 + 0.14 * Math.min(1, speed / 30) + 0.06 * amount, 15000);
+		voice.skid.set(SKID_LEVEL * amount * amount, place, (0.9 + 0.14 * roll + 0.06 * amount) * doppler, 15000);
 	}
 
-	/** A family's ramps from its decoded recordings and the manifest's pitch maps; null until loaded. */
-	private rampsFor(family: string): EngineRamp[] | null {
-		const cached = this.ramps.get(family);
+	/** A lorry or bus coming to a stop lets its air brakes go: once per stop, not on every crawl. */
+	private driveAirBrakes(car: OrionVehicle, profile: VehicleAudioProfile, state: CarSound, speed: number, x: number, y: number, z: number, distance: number) {
+		if (!profile.airBrakes) return;
+		if (speed > AIR_ARM_SPEED) state.airArmed = true;
+		if (!state.airArmed || speed > AIR_RELEASE_SPEED) return;
+		state.airArmed = false;
+		if (distance > EVENT_RANGE || this.now - state.lastAir < AIR_GAP) return;
+		state.lastAir = this.now;
+		playAt("air-brake", x, y + 1, z, { level: 0.55, variation: 0.06, channel: "transmission" });
+	}
+
+	/** A family's recordings from the manifest and the decoded files; null until they've all loaded. */
+	private familyData(name: string): EngineFamilyData | null {
+		const cached = this.families.get(name);
 		if (cached) return cached;
-		const maps = ENGINE_RAMPS[family];
-		if (!maps) return null;
+		const map = ENGINE_FAMILIES[name];
+		if (!map) return null;
+		const idle = map.idle ? loopOf(map.idle) : null;
+		if (map.idle && !idle) return null;
+		const layers: EngineLoop[] = [];
+		for (const layer of map.layers) {
+			const loop = loopOf(layer);
+			if (!loop) return null;
+			layers.push(loop);
+		}
 		const ramps: EngineRamp[] = [];
-		for (const map of maps) {
-			const buffer = takeOf(map.sound);
+		for (const ramp of map.ramps) {
+			const buffer = takeOf(ramp.sound);
 			if (!buffer) return null;
 			const rate = buffer.sampleRate;
-			ramps.push({
-				samples: buffer.getChannelData(0),
-				pitch: Float32Array.from(map.pitch),
-				position: Float32Array.from(map.time, (t) => t * rate),
-			});
+			ramps.push({ samples: buffer.getChannelData(0), pitch: Float32Array.from(ramp.pitch), position: Float32Array.from(ramp.time, (t) => t * rate) });
 		}
-		this.ramps.set(family, ramps);
-		return ramps;
-	}
-
-	/** Tyre and wind noise, only for the car the player is sitting in. */
-	private updateRoadNoise(context: AudioContext, master: GainNode, own: OrionVehicle | null) {
-		if (!this.roadNoise) {
-			const source = audioBus().startNoise(context);
-			if (!source) return;
-			const band = context.createBiquadFilter();
-			band.type = "bandpass";
-			// Tyre roar is low; the old band reached 1.8 kHz and was heard as hiss.
-			band.frequency.value = 180;
-			band.Q.value = 0.6;
-			const gain = context.createGain();
-			gain.gain.value = 0.0001;
-			source.connect(band).connect(gain).connect(master);
-			this.roadNoise = { source, band, gain };
-		}
-		const now = context.currentTime;
-		const speed = own ? own.currentSpeed : 0;
-		const fraction = Math.min(1, speed / ROAD_NOISE_FULL_SPEED);
-		this.roadNoise.band.frequency.setTargetAtTime(140 + fraction * 380, now, TONE_SMOOTHING);
-		this.roadNoise.gain.gain.setTargetAtTime(Math.max(0.0001, fraction * ROAD_NOISE_LEVEL), now, TONE_SMOOTHING);
+		const data: EngineFamilyData = { idle, ramps, layers };
+		this.families.set(name, data);
+		return data;
 	}
 
 	private createVoice(context: AudioContext, master: GainNode): Voice {
@@ -414,96 +431,42 @@ class EngineAudio {
 		const panner = context.createStereoPanner();
 		const tone = context.createBiquadFilter();
 		tone.type = "lowpass";
-		tone.frequency.value = 2000;
-		tone.Q.value = 0.7;
-		// A peak where the exhaust resonates, which is most of what gives an engine its chest.
-		const body = context.createBiquadFilter();
-		body.type = "peaking";
-		body.frequency.value = 140;
-		body.Q.value = 1.1;
-		body.gain.value = 7;
-		tone.connect(body).connect(output).connect(panner).connect(master);
-
-		const source = this.worklet
-			? new AudioWorkletNode(context, ENGINE_PROCESSOR_NAME, { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] })
-			: context.createOscillator();
-		this.voiceSource(context, source, "sedan");
-		const synth = context.createGain();
-		source.connect(synth).connect(tone);
-		if (source instanceof OscillatorNode) {
-			source.frequency.value = 60;
-			source.start();
-		}
-
-		const noiseBand = context.createBiquadFilter();
-		noiseBand.type = "bandpass";
-		noiseBand.frequency.value = 1500;
-		noiseBand.Q.value = 0.7;
-		const noiseGain = context.createGain();
-		noiseGain.gain.value = 0.0001;
-		const noise = audioBus().startNoise(context);
-		noise?.connect(noiseBand).connect(noiseGain).connect(tone);
-
-		// One turbo per voice, silent unless the car it's playing has one: the same noise through
-		// a narrow band, which whistles like air rather than beeping like a tone generator.
-		const turbo = context.createBiquadFilter();
-		turbo.type = "bandpass";
-		turbo.frequency.value = 3000;
-		turbo.Q.value = 9;
-		const turboGain = context.createGain();
-		turboGain.gain.value = 0.0001;
-		noise?.connect(turbo).connect(turboGain).connect(output);
-
-		// The recorded engine: its own brightness control, straight to the output (the recording
-		// already has the exhaust body that the synthesised engine needs the peak filter for).
+		tone.frequency.value = 8000;
+		tone.Q.value = 0.5;
+		tone.connect(output).connect(panner).connect(master);
 		const grain = this.grains
 			? new AudioWorkletNode(context, ENGINE_GRAIN_PROCESSOR, { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] })
 			: null;
-		const grainTone = context.createBiquadFilter();
-		grainTone.type = "lowpass";
-		grainTone.frequency.value = 8000;
-		grainTone.Q.value = 0.5;
-		const grainGain = context.createGain();
-		grainGain.gain.value = 0;
-		grain?.connect(grainTone).connect(grainGain).connect(output);
-
+		grain?.connect(tone);
 		return {
-			car: null, style: "sedan", gear: 0, family: null,
-			skid: new LoopVoice("skid", 0.04, "vehicles"), skidPlace: { gain: 0, pan: 0, muffle: 20000, distance: 0 },
+			car: null, family: null, grain, awake: false, sleepAt: 0, tone, output, panner,
+			roll: new LoopVoice("tyre-roll", 0.12, "tyres"), rollPlace: { gain: 0, pan: 0, muffle: 20000, distance: 0 },
+			skid: new LoopVoice("skid", 0.04, "tyres"), skidPlace: { gain: 0, pan: 0, muffle: 20000, distance: 0 },
 			skidAmount: 0, lastSpeed: Number.NaN,
-			source, synth, grain, grainTone, grainGain, tone, body,
-			noise: noise as AudioBufferSourceNode, noiseBand, noiseGain,
-			turbo, turboGain, output, panner,
 		};
-	}
-
-	/** Sets a voice's source up for an engine style. */
-	private voiceSource(context: AudioContext, source: AudioWorkletNode | OscillatorNode, style: string) {
-		if (source instanceof OscillatorNode) {
-			source.setPeriodicWave(this.waveFor(context, style));
-			return;
-		}
-		const voicing = ENGINE_VOICES[style as keyof typeof ENGINE_VOICES] ?? ENGINE_VOICES.sedan;
-		source.port.postMessage(voicing.pulse);
-	}
-
-	/** The harmonic stack of one engine, as a single waveform (the fallback source). Built once per style. */
-	private waveFor(context: AudioContext, style: string): PeriodicWave {
-		const cached = this.waves.get(style);
-		if (cached) return cached;
-		const voicing = ENGINE_VOICES[style as keyof typeof ENGINE_VOICES] ?? ENGINE_VOICES.sedan;
-		const table = engineHarmonicTable(voicing);
-		const wave = context.createPeriodicWave(new Float32Array(table.length), Float32Array.from(table));
-		this.waves.set(style, wave);
-		return wave;
 	}
 }
 
-/** A damaged engine runs rough and loud; a healthy one doesn't. */
-function damageRattle(car: OrionVehicle): number {
+function loopOf(map: EngineLoopMap): EngineLoop | null {
+	const buffer = takeOf(map.sound);
+	return buffer ? { samples: buffer.getChannelData(0), hz: map.hz } : null;
+}
+
+function lowestPitch(data: EngineFamilyData): number {
+	return data.ramps.length > 0 ? data.ramps[0].pitch[0] : data.layers[0]?.hz ?? 40;
+}
+
+function highestPitch(data: EngineFamilyData): number {
+	if (data.ramps.length > 0) return data.ramps[0].pitch[data.ramps[0].pitch.length - 1];
+	return data.layers[data.layers.length - 1]?.hz ?? 200;
+}
+
+/** A damaged engine runs rough and loud: a slow, uneven surge rather than a steady note. */
+function damageRattle(car: OrionVehicle, time: number): number {
 	if (car.integrity >= 60) return 1;
 	const hurt = 1 - car.integrity / 60;
-	return 1 + hurt * 0.25 * (0.6 + Math.random() * 0.4);
+	const surge = 0.5 + 0.5 * Math.sin(time * 7.3) * Math.sin(time * 2.9 + 1.3);
+	return 1 + hurt * 0.25 * (0.6 + 0.4 * surge);
 }
 
 let engines: EngineAudio | null = null;

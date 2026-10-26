@@ -18,7 +18,7 @@ import {
 import { memo, useEffect, useState } from "react";
 
 import { weaponById, type WeaponId } from "@/engine/orion/combat/WeaponData";
-import { WeaponModels } from "@/engine/orion/combat/WeaponModels";
+import { loadContainer, WeaponModels } from "@/engine/orion/combat/WeaponModels";
 import { readPlayerPose } from "@/engine/orion/player/PlayerPose";
 import { KASPER_SHOWROOM } from "@/engine/orion/shops/ShopCatalog";
 import {
@@ -26,6 +26,7 @@ import {
 	KASPER_LOT_BAYS,
 	KASPER_LOT_SITE,
 	ORION_ARMS_CASE,
+	ORION_ARMS_GRENADES,
 	ORION_ARMS_ROOM,
 	ORION_ARMS_SITE,
 	ORION_ARMS_WALL,
@@ -308,6 +309,25 @@ function hangWeapon(app: AppBase, parent: PlayCanvasEntity, weapon: WeaponId, at
 	return models;
 }
 
+/** Stands a grenade on its base at `at`, fuze up, turned `yaw` degrees. */
+function standGrenade(app: AppBase, parent: PlayCanvasEntity, at: Point3, yaw: number): WeaponModels {
+	const mount = new PlayCanvasEntity("display-grenade");
+	parent.addChild(mount);
+	mount.setLocalPosition(at[0], at[1], at[2]);
+	// The model's fuze is along its -Z: tipped back a quarter, it points up.
+	mount.setLocalEulerAngles(90, 0, 0);
+	const holder = new PlayCanvasEntity("holder");
+	mount.addChild(holder);
+	holder.setLocalEulerAngles(0, 0, yaw);
+	const models = new WeaponModels(app, holder);
+	const visual = models.visualFor(weaponById("grenade"));
+	if (visual) visual.root.enabled = true;
+	return models;
+}
+
+/** The plate carrier players wear (see player/WornVest), as modelled on a body standing at the origin. */
+const VEST_MODEL = "/models/props/armour-vest.glb";
+
 // ---- Orion Arms ------------------------------------------------------------------------------
 
 function buildOrionArms(app: AppBase, root: PlayCanvasEntity, finish: MakeFinish, texture: MakeTexture) {
@@ -395,8 +415,6 @@ function buildOrionArms(app: AppBase, root: PlayCanvasEntity, finish: MakeFinish
 	const caseGlass = finish("arms-case-glass", "#cfe3ea", { gloss: 0.95, opacity: 0.18 });
 	const steel = finish("arms-steel", "#6a6f77", { gloss: 0.55, metalness: 0.6, fill: ROOM_FILL * 0.5 });
 	const ammo = finish("arms-ammo", "#ffffff", { gloss: 0.2, map: ammoMap, tiling: [3, 1], fill: ROOM_FILL });
-	const vestCloth = finish("arms-vest", "#1d2738", { gloss: 0.2, fill: ROOM_FILL * 0.7 });
-	const vestPlate = finish("arms-vest-plate", "#3c4c68", { gloss: 0.3, fill: ROOM_FILL * 0.7 });
 	const lamp = finish("arms-lamp", "#fff8ea", { gloss: 0.3, fill: 1.4 });
 	const signFace = finish("arms-sign", "#ffffff", { gloss: 0.3, map: sign, sign: 0.9 });
 
@@ -468,6 +486,12 @@ function buildOrionArms(app: AppBase, root: PlayCanvasEntity, finish: MakeFinish
 	box(entity, "case-glass", [0, counter.height + 0.17, counterZ], [counter.halfWidth * 2 - 0.1, 0.32, counter.depth - 0.08], caseGlass);
 	box(entity, "case-rail", [0, counter.height + 0.34, counterZ], [counter.halfWidth * 2, 0.03, counter.depth], steel);
 	for (const x of ORION_ARMS_CASE) models.push(hangWeapon(app, displays, "pistol", [x, counter.height + 0.06, counterZ], true));
+	// Six grenades in two rows on the velvet at the left end, each turned its own way.
+	for (let i = 0; i < 6; i++) {
+		const x = ORION_ARMS_GRENADES + ((i % 3) - 1) * 0.12;
+		const z = counterZ + (i < 3 ? -0.09 : 0.09);
+		models.push(standGrenade(app, displays, [x, counter.height + 0.05, z], i * 67));
+	}
 
 	// Ammunition on steel shelving down the left wall.
 	const shelves = room.shelves;
@@ -485,8 +509,8 @@ function buildOrionArms(app: AppBase, root: PlayCanvasEntity, finish: MakeFinish
 	shelfCollider.addComponent("collision", { type: "box", halfExtents: new Vec3(shelves.depth / 2, shelves.height / 2, shelfLength / 2) });
 	shelfCollider.addComponent("rigidbody", { type: "static" });
 
-	// A vest on a torso stand by the right-hand window, facing into the room: a dummy's grey chest
-	// and neck, the vest over it with its shoulder straps, front plate and a row of pouches.
+	// A vest on a torso stand by the right-hand window, facing into the room: a dummy's grey torso
+	// on a pole, wearing the same plate carrier the player does.
 	const [vx, , vz] = room.vest;
 	const vest = new PlayCanvasEntity("vest-stand");
 	entity.addChild(vest);
@@ -495,14 +519,19 @@ function buildOrionArms(app: AppBase, root: PlayCanvasEntity, finish: MakeFinish
 	const dummy = finish("arms-dummy", "#8d9096", { gloss: 0.35, fill: ROOM_FILL * 0.6 });
 	cylinder(vest, "vest-base", [0, 0.03, 0], [0.55, 0.06, 0.55], steel);
 	cylinder(vest, "vest-pole", [0, 0.5, 0], [0.06, 0.95, 0.06], steel);
-	box(vest, "dummy-waist", [0, 1.02, 0], [0.34, 0.16, 0.22], dummy);
-	box(vest, "dummy-chest", [0, 1.42, 0], [0.42, 0.5, 0.26], dummy);
-	cylinder(vest, "dummy-neck", [0, 1.74, 0], [0.12, 0.14, 0.12], dummy);
-	box(vest, "vest-body", [0, 1.36, 0], [0.48, 0.56, 0.31], vestCloth);
-	box(vest, "vest-plate", [0, 1.42, 0.165], [0.36, 0.36, 0.03], vestPlate);
-	for (const side of [-1, 1]) box(vest, `vest-strap-${side}`, [side * 0.14, 1.66, 0], [0.09, 0.06, 0.3], vestCloth);
-	for (const x of [-0.15, 0, 0.15]) box(vest, `vest-pouch-${x}`, [x, 1.15, 0.18], [0.12, 0.14, 0.06], vestPlate);
-	box(vest, "vest-belt", [0, 1.07, 0], [0.5, 0.05, 0.33], trim);
+	// Sized to sit inside the vest, which was fitted to the player's chest.
+	box(vest, "dummy-chest", [0, 1.22, 0], [0.22, 0.42, 0.15], dummy);
+	cylinder(vest, "dummy-neck", [0, 1.5, 0], [0.1, 0.16, 0.1], dummy);
+	const worn = new PlayCanvasEntity("vest-worn");
+	displays.addChild(worn);
+	worn.setLocalPosition(vx, 0, vz);
+	worn.setLocalEulerAngles(0, -90, 0);
+	loadContainer(app, VEST_MODEL).then((asset) => {
+		if (!asset || !worn.parent) return;
+		worn.addChild((asset.resource as { instantiateRenderEntity: () => PlayCanvasEntity }).instantiateRenderEntity());
+	}).catch(() => {
+		// The dummy stands bare.
+	});
 
 	return { entity, displays, models };
 }

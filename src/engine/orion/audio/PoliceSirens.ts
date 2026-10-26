@@ -1,5 +1,6 @@
 import { audioBus, type Placement } from "./AudioBus";
 import { LoopVoice } from "./SoundBank";
+import { VEHICLE_AUDIO, type SirenKind } from "./VehicleAudioProfiles";
 import { drivableCars } from "../traffic/Carjack";
 import type { OrionVehicle } from "../traffic/OrionVehicle";
 import { readWanted } from "../police/Wanted";
@@ -8,46 +9,62 @@ import { readWanted } from "../police/Wanted";
  * The siren of the nearest patrol car on a chase, or ambulance or fire engine with its beacons
  * going (driven by the player, out on a call, or turned on by a mission).
  *
- * A wail: a recorded siren (a generic electronic wail, no force's own tones), looped over whole
- * sweeps so the repeat isn't heard. Until it has loaded, a synthesised wail stands in: one tone
- * swept up and down by a slow second oscillator on the audio thread.
+ * Recorded sirens (generic electronic tones, no force's own), looped over whole sweeps so the
+ * repeat isn't heard: a police car wails, an ambulance plays the hi-lo, and a fire engine the
+ * wail pitched down a little (a stand-in until there's a mechanical siren recording; see
+ * docs/audio/vehicle-sound-manifest.md). The siren carries the same physical Doppler shift as
+ * the engines, so it drops as the vehicle passes; it plays into the player's "Sirens" level.
  *
- * One voice is plenty: several sirens at once turn into noise, and the nearest one is the one
- * that tells the player where the danger is.
+ * One siren at a time: several at once turn into noise, and the nearest one is the one that
+ * tells the player where the danger is. When the nearest changes kind, one fades out as the
+ * other fades in.
  */
 
-/** Centre of the sweep and how far either side of it it goes (Hz). */
-const WAIL_CENTRE = 1050;
-const WAIL_DEPTH = 430;
-/** One full sweep up and down, in seconds. */
-const WAIL_PERIOD = 3.2;
-const LEVEL = 0.32;
-/** Heard up to this far away. */
-const RANGE = 300;
+const LEVEL = 0.42;
+/** Heard up to this far away, fading out over the last stretch rather than cut at the edge. */
+const RANGE = 220;
+const FADE_FROM = 120;
+/**
+ * An ambulance or fire engine sounds its siren only while it's on the move (and for a few
+ * seconds after stopping, through a junction): parked at a scene, a crew leaves the beacons on
+ * and the siren off. It used to wail for as long as the beacons flashed, which at a call meant
+ * for good, from anywhere within 300 m: a siren the player could never get away from.
+ */
+const MOVING_SPEED = 2;
+const SIREN_HOLD = 4;
 const SMOOTHING = 0.08;
-
-interface SirenVoice {
-	tone: OscillatorNode;
-	sweep: OscillatorNode;
-	filter: BiquadFilterNode;
-	gain: GainNode;
-	panner: StereoPannerNode;
-}
-
-/** The recording's level against the synthesised wail's. */
-const RECORDED_LEVEL = 1.6;
+/** The fire engine's wail against the police car's. */
+const FIRE_RATE = 0.86;
+/**
+ * A siren is a horn speaker: its top end stops at this (Hz) however close. Its fundamental is
+ * under 2 kHz; above about 6 kHz is only the harsh edge that makes a siren grate.
+ */
+const CEILING = 6000;
 
 class PoliceSirens {
-	private voice: SirenVoice | null = null;
-	private readonly recorded = new LoopVoice("siren-wail", SMOOTHING, "vehicles");
+	private readonly voices: Record<SirenKind, LoopVoice> = {
+		wail: new LoopVoice("siren-wail", SMOOTHING, "sirens"),
+		hilo: new LoopVoice("siren-hilo", SMOOTHING, "sirens"),
+		fire: new LoopVoice("siren-wail", SMOOTHING, "sirens"),
+	};
 	private readonly place: Placement = { gain: 0, pan: 0, muffle: 20000, distance: 0 };
+	/** When each emergency vehicle was last moving (audio-clock seconds). */
+	private readonly lastMoving = new WeakMap<OrionVehicle, number>();
+
+	/** Whether an emergency vehicle with its beacons on should have its siren going. */
+	private emergencySiren(car: OrionVehicle, now: number): boolean {
+		// The player's own ambulance or fire engine: beacons, but no siren the player didn't ask for.
+		if (car.driver === "player" || !car.emergency || !car.lightsFlashing) return false;
+		if (Math.abs(car.currentSpeed) > MOVING_SPEED) this.lastMoving.set(car, now);
+		return now - (this.lastMoving.get(car) ?? -Infinity) < SIREN_HOLD;
+	}
 
 	/** Once a frame, after the listener has moved. */
 	public update(): void {
 		const bus = audioBus();
 		const context = bus.ensure();
-		const master = bus.channel("vehicles");
-		if (!context || !master) return;
+		if (!context) return;
+		const now = context.currentTime;
 
 		let nearest: OrionVehicle | null = null;
 		let nearestDistance = RANGE;
@@ -55,7 +72,7 @@ class PoliceSirens {
 		for (const car of drivableCars()) {
 			// Only units on the chase (a wreck, or one called off and heading back, is silent), and
 			// emergency vehicles with their lights on.
-			const sounding = (car.chasing && stars > 0) || (car.emergency && car.lightsFlashing);
+			const sounding = (car.chasing && stars > 0) || this.emergencySiren(car, now);
 			if (!sounding) continue;
 			const position = car.entity.getPosition();
 			const placed = bus.place(position.x, position.y, position.z, this.place);
@@ -65,59 +82,23 @@ class PoliceSirens {
 			}
 		}
 
-		const now = context.currentTime;
-		if (!nearest) {
-			if (this.voice) this.voice.gain.gain.setTargetAtTime(0.0001, now, SMOOTHING * 3);
-			this.recorded.set(0, this.place);
-			return;
+		const kind: SirenKind | null = nearest ? VEHICLE_AUDIO[nearest.style].siren ?? "wail" : null;
+		let doppler = 1;
+		if (nearest) {
+			const position = nearest.entity.getPosition();
+			bus.place(position.x, position.y, position.z, this.place);
+			if (nearest.driver !== "player") doppler = bus.doppler(position.x, position.y, position.z, nearest.velocityX, nearest.velocityZ);
 		}
-		const position = nearest.entity.getPosition();
-		const placed = bus.place(position.x, position.y, position.z, this.place);
-		if (this.recorded.ready) {
-			this.recorded.set(LEVEL * RECORDED_LEVEL, placed, 1, 9000);
-			if (this.voice) this.voice.gain.gain.setTargetAtTime(0.0001, now, SMOOTHING);
-			return;
+		const fade = nearest ? 1 - Math.max(0, Math.min(1, (this.place.distance - FADE_FROM) / (RANGE - FADE_FROM))) : 0;
+		for (const key of Object.keys(this.voices) as SirenKind[]) {
+			const rate = (key === "fire" ? FIRE_RATE : 1) * doppler;
+			this.voices[key].set(key === kind ? LEVEL * fade * fade : 0, this.place, rate, CEILING);
 		}
-		const voice = (this.voice ??= this.createVoice(context, master));
-		voice.gain.gain.setTargetAtTime(Math.max(0.0001, LEVEL * placed.gain), now, SMOOTHING);
-		voice.panner.pan.setTargetAtTime(placed.pan, now, SMOOTHING);
-		voice.filter.frequency.setTargetAtTime(Math.min(placed.muffle, 5000), now, SMOOTHING);
 	}
 
 	/** Stops the sound for good. */
 	public dispose(): void {
-		this.recorded.stop();
-		const voice = this.voice;
-		this.voice = null;
-		if (!voice) return;
-		voice.tone.stop();
-		voice.sweep.stop();
-		voice.panner.disconnect();
-	}
-
-	private createVoice(context: AudioContext, master: GainNode): SirenVoice {
-		const tone = context.createOscillator();
-		// A square wave filtered down: the hard, horn-like edge of a real siren speaker.
-		tone.type = "square";
-		tone.frequency.value = WAIL_CENTRE;
-		const sweep = context.createOscillator();
-		sweep.type = "triangle";
-		sweep.frequency.value = 1 / WAIL_PERIOD;
-		const depth = context.createGain();
-		depth.gain.value = WAIL_DEPTH;
-		sweep.connect(depth).connect(tone.frequency);
-
-		const filter = context.createBiquadFilter();
-		filter.type = "lowpass";
-		filter.frequency.value = 5000;
-		filter.Q.value = 0.8;
-		const gain = context.createGain();
-		gain.gain.value = 0.0001;
-		const panner = context.createStereoPanner();
-		tone.connect(filter).connect(gain).connect(panner).connect(master);
-		tone.start();
-		sweep.start();
-		return { tone, sweep, filter, gain, panner };
+		for (const voice of Object.values(this.voices)) voice.stop();
 	}
 }
 

@@ -69,11 +69,13 @@ export const ORION_ARMS: Shop = {
 		{ kind: "weapon", id: "shotgun", weapon: "shotgun", price: 1800, detail: "Pump action. Brutal up close" },
 		{ kind: "weapon", id: "ar", weapon: "ar", price: 4500, detail: "Automatic, steady at range" },
 		{ kind: "weapon", id: "rocket-launcher", weapon: "rocketLauncher", price: 15000, detail: "For the car that won't stop" },
+		{ kind: "weapon", id: "grenade", weapon: "grenade", price: 2500, detail: "Three frag grenades. Key 7, throw where you aim" },
 		{ kind: "ammo", id: "ammo-pistol", weapon: "pistol", rounds: 36, price: 150 },
 		{ kind: "ammo", id: "ammo-shotgun", weapon: "shotgun", rounds: 12, price: 240 },
 		{ kind: "ammo", id: "ammo-ar", weapon: "ar", rounds: 90, price: 450 },
 		{ kind: "ammo", id: "ammo-rockets", weapon: "rocketLauncher", rounds: 2, price: 1200 },
-		{ kind: "armour", id: "vest", price: 500, detail: "Takes the hits before you do" },
+		{ kind: "ammo", id: "ammo-grenades", weapon: "grenade", rounds: 3, price: 900 },
+		{ kind: "armour", id: "vest", price: 500, detail: "Plate carrier. Takes the hits before you do" },
 	],
 };
 

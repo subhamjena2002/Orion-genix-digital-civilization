@@ -109,7 +109,7 @@ async function fileExists(url: string): Promise<boolean> {
  * screen has gone: the placeholder shape holds until then, and the rifle (2.3 MB, carried by every
  * posted officer) would otherwise be part of what the game has to download before it can start.
  */
-function loadContainer(app: AppBase, url: string): Promise<Asset | null> {
+export function loadContainer(app: AppBase, url: string): Promise<Asset | null> {
 	let pending = containers.get(url);
 	if (!pending) {
 		pending = afterLoadingScreen().then(() => fileExists(url)).then((found) => {
@@ -177,7 +177,10 @@ function fitModel(model: Entity, spec: WeaponModelSpec, muzzleOut: Vec3): Entity
 	const centre = bounds.center;
 	const rearEnd = centre.clone().add(back.clone().mulScalar(longHalf));
 	const grip = rearEnd.clone().add(forward.clone().mulScalar(spec.grip.along * longHalf * 2)).sub(up.clone().mulScalar(spec.grip.below * upHalf));
-	const muzzleEnd = centre.clone().add(forward.clone().mulScalar(longHalf));
+	// The model's own mark for where shots leave, when it has one: a pistol's bore is well above
+	// the middle of its bounds, which run down to the bottom of the grip.
+	const marked = model.findByName("muzzle-point");
+	const muzzleEnd = marked ? pointIn(model, marked.getPosition()) : centre.clone().add(forward.clone().mulScalar(longHalf));
 
 	const wrapper = new Entity("weapon-model");
 	wrapper.addChild(model);
@@ -256,6 +259,11 @@ function boundsIn(frame: Entity, instances: readonly MeshInstance[]): BoundingBo
 	const box = new BoundingBox();
 	box.setMinMax(min, max);
 	return box;
+}
+
+/** A world point in `frame`'s own space. */
+function pointIn(frame: Entity, point: Vec3): Vec3 {
+	return new Mat4().copy(frame.getWorldTransform()).invert().transformPoint(point, new Vec3());
 }
 
 /** Which end of the long axis the muzzle/tip is at, judged by a node named like one. */

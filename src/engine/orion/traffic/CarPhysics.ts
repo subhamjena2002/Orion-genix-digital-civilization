@@ -203,6 +203,8 @@ export class CarPhysics {
 	public lateralAcceleration = 0;
 	/** How hard the rear tyres are sliding, 0..1+. */
 	public rearSlide = 0;
+	/** How far the front tyres are past their grip sideways (0 = gripping); for the tyre sound. */
+	public frontSlide = 0;
 	public braking = false;
 	public reversing = false;
 
@@ -320,7 +322,10 @@ export class CarPhysics {
 
 		// Each axle's traction and cornering share one friction circle.
 		const frontLateralLimit = frontGrip * CORNERING_GRIP * ellipse(driveFront, frontGrip);
-		const frontForce = clamp(-spec.corneringFront * tyres.frontCornering * CORNERING_GRIP * slipFront, frontLateralLimit);
+		const frontDemand = -spec.corneringFront * tyres.frontCornering * CORNERING_GRIP * slipFront;
+		const frontForce = clamp(frontDemand, frontLateralLimit);
+		// Read only by the tyre sound: the front washing wide past its grip (understeer).
+		this.frontSlide = Math.abs(frontDemand) > frontLateralLimit ? Math.min(1.5, Math.abs(tyreLat) / 4) : 0;
 		const rearLateralLimit = rearGrip * CORNERING_GRIP * ellipse(driveRear, rearGrip);
 		const rearDemand = -spec.corneringRear * tyres.rearCornering * CORNERING_GRIP * (controls.handbrake ? 0.5 : 1) * slipRear;
 		const rearForce = clamp(rearDemand, rearLateralLimit);

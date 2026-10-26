@@ -33,6 +33,7 @@ function supplies(): PlayerSupplies & { inventory: WeaponInventory } {
 			armour += added;
 			return added;
 		},
+		restoreHealth: () => 0,
 	};
 }
 

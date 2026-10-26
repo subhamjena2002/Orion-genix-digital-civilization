@@ -6,6 +6,7 @@ import { resetWorld } from "../world/WorldReset";
 import { emitGameEvent } from "../missions/GameEvents";
 import { pavedHeightAt } from "../roads/RoadNetwork";
 import { terrainHeightAt } from "../world/Mountains";
+import { currentSeat } from "./Seat";
 import { takeTeleport } from "./Teleport";
 import { readCinematicView, type CinematicView } from "./CinematicCamera";
 import { controlsHeld } from "./ControlHold";
@@ -25,6 +26,7 @@ import { playerRig } from "./PlayerRig";
 import { CharacterLight } from "./CharacterLight";
 import { angleDelta, stepLean, stepTurn, type LeanState, type TurnState, type TurnTuning } from "./Locomotion";
 import { bloodMaterial } from "../characters/Knockdown";
+import { audioBus } from "../audio/AudioBus";
 import { engineAudio } from "../audio/EngineAudio";
 import { policeSirens } from "../audio/PoliceSirens";
 import { clearWanted, reportCrime, takeBusted, updateWanted } from "../police/Wanted";
@@ -229,6 +231,9 @@ export class OrionThirdPersonController extends Script {
 	private drownTimer = 0;
 	private dragging = false;
 	private mode: PlayerMode = "onFoot";
+	/** On a seat on foot (see updateSeated), and where to stand up to. */
+	private seated = false;
+	private readonly standPoint = new Vec3();
 	private car: OrionVehicle | null = null;
 	private gunship: OrionGunship | null = null;
 	private jet: OrionJet | null = null;
@@ -478,13 +483,14 @@ export class OrionThirdPersonController extends Script {
 			return;
 		}
 		this.easeFov(this.baseFov, dt);
+		if (this.updateSeated(dt)) return;
 		this.nearCarTimer -= dt;
 		if (this.nearCarTimer <= 0) {
 			this.nearCarTimer = NEAR_CAR_CHECK_SECONDS;
 			const here = this.entity.getPosition();
 			const nearGunship = findGunshipNear(here.x, here.z) !== null;
 			const nearJet = !nearGunship && findJetNear(here.x, here.z) !== null;
-			this.nearCar = !nearGunship && !nearJet && findCarNear(here.x, here.z, CARJACK_REACH) !== null;
+			this.nearCar = !nearGunship && !nearJet && findCarNear(here.x, here.z, CARJACK_REACH, here.y) !== null;
 			writeVehicleState(false, 0, this.nearCar);
 			writeFlightHud({ nearGunship, nearJet });
 		}
@@ -639,7 +645,7 @@ export class OrionThirdPersonController extends Script {
 
 	private tryCarjack() {
 		const position = this.entity.getPosition();
-		const car = findCarNear(position.x, position.z, CARJACK_REACH);
+		const car = findCarNear(position.x, position.z, CARJACK_REACH, position.y);
 		if (!car) return;
 		// Anyone can take a police car; the police take a dim view of it.
 		if (car.police) reportCrime("policeCarStolen", position.x, position.z);
@@ -739,6 +745,41 @@ export class OrionThirdPersonController extends Script {
 		this.updateCamera(dt);
 	}
 
+	/**
+	 * Sitting on a seat on foot (the safehouse sofa; see Seat): the body's off and the player is
+	 * held in the car seat's pose at the seat. Once the seat's given up they're stood back on the
+	 * floor beside it. False when not seated, for the rest of the on-foot update to run.
+	 */
+	private updateSeated(dt: number): boolean {
+		const seat = currentSeat();
+		if (!seat) {
+			if (!this.seated) return false;
+			this.seated = false;
+			this.entity.setPosition(this.standPoint);
+			this.setBodyActive(true);
+			this.entity.rigidbody?.teleport(this.standPoint);
+			this.currentVelocity.set(0, 0, 0);
+			if (this.entity.rigidbody) this.entity.rigidbody.linearVelocity = this.currentVelocity;
+			writePlayerAction("");
+			return false;
+		}
+		if (!this.seated) {
+			this.seated = true;
+			this.setBodyActive(false);
+		}
+		this.standPoint.set(seat.standX, seat.standY + CAPSULE_HALF_HEIGHT + 0.05, seat.standZ);
+		this.entity.setPosition(seat.x, seat.y + CAPSULE_HALF_HEIGHT, seat.z);
+		this.characterYaw = seat.yaw;
+		this.lean.roll = 0;
+		this.lean.pitch = 0;
+		this.applyFacing();
+		writePlayerAction("Sitting");
+		writeVehicleState(false, 0, false);
+		this.writePose(0);
+		this.updateCamera(dt);
+		return true;
+	}
+
 	private updateDriving() {
 		const car = this.car;
 		if (!car) return;
@@ -772,9 +813,11 @@ export class OrionThirdPersonController extends Script {
 		playerRig()?.apply(dt);
 		// The jet's camera isn't steered by yaw: take its heading from where it actually looks.
 		const radians = this.mode === "jet" ? Math.atan2(-this.rayDirection.x, -this.rayDirection.z) : this.yaw * Math.PI / 180;
-		combatAudio().setListener(this.cameraPosition.x, this.cameraPosition.y, this.cameraPosition.z, -Math.cos(radians), Math.sin(radians));
+		combatAudio().setListener(this.cameraPosition.x, this.cameraPosition.y, this.cameraPosition.z, -Math.cos(radians), Math.sin(radians), this.lastDelta);
 		// Traffic is mixed here rather than per car: only the nearest few engines are audible, and
 		// which those are can only be decided once the listener has moved for this frame.
+		// At the wheel or the controls of anything, the city's background is heard through the cabin.
+		audioBus().setInVehicle(this.mode === "driving" || this.mode === "flying" || this.mode === "jet");
 		engineAudio().update(this.lastDelta);
 		ambientAudio().update(this.lastDelta, this.cameraPosition.x, this.cameraPosition.z, this.cameraPosition.y);
 		// Haze for the camera's height: street-level on foot, thinner and sea-blue from the air.

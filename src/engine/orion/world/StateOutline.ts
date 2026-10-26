@@ -116,8 +116,19 @@ function insidePolygon(x: number, z: number, points: readonly [number, number][]
 	return inside;
 }
 
+/** Each land polygon's bounding box, [minX, minZ, maxX, maxZ]: most points are outside all but one. */
+const LAND_BOUNDS = ORION_LAND.map(({ points }) => [
+	Math.min(...points.map(([x]) => x)),
+	Math.min(...points.map(([, z]) => z)),
+	Math.max(...points.map(([x]) => x)),
+	Math.max(...points.map(([, z]) => z)),
+] as const);
+
 export function isOnLand(x: number, z: number): boolean {
-	return ORION_LAND.some((land) => insidePolygon(x, z, land.points));
+	return ORION_LAND.some((land, index) => {
+		const [minX, minZ, maxX, maxZ] = LAND_BOUNDS[index];
+		return x >= minX && x <= maxX && z >= minZ && z <= maxZ && insidePolygon(x, z, land.points);
+	});
 }
 
 /** SVG path data for a polygon, in world [x, z] coordinates. */

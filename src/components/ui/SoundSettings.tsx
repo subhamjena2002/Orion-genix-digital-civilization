@@ -11,6 +11,7 @@ import {
 	saveAudioSettings,
 	type AudioSettings,
 } from "@/engine/orion/audio/AudioSettings";
+import type { VehiclePart } from "@/engine/orion/audio/AudioBus";
 
 /** The saved sound settings, and a way to change them: applied to the mix and saved at once. */
 export function useAudioSettings(): [AudioSettings, (change: Partial<AudioSettings>) => void] {
@@ -33,40 +34,59 @@ export function useAudioSettings(): [AudioSettings, (change: Partial<AudioSettin
 	return [settings, update];
 }
 
-/** Master and effects volume, and mute: in the header's sound panel and the pause menu's settings. */
+/** The vehicle mix, in the order the sliders are shown, with the label each one has. */
+const VEHICLE_LEVELS: readonly (readonly [VehiclePart, string])[] = [
+	["engines", "Engines"],
+	["tyres", "Tyres"],
+	["transmission", "Gearbox"],
+	["sirens", "Sirens"],
+	["collisions", "Crashes"],
+];
+
+function LevelRow({ label, value, onChange }: Readonly<{ label: string; value: number; onChange: (value: number) => void }>) {
+	const percent = Math.round(value * 100);
+	return (
+		<label className="orion-sound-row">
+			<span>{label}</span>
+			<input
+				type="range" min={0} max={100} step={1}
+				value={percent}
+				aria-valuetext={`${percent}%`}
+				onChange={(event) => onChange(Number(event.target.value) / 100)}
+			/>
+			<output>{percent}</output>
+		</label>
+	);
+}
+
+/**
+ * Master and effects volume, mute, and the vehicle mix: in the header's sound panel and the pause
+ * menu's settings.
+ */
 export function SoundControls({ settings, update }: Readonly<{ settings: AudioSettings; update: (change: Partial<AudioSettings>) => void }>) {
 	return (
 		<>
-			<label className="orion-sound-row">
-				<span>Master</span>
-				<input
-					type="range" min={0} max={100} step={1}
-					value={Math.round(settings.master * 100)}
-					aria-valuetext={`${Math.round(settings.master * 100)}%`}
-					onChange={(event) => update({ master: Number(event.target.value) / 100 })}
-				/>
-				<output>{Math.round(settings.master * 100)}</output>
-			</label>
-			<label className="orion-sound-row">
-				<span>Effects</span>
-				<input
-					type="range" min={0} max={100} step={1}
-					value={Math.round(settings.effects * 100)}
-					aria-valuetext={`${Math.round(settings.effects * 100)}%`}
-					onChange={(event) => update({ effects: Number(event.target.value) / 100 })}
-				/>
-				<output>{Math.round(settings.effects * 100)}</output>
-			</label>
+			<LevelRow label="Master" value={settings.master} onChange={(master) => update({ master })} />
+			<LevelRow label="Effects" value={settings.effects} onChange={(effects) => update({ effects })} />
 			<label className="orion-sound-mute">
 				<input type="checkbox" checked={settings.muted} onChange={(event) => update({ muted: event.target.checked })} />
 				<span>Mute all sound</span>
 			</label>
+			<p className="orion-sound-group">Vehicles</p>
+			{VEHICLE_LEVELS.map(([part, label]) => (
+				<LevelRow
+					key={part}
+					label={label}
+					value={settings.vehicles[part]}
+					onChange={(value) => update({ vehicles: { ...settings.vehicles, [part]: value } })}
+				/>
+			))}
 		</>
 	);
 }
 
 /**
- * The sound button in the header: master and effects volume, and mute. Saved between visits
+ * The sound button in the header: master and effects volume, mute, and the vehicle mix. Saved between visits
  * (AudioSettings), and put into the mix as soon as the page loads, before the first sound plays.
  */
 export function SoundSettings() {

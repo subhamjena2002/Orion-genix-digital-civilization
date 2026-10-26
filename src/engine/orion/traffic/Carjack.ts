@@ -99,8 +99,14 @@ export function playerCarHasRoof(): boolean {
 	return false;
 }
 
-/** The car whose driver's door is closest to (x, z), within reach. */
-export function findCarNear(x: number, z: number, reach: number): OrionVehicle | null {
+/** How far above or below the player a car's door can be and still be reached. */
+const CARJACK_LEVEL = 2.5;
+
+/**
+ * The car whose driver's door is closest to (x, z), within reach. Given the player's height `y`,
+ * only cars on the same level count: not one parked in the safehouse garage under the floor.
+ */
+export function findCarNear(x: number, z: number, reach: number, y = Number.NaN): OrionVehicle | null {
 	let best: OrionVehicle | null = null;
 	let bestDistance = reach;
 	const door = new Vec3();
@@ -109,6 +115,7 @@ export function findCarNear(x: number, z: number, reach: number): OrionVehicle |
 		// A car on show in the showroom is locked: it's bought, not taken.
 		if (car.driver === "player" || car.forSale || car.burnedOut || !car.entity.enabled || !car.inWorld) continue;
 		car.carjack.doorPoint(door);
+		if (Math.abs(door.y - y) > CARJACK_LEVEL) continue;
 		const distance = Math.hypot(door.x - x, door.z - z);
 		if (distance < bestDistance) {
 			bestDistance = distance;

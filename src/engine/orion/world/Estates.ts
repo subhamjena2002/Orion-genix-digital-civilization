@@ -204,6 +204,34 @@ export function distanceToPath(points: readonly Point[], x: number, z: number): 
 	return best;
 }
 
+/** Each path's bounding box, worked out once: [minX, minZ, maxX, maxZ]. */
+const PATH_BOUNDS = new WeakMap<readonly Point[], readonly [number, number, number, number]>();
+
+/**
+ * Whether a point is closer than `distance` to a polyline — distanceToPath(...) < distance, but a
+ * point outside the path's bounding box grown by `distance` is answered without walking it. The
+ * house lots are laid out at load time with thousands of these checks against every estate road.
+ */
+export function withinPath(points: readonly Point[], x: number, z: number, distance: number): boolean {
+	let bounds = PATH_BOUNDS.get(points);
+	if (!bounds) {
+		let minX = Infinity;
+		let minZ = Infinity;
+		let maxX = -Infinity;
+		let maxZ = -Infinity;
+		for (const [px, pz] of points) {
+			minX = Math.min(minX, px);
+			minZ = Math.min(minZ, pz);
+			maxX = Math.max(maxX, px);
+			maxZ = Math.max(maxZ, pz);
+		}
+		bounds = [minX, minZ, maxX, maxZ];
+		PATH_BOUNDS.set(points, bounds);
+	}
+	if (x < bounds[0] - distance || x > bounds[2] + distance || z < bounds[1] - distance || z > bounds[3] + distance) return false;
+	return distanceToPath(points, x, z) < distance;
+}
+
 // ---- Layout ------------------------------------------------------------------------------------------
 
 export const ESTATE_ROADS: readonly EstateRoad[] = ESTATES.flatMap((estate) => estate.roads.map((road): EstateRoad => ({
@@ -267,15 +295,18 @@ function lotIsClear(lot: HouseLot): boolean {
 		const b = corners[(i + 1) % 4];
 		samples.push([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
 	}
+	// The cheap box tests first: a lot fails on whichever check, so the order only changes the cost.
 	for (const [x, z] of samples) {
-		// On land, with the beach and a strip of sea-front clear.
-		for (const [dx, dz] of [[0, 0], [30, 0], [-30, 0], [0, 30], [0, -30]]) if (!isOnLand(x + dx, z + dz)) return false;
-		// Flat: off the hills.
-		if (terrainHeightAt(x, z) > LAND_Y + 0.2) return false;
 		// Off the city blocks.
 		if (Math.abs(x) < CITY_EXTENT_X + 12 && Math.abs(z) < CITY_EXTENT_Z + 12) return false;
 		if (x > AIRFIELD_BOUNDS.minX - 20 && x < AIRFIELD_BOUNDS.maxX + 20 && z > AIRFIELD_BOUNDS.minZ - 20 && z < AIRFIELD_BOUNDS.maxZ + 20) return false;
 		if (x > BASE_BOUNDS.minX - 20 && x < BASE_BOUNDS.maxX + 20 && z > BASE_BOUNDS.minZ - 20 && z < BASE_BOUNDS.maxZ + 20) return false;
+	}
+	for (const [x, z] of samples) {
+		// Flat: off the hills.
+		if (terrainHeightAt(x, z) > LAND_Y + 0.2) return false;
+		// On land, with the beach and a strip of sea-front clear.
+		for (const [dx, dz] of [[0, 0], [30, 0], [-30, 0], [0, 30], [0, -30]]) if (!isOnLand(x + dx, z + dz)) return false;
 		if (distanceFromRail(x, z) < 20) return false;
 		for (const highway of HIGHWAYS) {
 			const hit = projectOnto(highway, x, z);
@@ -286,7 +317,7 @@ function lotIsClear(lot: HouseLot): boolean {
 	// behind the pavement (the front hedge stands at the pavement's edge).
 	const clearance = ESTATE_ROAD_WIDTH / 2 + ESTATE_PAVEMENT - 0.05;
 	for (const [x, z] of lotGrid(lot)) {
-		for (const road of ESTATE_ROADS) if (distanceToPath(road.points, x, z) < clearance) return false;
+		for (const road of ESTATE_ROADS) if (withinPath(road.points, x, z, clearance)) return false;
 	}
 	return true;
 }
@@ -385,6 +416,9 @@ function layOutLots(): HouseLot[] {
 
 export const HOUSE_LOTS: readonly HouseLot[] = layOutLots();
 
+/** The lot the player's safehouse stands on (world/Safehouse): its own villa, not a generated house. */
+export const SAFEHOUSE_LOT = "hillcrest-58";
+
 export const ESTATE_NAMES: readonly { id: string; name: string; x: number; z: number }[] = ESTATES.map((estate) => {
 	const lots = HOUSE_LOTS.filter((lot) => lot.estate === estate.id);
 	const points = lots.length > 0 ? lots.map((lot): Point => [lot.x, lot.z]) : ESTATE_ROADS.filter((road) => road.estate === estate.id).flatMap((road) => road.points);
@@ -444,7 +478,7 @@ export function estateDressing(spacing = 22): EstateDressingItem[] {
 					// Not at junctions or turning circles, nor on the city's roads.
 					if (ends.some(([ex, ez]) => Math.hypot(px - ex, pz - ez) < 16)) continue;
 					if (Math.abs(px) < CITY_EXTENT_X + 10 && Math.abs(pz) < CITY_EXTENT_Z + 10) continue;
-					if (ESTATE_ROADS.some((other) => other !== road && distanceToPath(other.points, px, pz) < ESTATE_ROAD_WIDTH / 2 + 2)) continue;
+					if (ESTATE_ROADS.some((other) => other !== road && withinPath(other.points, px, pz, ESTATE_ROAD_WIDTH / 2 + 2))) continue;
 					// Nor across a driveway.
 					if (HOUSE_LOTS.some((lot) => Math.hypot(px - drivewayMouth(lot)[0], pz - drivewayMouth(lot)[1]) < 6)) continue;
 					count++;
@@ -460,6 +494,8 @@ export function estateDressing(spacing = 22): EstateDressingItem[] {
 	}
 	// In the gardens: one by the front hedge on the side away from the drive, one out back.
 	for (const lot of HOUSE_LOTS) {
+		// The safehouse plants its own garden.
+		if (lot.id === SAFEHOUSE_LOT) continue;
 		const yaw = (lot.yaw * Math.PI) / 180;
 		const fx = Math.sin(yaw);
 		const fz = Math.cos(yaw);

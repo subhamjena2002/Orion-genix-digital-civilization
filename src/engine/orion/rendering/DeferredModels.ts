@@ -6,6 +6,7 @@ import { JET_MODEL } from "../aircraft/JetModel";
 import { VEHICLE_MODEL_BASE, VEHICLE_MODELS } from "../traffic/VehicleModels";
 import { AIRFIELD_BOUNDS } from "../world/Airfield";
 import { BASE } from "../world/MilitaryBase";
+import { SAFEHOUSE_MODEL, SAFEHOUSE_SITE } from "../world/Safehouse";
 import { prewarmModels } from "./ModelPrewarm";
 
 /**
@@ -38,9 +39,10 @@ const DEFERRED_VEHICLES = [...new Set(VEHICLE_MODELS.filter((spec) => spec.defer
 /**
  * Load order: the few small vehicles a mission or a fire can call for at any moment, then the
  * kit (in sight of the spawn; its walls are drawn from 300 m, and stand-ins hold the perimeter
- * until it arrives), then the train and the aircraft.
+ * until it arrives), the safehouse villa (solid before it's drawn: see components/world/
+ * Safehouse), then the train and the aircraft.
  */
-export const DEFERRED_MODELS: readonly string[] = [...DEFERRED_VEHICLES, MILITARY_KIT_MODEL, TRAIN_MODEL, GUNSHIP_MODEL, JET_MODEL];
+export const DEFERRED_MODELS: readonly string[] = [...DEFERRED_VEHICLES, MILITARY_KIT_MODEL, SAFEHOUSE_MODEL, TRAIN_MODEL, GUNSHIP_MODEL, JET_MODEL];
 
 /**
  * The army base and the airfield beside it. Coming within `reach` of either (once the game is up)
@@ -53,6 +55,15 @@ export const ARMY_BASE_AREA = {
 	minZ: Math.min(BASE.centre[1] - BASE.size[1] / 2, AIRFIELD_BOUNDS.minZ),
 	maxZ: Math.max(BASE.centre[1] + BASE.size[1] / 2, AIRFIELD_BOUNDS.maxZ),
 	reach: 200,
+} as const;
+
+/** The safehouse's lot: coming within `reach` fetches the villa at once (it's drawn from 420 m). */
+export const SAFEHOUSE_AREA = {
+	minX: SAFEHOUSE_SITE.x - 25,
+	maxX: SAFEHOUSE_SITE.x + 25,
+	minZ: SAFEHOUSE_SITE.z - 25,
+	maxZ: SAFEHOUSE_SITE.z + 25,
+	reach: 450,
 } as const;
 
 /** Tries per model, and the wait before trying a failed one again. */

@@ -45,7 +45,7 @@ describe("hold styles", () => {
 	it("rests a long gun's butt near the firing shoulder, and nothing else's", () => {
 		for (const [id, style] of Object.entries(HOLD_STYLES)) {
 			if (!style.butt) {
-				expect(["unarmed", "blade", "pistol", "launcher"], id).toContain(id);
+				expect(["unarmed", "blade", "pistol", "launcher", "grenade"], id).toContain(id);
 				continue;
 			}
 			// A pocket on the shoulder, not out at arm's length.

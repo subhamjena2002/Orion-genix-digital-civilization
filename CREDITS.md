@@ -48,10 +48,7 @@ may not be used to train AI models. The source WAVs are therefore not kept in th
 
 | Game sounds | Library (publisher) | Bundle |
 |---|---|---|
-| Everyday car engine (`engine-car-*`) | Audi Q2 (Dramatic Cat) | 2024 |
-| Supercar engine (`engine-sport-*`) | Porsche Carrera GT 2005 (Pole Position Production) | 2024 |
-| Diesel engine (`engine-diesel-*`): vans, ambulance, service truck | Magnum 7250 tractor (Dramatic Cat) | 2024 |
-| Truck and bus engine (`engine-truck-*`) | Mercedes-Benz Unimog 437 (Dramatic Cat) | 2023 |
+| Vehicle engines, tyres, air brakes, gear lever (`vehicles/*`; per class in `docs/audio/vehicle-sound-manifest.md`) | Audi Q2 (Dramatic Cat); Ford Crown Victoria 2007, Piaggio Ape P703V, Audi Ur-Quattro (Pole Position Production); Renault Master IV 2.3 dCi (Soundholder); Mercedes-Benz Unimog 437 (Dramatic Cat); Car Foley Seat Ibiza — tyres (Systematic Sound); URAL 4320 — air (FLYSOUND) | 2024, 2023, 2020 |
 | Pistol close and distant | Colt Python .357 Magnum (Pole Position Production); Guns (Coll Anderson) | 2024, 2015 |
 | Rifle close, far and distant | AK-74 (FLYSOUND); Guns — M4 shots (Coll Anderson) | 2020, 2015 |
 | Very distant gunfire | AK-74 (FLYSOUND); Mosin-Nagant (FLYSOUND) | 2020 |

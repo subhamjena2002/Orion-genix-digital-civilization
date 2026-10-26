@@ -5,6 +5,7 @@ not redistributed as a library):
 
     python scripts/fetch-sounds.py SOURCE_DIR
     python scripts/prepare-sounds.py SOURCE_DIR
+    python scripts/prepare-vehicle-sounds.py SOURCE_DIR
 
 They come from the Sonniss GameAudioGDC bundles (2015, 2020, 2023 and 2024), which are only published as
 multi-gigabyte zips. Rather than download those whole, this reads each zip's table of contents
@@ -96,6 +97,14 @@ FILES = [
     ('explode_urban', 'https://downloads.sonniss.com/Sonniss.com-GDC2023-GameAudioBundle2of14.zip', 'Bluezone_BC0277_explosion_urban_004_02.wav'),
     ('explode_mortar_bz', 'https://downloads.sonniss.com/Sonniss.com-GDC2023-GameAudioBundle2of14.zip', 'Bluezone_BC0277_explosion_mortar_002_01.wav'),
     ('cartridge_bz', 'https://downloads.sonniss.com/Sonniss.com-GDC2023-GameAudioBundle2of14.zip', 'Bluezone_BC0277_cartridge_case_handling_018.wav')
+    # Vehicles (scripts/prepare-vehicle-sounds.py)
+    ('eng_master_ramps', 'https://downloads.sonniss.com/Sonniss.com%20-%20GDC%202020%20-%20Game%20Audio%20Bundle%20Part12of14.zip', 'renault master 2.3 dci engine diesel rpm ramps.wav'),
+    ('eng_ape_drive', 'https://downloads.sonniss.com/Sonniss.com%20-%20GDC%202020%20-%20Game%20Audio%20Bundle%20Part8of14.zip', 'Ape_P703V_t3_Onbrd_Start_Fast_Drive_Stop_Reverse_Stop_Drive_Stop_Off_Engine_Intake_DPA4062.wav'),
+    ('eng_crownvic_steady', 'https://downloads.sonniss.com/Sonniss.com-GDC2023-GameAudioBundle5of14.zip', 'Ford Crown Victoria - t6 - ONBRD - STEADY RPMS - Drive - ENGINE - Left - DPA4061.wav'),
+    ('eng_crownvic_idle', 'https://downloads.sonniss.com/Sonniss.com-GDC2023-GameAudioBundle5of14.zip', 'Ford Crown Victoria - t11 - EXT - IDLE - Stall Various - ENGINE - Left - DPA4061.wav'),
+    ('tyre_ibiza', 'https://downloads.sonniss.com/Sonniss.com-GDC2023-GameAudioBundle13of14.zip', 'VEHTire_Car Driving-VEHTire_Car Driving-Car Driving Tires AB BK_EXT_SYSO_SYSO012.wav'),
+    ('air_ural', 'https://downloads.sonniss.com/Sonniss.com%20-%20GDC%202020%20-%20Game%20Audio%20Bundle%20Part4of14.zip', 'URL1711A Truck Ural Spot A Details Air Exterior.wav'),
+    ('gear_quattro', 'https://downloads.sonniss.com/Sonniss.com-GDC2024-GameAudioBundle3of9.zip', 'Audi Quattro - t12 - VAR SFX - Gear Stick Dry Movement - ENGINE - Center - MKH8020.wav'),
 ]
 
 
